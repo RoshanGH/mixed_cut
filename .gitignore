@@ -1,0 +1,27 @@
+# Xcode
+build/
+*.xcuserstate
+*.xcworkspace
+xcuserdata/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# App bundle 内的大型二进制（从 bundle_deps.py 生成，不入库）
+MixCut/Resources/bin/
+
+# 视频素材（测试用，不入库）
+康王视频/
+
+# Secrets
+.env
+*.key
