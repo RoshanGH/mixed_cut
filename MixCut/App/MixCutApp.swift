@@ -23,6 +23,9 @@ struct MixCutApp: App {
             modelContainer = try ModelContainer(for: schema, configurations: [config])
             initError = nil
 
+            // 清除 bundle 内二进制的 quarantine 属性（DMG 分发后 macOS 会阻止执行）
+            Self.removeQuarantineFromBundleBinaries()
+
             // 修复空的 semanticTypesData（旧数据迁移丢失）
             Self.fixMissingSemanticTypes(container: modelContainer)
             // 清洗已有台词中的乱码和多余空格
@@ -297,6 +300,27 @@ struct MixCutApp: App {
 
     /// 从磁盘恢复丢失的项目和视频
     /// 当 schema 变更导致数据库被清空时，扫描旧项目目录自动重建
+    /// 清除 bundle 内 FFmpeg/whisper 二进制及 dylib 的 quarantine 属性
+    /// DMG 分发后 macOS 会给所有文件打上 com.apple.quarantine，导致 ad-hoc 签名的二进制无法执行
+    private static func removeQuarantineFromBundleBinaries() {
+        guard let binURL = Bundle.main.resourceURL?.appendingPathComponent("bin") else { return }
+        let binPath = binURL.path
+        guard FileManager.default.fileExists(atPath: binPath) else { return }
+
+        // 用 xattr -cr 递归清除整个 bin 目录的 quarantine
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xattr")
+        process.arguments = ["-cr", binPath]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            MixLog.error("清除 quarantine 失败: \(error)")
+        }
+    }
+
     private static func recoverFromDisk(container: ModelContainer) {
         let fixKey = "didRecoverFromDisk_v1"
         if UserDefaults.standard.bool(forKey: fixKey) { return }
