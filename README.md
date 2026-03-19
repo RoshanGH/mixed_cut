@@ -59,6 +59,7 @@ xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build
 | MiniMax | MiniMax 大模型 |
 | Claude (国内转发) | Anthropic Claude 国内转发 |
 | Claude | Anthropic Claude 官方 API |
+| 自定义 | 任意 OpenAI 兼容 API（自填地址 + 模型名） |
 
 ## 技术架构
 
