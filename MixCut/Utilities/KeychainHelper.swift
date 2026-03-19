@@ -1,78 +1,27 @@
 import Foundation
-import Security
 
-/// API Key 存储封装（使用 macOS Keychain，安全存储）
+/// API Key 存储封装（使用 UserDefaults，避免 Keychain 弹窗）
 enum KeychainHelper {
 
     private static let defaults = UserDefaults.standard
-    private static let service = "com.mixcut.app"
+    private static let apiKeyPrefix = "api_key_"
 
-    // MARK: - 多提供商 API Key 管理（Keychain）
+    // MARK: - API Key 管理（UserDefaults）
 
     /// 保存 API Key
     static func saveAPIKey(_ key: String, for provider: AIProviderType) throws {
-        guard let data = key.data(using: .utf8) else { return }
-        let account = provider.rawValue
-
-        // 先删除旧值
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        // 写入新值
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data
-        ]
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        if status != errSecSuccess {
-            MixLog.error("Keychain 写入失败: \(status)")
-        }
-
-        // 迁移：清除 UserDefaults 中的旧明文存储
-        defaults.removeObject(forKey: "api_key_" + provider.rawValue)
+        defaults.set(key, forKey: apiKeyPrefix + provider.rawValue)
     }
 
     /// 获取 API Key
     static func getAPIKey(for provider: AIProviderType) -> String? {
-        let account = provider.rawValue
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecSuccess, let data = result as? Data {
-            return String(data: data, encoding: .utf8)
-        }
-
-        // 兼容迁移：如果 Keychain 中没有，尝试从 UserDefaults 读取并迁移
-        if let oldKey = defaults.string(forKey: "api_key_" + provider.rawValue), !oldKey.isEmpty {
-            try? saveAPIKey(oldKey, for: provider)  // 迁移到 Keychain
-            return oldKey
-        }
-
-        return nil
+        let key = defaults.string(forKey: apiKeyPrefix + provider.rawValue)
+        return (key?.isEmpty == true) ? nil : key
     }
 
     /// 删除 API Key
     static func removeAPIKey(for provider: AIProviderType) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: provider.rawValue
-        ]
-        SecItemDelete(query as CFDictionary)
-        // 同时清除 UserDefaults 中的旧值
-        defaults.removeObject(forKey: "api_key_" + provider.rawValue)
+        defaults.removeObject(forKey: apiKeyPrefix + provider.rawValue)
     }
 
     /// 是否已配置 API Key
@@ -81,7 +30,7 @@ enum KeychainHelper {
         return !key.isEmpty
     }
 
-    // MARK: - 活跃提供商（非敏感，继续用 UserDefaults）
+    // MARK: - 活跃提供商
 
     private static let activeProviderKey = "active_ai_provider"
 
@@ -98,7 +47,19 @@ enum KeychainHelper {
         }
     }
 
-    // MARK: - 模型选择（非敏感，继续用 UserDefaults）
+    // MARK: - 自定义提供商配置
+
+    static var customBaseURL: String {
+        get { defaults.string(forKey: "custom_base_url") ?? "" }
+        set { defaults.set(newValue, forKey: "custom_base_url") }
+    }
+
+    static var customModelName: String {
+        get { defaults.string(forKey: "custom_model_name") ?? "" }
+        set { defaults.set(newValue, forKey: "custom_model_name") }
+    }
+
+    // MARK: - 模型选择
 
     private static let modelKeyPrefix = "selected_model_"
 

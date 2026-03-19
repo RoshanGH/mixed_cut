@@ -131,6 +131,11 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 - `Segment.keywords` 同理使用 `keywordsData: Data?` + 计算属性
 - `Video.asrSentences` 使用 `asrSentencesData: Data?` + 计算属性存储 Whisper 原生句子段
 
+## Git 与发版规则（必须遵守）
+
+- **不要自动提交 git 和发布版本**：修改代码后只做编译+重启+打包 DMG，不要执行 `git add/commit/push` 和 `gh release`。必须等用户验证没问题后，用户明确要求才能提交和发版。
+- **不要自作主张 `git tag` 或 `gh release create`**：版本号和发布时机由用户决定。
+
 ## 关键开发规则（必须遵守）
 
 ### 切换项目时各模块必须联动刷新

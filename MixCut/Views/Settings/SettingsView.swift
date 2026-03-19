@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var isAPIKeySaved = false
     @State private var showAPIKey = false
     @State private var selectedModel: String = ""
+    @State private var customBaseURL: String = ""
+    @State private var customModelName: String = ""
     @State private var isDownloadingModel = false
     @State private var modelDownloadError: String?
     @State private var whisperModelReady = false
@@ -95,13 +97,23 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                Picker("模型", selection: $selectedModel) {
-                    ForEach(selectedProvider.models, id: \.self) { model in
-                        Text(selectedProvider.modelDisplayName(model)).tag(model)
+                if selectedProvider == .custom {
+                    TextField("API 地址", text: $customBaseURL, prompt: Text("https://api.openai.com/v1"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+
+                    TextField("模型名称", text: $customModelName, prompt: Text("gpt-4o"))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                } else {
+                    Picker("模型", selection: $selectedModel) {
+                        ForEach(selectedProvider.models, id: \.self) { model in
+                            Text(selectedProvider.modelDisplayName(model)).tag(model)
+                        }
                     }
-                }
-                .onChange(of: selectedModel) { _, newValue in
-                    KeychainHelper.setSelectedModel(newValue, for: selectedProvider)
+                    .onChange(of: selectedModel) { _, newValue in
+                        KeychainHelper.setSelectedModel(newValue, for: selectedProvider)
+                    }
                 }
 
                 HStack(spacing: 8) {
@@ -122,7 +134,8 @@ struct SettingsView: View {
                         saveAPIKey()
                     }
                     .controlSize(.small)
-                    .disabled(apiKey.isEmpty || apiKey.starts(with: "•"))
+                    .disabled(apiKey.isEmpty || apiKey.starts(with: "•") ||
+                             (selectedProvider == .custom && (customBaseURL.isEmpty || customModelName.isEmpty)))
 
                     if isAPIKeySaved {
                         Button("清除", role: .destructive) {
@@ -272,6 +285,8 @@ struct SettingsView: View {
     private func loadProviderState() {
         isAPIKeySaved = KeychainHelper.hasAPIKey(for: selectedProvider)
         selectedModel = KeychainHelper.selectedModel(for: selectedProvider)
+        customBaseURL = KeychainHelper.customBaseURL
+        customModelName = KeychainHelper.customModelName
         showAPIKey = false
         if isAPIKeySaved {
             apiKey = "••••••••••••••••••••"
@@ -284,12 +299,17 @@ struct SettingsView: View {
         guard !apiKey.isEmpty, !apiKey.starts(with: "•") else { return }
         do {
             try KeychainHelper.saveAPIKey(apiKey, for: selectedProvider)
+
+            // 自定义提供商额外保存 Base URL 和模型名
+            if selectedProvider == .custom {
+                KeychainHelper.customBaseURL = customBaseURL
+                KeychainHelper.customModelName = customModelName
+                KeychainHelper.setSelectedModel(customModelName, for: .custom)
+            }
+
             isAPIKeySaved = true
-            MixLog.info("API Key 已保存: provider=\(selectedProvider.displayName), keyLength=\(apiKey.count)")
+            MixLog.info("API Key 已保存: provider=\(selectedProvider.displayName)")
             apiKey = "••••••••••••••••••••"
-            // 验证保存是否成功
-            let saved = KeychainHelper.hasAPIKey(for: selectedProvider)
-            MixLog.info("保存验证: hasKey=\(saved)")
         } catch {
             MixLog.error("保存 API Key 失败: \(error)")
         }

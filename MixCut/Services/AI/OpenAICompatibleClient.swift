@@ -64,6 +64,11 @@ actor OpenAICompatibleClient: AIProvider {
             return "https://api.anthropic.com/v1"
         case .claudeRelay:
             return "https://apicn.unifyllm.top/v1"
+        case .custom:
+            let url = KeychainHelper.customBaseURL
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return url.isEmpty ? "https://api.openai.com/v1" : url
         }
     }
 

@@ -36,6 +36,7 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
     case minimax = "minimax"
     case claude = "claude"
     case claudeRelay = "claude_relay"
+    case custom = "custom"
 
     var id: String { rawValue }
 
@@ -45,6 +46,7 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
         case .minimax: return "MiniMax"
         case .claude: return "Claude"
         case .claudeRelay: return "Claude (国内转发)"
+        case .custom: return "自定义"
         }
     }
 
@@ -58,6 +60,9 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
             return ["claude-sonnet-4-20250514", "claude-haiku-4-20250414"]
         case .claudeRelay:
             return ["claude-sonnet-4-6", "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001", "claude-opus-4-6"]
+        case .custom:
+            let name = KeychainHelper.customModelName
+            return name.isEmpty ? ["custom-model"] : [name]
         }
     }
 
@@ -67,6 +72,9 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
         case .minimax: return "MiniMax-M2.5"
         case .claude: return "claude-sonnet-4-20250514"
         case .claudeRelay: return "claude-sonnet-4-6"
+        case .custom:
+            let name = KeychainHelper.customModelName
+            return name.isEmpty ? "custom-model" : name
         }
     }
 
@@ -107,6 +115,8 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
             case "claude-opus-4-6": return "Claude Opus 4.6"
             default: return model
             }
+        case .custom:
+            return model
         }
     }
 }
