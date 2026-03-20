@@ -253,6 +253,22 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
+            Section("关于") {
+                LabeledContent("开发者") {
+                    Text("MengGang")
+                        .font(.system(size: 12))
+                }
+                LabeledContent("联系方式") {
+                    Text("13462890087")
+                        .font(.system(size: 12))
+                        .textSelection(.enabled)
+                }
+                LabeledContent("GitHub") {
+                    Link("RoshanGH/mixed_cut", destination: URL(string: "https://github.com/RoshanGH/mixed_cut")!)
+                        .font(.system(size: 12))
+                }
+            }
         }
         .formStyle(.grouped)
         .padding()
