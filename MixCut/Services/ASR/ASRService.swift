@@ -206,48 +206,55 @@ actor ASRService {
         // Python whisper CLI:
         // whisper audio.wav --model small --language zh --output_format json
         //   --output_dir /tmp/xxx --word_timestamps True
-        let jsonData: Data? = try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: whisperPath)
-            process.arguments = [
-                audioPath,
-                "--model", "small",
-                "--language", language,
-                "--output_format", "json",
-                "--output_dir", outputDir.path,
-                "--word_timestamps", "True"
-            ]
-            process.qualityOfService = .userInitiated
-            let binDir = (whisperPath as NSString).deletingLastPathComponent
-            process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: whisperPath)
+        process.arguments = [
+            audioPath,
+            "--model", "small",
+            "--language", language,
+            "--output_format", "json",
+            "--output_dir", outputDir.path,
+            "--word_timestamps", "True"
+        ]
+        process.qualityOfService = .userInitiated
+        let binDir = (whisperPath as NSString).deletingLastPathComponent
+        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
 
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
 
-            process.terminationHandler = { @Sendable _ in
-                // Python whisper 输出文件名 = 输入文件名.json
-                let audioFileName = URL(fileURLWithPath: audioPath).deletingPathExtension().lastPathComponent
-                let jsonPath = outputDir.appendingPathComponent("\(audioFileName).json").path
-                let data = FileManager.default.contents(atPath: jsonPath)
-                continuation.resume(returning: data)
-            }
+        let jsonData: Data? = try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { @Sendable _ in
+                    // Python whisper 输出文件名 = 输入文件名.json
+                    let audioFileName = URL(fileURLWithPath: audioPath).deletingPathExtension().lastPathComponent
+                    let jsonPath = outputDir.appendingPathComponent("\(audioFileName).json").path
+                    let data = FileManager.default.contents(atPath: jsonPath)
+                    continuation.resume(returning: data)
+                }
 
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-                return
-            }
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
 
-            // 超时保护：10 分钟后终止进程
-            DispatchQueue.global().asyncAfter(deadline: .now() + 600) {
-                if process.isRunning {
-                    MixLog.error("Python Whisper 进程超时（10分钟），强制终止")
-                    process.terminate()
+                // 超时保护：5 分钟后终止进程
+                DispatchQueue.global().asyncAfter(deadline: .now() + 300) {
+                    if process.isRunning {
+                        MixLog.error("Python Whisper 进程超时（5分钟），强制终止")
+                        process.terminate()
+                    }
                 }
             }
-        }
+        }, onCancel: {
+            if process.isRunning {
+                MixLog.info("Python Whisper 进程因 Task 取消被终止")
+                process.terminate()
+            }
+        })
 
         onProgress?(0.9)
 
@@ -362,28 +369,36 @@ actor ASRService {
         process.standardOutput = pipe
         process.standardError = pipe
 
-        let jsonData: Data? = try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { @Sendable _ in
-                let jsonPath = outputPath + ".json"
-                let data = FileManager.default.contents(atPath: jsonPath)
-                try? FileManager.default.removeItem(atPath: jsonPath)
-                continuation.resume(returning: data)
-            }
+        let jsonData: Data? = try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { @Sendable _ in
+                    let jsonPath = outputPath + ".json"
+                    let data = FileManager.default.contents(atPath: jsonPath)
+                    try? FileManager.default.removeItem(atPath: jsonPath)
+                    continuation.resume(returning: data)
+                }
 
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
 
-            // 超时保护：10 分钟后终止进程
-            DispatchQueue.global().asyncAfter(deadline: .now() + 600) {
-                if process.isRunning {
-                    MixLog.error("Whisper 进程超时（10分钟），强制终止")
-                    process.terminate()
+                // 超时保护：5 分钟后终止进程
+                DispatchQueue.global().asyncAfter(deadline: .now() + 300) {
+                    if process.isRunning {
+                        MixLog.error("Whisper 进程超时（5分钟），强制终止")
+                        process.terminate()
+                    }
                 }
             }
-        }
+        }, onCancel: {
+            // Task 被取消（用户删除视频等场景）→ 立即终止 Whisper 进程
+            if process.isRunning {
+                MixLog.info("Whisper 进程因 Task 取消被终止")
+                process.terminate()
+            }
+        })
 
         onProgress?(0.9)
 

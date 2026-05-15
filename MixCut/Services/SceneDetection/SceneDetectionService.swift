@@ -28,6 +28,16 @@ struct VideoLocalAnalysis: Sendable {
     let fps: Double
 }
 
+enum SceneDetectionError: LocalizedError {
+    case timeout
+
+    var errorDescription: String? {
+        switch self {
+        case .timeout: return "视频本地分析超时（4 分钟），文件可能损坏或解码异常"
+        }
+    }
+}
+
 /// 视频本地分析服务（场景检测 + 静音检测 + I-frame 提取）
 actor SceneDetectionService {
 
@@ -80,26 +90,77 @@ actor SceneDetectionService {
     /// 提取视频中所有 I-frame 的精确时间戳
     /// I-frame 是视频编码中的完整帧，在 I-frame 处切割不会产生花屏
     func extractIFrames(in videoPath: String) async throws -> [Double] {
-        // 使用 ffmpeg select I-frame + showinfo 提取时间
+        // 使用 ffprobe 直接读 keyframe 时间戳（不解码，速度比 ffmpeg+showinfo 快 30~100 倍）
+        // 命令:
+        //   ffprobe -v error -select_streams v:0 -skip_frame nokey \
+        //           -show_entries frame=best_effort_timestamp_time \
+        //           -of csv=p=0 video.mp4
         let args = [
-            "-i", videoPath,
-            "-vf", "select='eq(pict_type\\,I)',showinfo",
-            "-f", "null",
-            "-"
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-skip_frame", "nokey",
+            "-show_entries", "frame=best_effort_timestamp_time",
+            "-of", "csv=p=0",
+            videoPath
         ]
 
-        let stderr = try await ffmpeg.runForStderr(arguments: args)
-        return parseIFrameTimes(from: stderr)
+        let stdout = try await ffmpeg.runProbe(arguments: args, timeoutSeconds: 60)
+        return parseIFrameTimesFromProbe(stdout: stdout)
+    }
+
+    /// 解析 ffprobe csv 输出：每行一个时间戳浮点（可能为 "N/A" 或空）
+    private func parseIFrameTimesFromProbe(stdout: String) -> [Double] {
+        var times: [Double] = []
+        for rawLine in stdout.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, line != "N/A" else { continue }
+            if let t = Double(line) {
+                times.append(t)
+            }
+        }
+        return times
     }
 
     // MARK: - 一次性执行所有本地分析
 
     /// 依次执行所有本地视频分析（场景检测 + 静音检测 + I-frame 提取）
+    /// 4 分钟硬超时：即使内部某步 hang 住也会被取消，保证不会无止境卡住
     func analyzeLocally(
         videoPath: String,
         duration: Double,
         fps: Double,
         sceneThreshold: Double = 0.3
+    ) async throws -> VideoLocalAnalysis {
+        try await withThrowingTaskGroup(of: VideoLocalAnalysis.self) { group in
+            // 主任务：执行实际分析
+            group.addTask {
+                try await self.analyzeLocallyInternal(
+                    videoPath: videoPath,
+                    duration: duration,
+                    fps: fps,
+                    sceneThreshold: sceneThreshold
+                )
+            }
+
+            // 超时任务：4 分钟后抛错
+            group.addTask {
+                try await Task.sleep(nanoseconds: 240 * 1_000_000_000)
+                throw SceneDetectionError.timeout
+            }
+
+            guard let result = try await group.next() else {
+                throw SceneDetectionError.timeout
+            }
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private func analyzeLocallyInternal(
+        videoPath: String,
+        duration: Double,
+        fps: Double,
+        sceneThreshold: Double
     ) async throws -> VideoLocalAnalysis {
         // 三步并行执行（场景检测、静音检测、I-frame 提取互相独立）
         async let scenesTask: [SceneBoundary] = {

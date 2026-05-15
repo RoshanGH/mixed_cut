@@ -287,8 +287,26 @@ struct ImportedVideoCard: View {
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Corner.large, style: .continuous))
         .shadow(color: .black.opacity(0.06), radius: 4, y: 2)
         .contextMenu {
-            Button("删除视频", role: .destructive) {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(video.name, forType: .string)
+            } label: {
+                Label("复制文件名", systemImage: "doc.on.doc")
+            }
+
+            Button {
+                let url = URL(fileURLWithPath: video.localPath)
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            } label: {
+                Label("在 Finder 中显示", systemImage: "folder")
+            }
+
+            Divider()
+
+            Button(role: .destructive) {
                 showDeleteConfirm = true
+            } label: {
+                Label("删除视频", systemImage: "trash")
             }
         }
         .onChange(of: video.status) { _, newStatus in
@@ -345,10 +363,10 @@ struct ImportedVideoCard: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            // 文件名
-            Text(video.name)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(2)
+            // 文件名（可鼠标选中复制；hover 看完整名）
+            SelectableLabel(text: video.name, fontSize: 11, weight: .medium, maxLines: 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .help(video.name)
 
             // 元数据
             HStack(spacing: 6) {
@@ -699,5 +717,34 @@ struct VideoStatusBadge: View {
         case .completed: return .green
         case .failed: return .red
         }
+    }
+}
+
+// MARK: - 可鼠标选中复制的标签（NSTextField 包装，行高稳定不会破坏布局）
+struct SelectableLabel: NSViewRepresentable {
+    let text: String
+    let fontSize: CGFloat
+    let weight: NSFont.Weight
+    let maxLines: Int
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(wrappingLabelWithString: text)
+        field.isSelectable = true
+        field.isEditable = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.lineBreakMode = .byTruncatingMiddle
+        field.maximumNumberOfLines = maxLines
+        field.font = NSFont.systemFont(ofSize: fontSize, weight: weight)
+        field.textColor = .labelColor
+        field.cell?.wraps = true
+        field.cell?.isScrollable = false
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        if nsView.stringValue != text { nsView.stringValue = text }
     }
 }

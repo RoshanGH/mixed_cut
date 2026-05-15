@@ -135,12 +135,9 @@ final class ImportViewModel {
                         do {
                             try await self.analyzeVideo(video)
                         } catch is CancellationError {
-                            // 跳过
+                            // 用户删除视频，跳过
                         } catch {
-                            await MainActor.run {
-                                let prevError = self.errorMessage.map { $0 + "\n" } ?? ""
-                                self.errorMessage = prevError + "分析 \(video.name) 失败: \(error.localizedDescription)"
-                            }
+                            await self.handleAnalyzeFailure(video: video, error: error)
                         }
                     }
                 }
@@ -156,12 +153,9 @@ final class ImportViewModel {
                             do {
                                 try await self.analyzeVideo(nextVideo)
                             } catch is CancellationError {
-                                // 跳过
+                                // 用户删除视频，跳过
                             } catch {
-                                await MainActor.run {
-                                    let prevError = self.errorMessage.map { $0 + "\n" } ?? ""
-                                    self.errorMessage = prevError + "分析 \(nextVideo.name) 失败: \(error.localizedDescription)"
-                                }
+                                await self.handleAnalyzeFailure(video: nextVideo, error: error)
                             }
                         }
                     }
@@ -518,11 +512,18 @@ final class ImportViewModel {
     /// 仅当视频不被任何项目引用时，才真正删除 Video + Segment + 磁盘文件
     func deleteVideo(_ video: Video, from project: Project) {
         guard let context = modelContext else { return }
-        cancelledVideoIDs.insert(video.id)
-
-        // 删除当前项目与该视频的关联
         let videoID = video.id
-        for pv in project.projectVideos where pv.video?.id == videoID {
+        cancelledVideoIDs.insert(videoID)
+
+        // 立刻把中间态状态标为 failed，让 UI 立即反馈（后台 ASR/AI 任务即使继续跑也会被 checkCancelled 跳过）
+        if video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
+            video.status = .failed
+            video.errorMessage = "已删除"
+        }
+
+        // 删除当前项目与该视频的关联（先收集再删除，避免遍历时修改 SwiftData 关系数组）
+        let pvsToDelete = project.projectVideos.filter { $0.video?.id == videoID }
+        for pv in pvsToDelete {
             context.delete(pv)
         }
         context.safeSave()
@@ -534,9 +535,11 @@ final class ImportViewModel {
             let localPath = video.localPath
             let thumbnailPath = video.thumbnailPath
 
-            // 删除所有 Segment 及其 SchemeSegment 引用
-            for segment in video.segments {
-                for ss in segment.schemeSegments {
+            // 删除所有 Segment 及其 SchemeSegment 引用（同样先收集再删除）
+            let segmentsToDelete = Array(video.segments)
+            for segment in segmentsToDelete {
+                let ssToDelete = Array(segment.schemeSegments)
+                for ss in ssToDelete {
                     context.delete(ss)
                 }
                 context.delete(segment)
@@ -687,6 +690,19 @@ final class ImportViewModel {
             cleaned = cleaned.replacingOccurrences(of: "  ", with: " ")
         }
         return cleaned
+    }
+
+    /// 任务组里发生未捕获异常时的兜底：避免视频卡在中间态
+    private func handleAnalyzeFailure(video: Video, error: Error) {
+        if video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
+            let detail = error.localizedDescription
+            video.errorMessage = (video.errorMessage ?? "") + "\n分析失败: \(detail)"
+            video.status = .failed
+            modelContext?.safeSave()
+            MixLog.error(" 兜底标记失败: video=\(video.name), error=\(detail)")
+        }
+        let prevError = errorMessage.map { $0 + "\n" } ?? ""
+        errorMessage = prevError + "分析 \(video.name) 失败: \(error.localizedDescription)"
     }
 
     private func checkCancelled(_ video: Video) throws {

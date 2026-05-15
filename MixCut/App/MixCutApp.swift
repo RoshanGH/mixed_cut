@@ -34,6 +34,8 @@ struct MixCutApp: App {
             Self.migrateToProjectVideoRelation(container: modelContainer)
             // 从磁盘恢复丢失的项目和视频（schema 变更后数据库被清空时）
             Self.recoverFromDisk(container: modelContainer)
+            // 清理上次未正常完成的中间态视频（崩溃 / 强退 / 任务异常导致）
+            Self.resetStaleAnalyzingStatus(container: modelContainer)
         } catch {
             // 数据库损坏时尝试内存模式启动，避免 fatalError 崩溃
             let schema = Schema([
@@ -300,6 +302,35 @@ struct MixCutApp: App {
 
     /// 从磁盘恢复丢失的项目和视频
     /// 当 schema 变更导致数据库被清空时，扫描旧项目目录自动重建
+    /// 清理上次未正常完成的中间态视频
+    /// 启动时把所有处于 detectingScenes / transcribing / analyzing 的视频
+    /// 标记为 failed 或 imported（取决于是否已有分镜数据），避免 UI 永久卡住"分析中"
+    @MainActor
+    private static func resetStaleAnalyzingStatus(container: ModelContainer) {
+        let context = container.mainContext
+        let descriptor = FetchDescriptor<Video>()
+        guard let videos = try? context.fetch(descriptor) else { return }
+        var fixedCount = 0
+        for v in videos {
+            switch v.status {
+            case .detectingScenes, .transcribing, .analyzing:
+                if v.segments.isEmpty {
+                    v.status = .failed
+                    v.errorMessage = (v.errorMessage ?? "") + "\n[启动重置] 上次未完成的分析任务被中断，请点击重试"
+                } else {
+                    v.status = .completed
+                }
+                fixedCount += 1
+            default:
+                break
+            }
+        }
+        if fixedCount > 0 {
+            try? context.save()
+            MixLog.info(" 启动时已重置 \(fixedCount) 个卡在中间态的视频状态")
+        }
+    }
+
     /// 清除 bundle 内 FFmpeg/whisper 二进制及 dylib 的 quarantine 属性
     /// DMG 分发后 macOS 会给所有文件打上 com.apple.quarantine，导致 ad-hoc 签名的二进制无法执行
     private static func removeQuarantineFromBundleBinaries() {

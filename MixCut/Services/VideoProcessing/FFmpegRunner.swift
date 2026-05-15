@@ -153,34 +153,107 @@ actor FFmpegRunner {
 
         self.runningProcess = process
 
-        return try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { proc in
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-                let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { proc in
+                    stderrPipe.fileHandleForReading.readabilityHandler = nil
+                    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
 
-                if proc.terminationStatus == 0 {
-                    continuation.resume(returning: stdoutData)
-                } else {
-                    continuation.resume(throwing: FFmpegError.executionFailed(
-                        exitCode: proc.terminationStatus,
-                        stderr: stderrBuffer.value
-                    ))
+                    if proc.terminationStatus == 0 {
+                        continuation.resume(returning: stdoutData)
+                    } else {
+                        continuation.resume(throwing: FFmpegError.executionFailed(
+                            exitCode: proc.terminationStatus,
+                            stderr: stderrBuffer.value
+                        ))
+                    }
+                }
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                // 超时保护：3 分钟后终止进程（避免永久挂起；FFmpeg 处理一般几秒到几十秒）
+                DispatchQueue.global().asyncAfter(deadline: .now() + 180) {
+                    if process.isRunning {
+                        MixLog.error("FFmpeg 进程超时（3分钟），强制终止")
+                        FFmpegRunner.forceTerminate(process)
+                    }
                 }
             }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-                return
+        }, onCancel: {
+            if process.isRunning {
+                MixLog.info("FFmpeg 进程因 Task 取消被终止")
+                FFmpegRunner.forceTerminate(process)
             }
+        })
+    }
 
-            // 超时保护：5 分钟后终止进程（避免永久挂起）
-            DispatchQueue.global().asyncAfter(deadline: .now() + 300) {
-                if process.isRunning {
-                    MixLog.error("FFmpeg 进程超时（5分钟），强制终止")
-                    process.terminate()
+    /// 执行 ffprobe 并返回 stdout（用于轻量探测：I-frame 列表等）
+    /// 与 ffmpeg 不同的是只 demux 不解码，对长视频也很快
+    /// - Parameters:
+    ///   - arguments: ffprobe 参数（不含可执行路径）
+    ///   - timeoutSeconds: 超时秒数，默认 60s
+    func runProbe(arguments: [String], timeoutSeconds: Int = 60) async throws -> String {
+        let ffprobePath = binaryPath.replacingOccurrences(of: "/ffmpeg", with: "/ffprobe")
+        guard FileManager.default.fileExists(atPath: ffprobePath) else {
+            throw FFmpegError.binaryNotFound
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffprobePath)
+        process.arguments = arguments
+        process.qualityOfService = .userInitiated
+        let binDir = (ffprobePath as NSString).deletingLastPathComponent
+        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
+
+        let stdoutPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = FileHandle.nullDevice
+
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { _ in
+                    let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8) ?? ""
+                    continuation.resume(returning: output)
                 }
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                // 超时保护：可配置，先 SIGTERM，3 秒后强制 SIGKILL
+                DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(timeoutSeconds)) {
+                    if process.isRunning {
+                        MixLog.error("ffprobe 进程超时（\(timeoutSeconds)秒），强制终止")
+                        FFmpegRunner.forceTerminate(process)
+                    }
+                }
+            }
+        }, onCancel: {
+            if process.isRunning {
+                MixLog.info("ffprobe 进程因 Task 取消被终止")
+                FFmpegRunner.forceTerminate(process)
+            }
+        })
+    }
+
+    /// 先发 SIGTERM，3 秒后若进程仍存活则发 SIGKILL 强制终止
+    /// 解决 FFmpeg/Whisper 等某些状态下对 SIGTERM 无响应的问题
+    nonisolated static func forceTerminate(_ process: Process) {
+        process.terminate()  // SIGTERM
+        let pid = process.processIdentifier
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+            if process.isRunning {
+                MixLog.error("进程拒绝 SIGTERM，发送 SIGKILL: pid=\(pid)")
+                kill(pid, SIGKILL)
             }
         }
     }
@@ -191,40 +264,53 @@ actor FFmpegRunner {
             throw FFmpegError.binaryNotFound
         }
 
-        return try await withCheckedThrowingContinuation { [binaryPath] continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: binaryPath)
-            process.arguments = arguments
-            process.qualityOfService = .userInitiated
-            let binDir = (binaryPath as NSString).deletingLastPathComponent
-            process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binaryPath)
+        process.arguments = arguments
+        process.qualityOfService = .userInitiated
+        let binDir = (binaryPath as NSString).deletingLastPathComponent
+        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
 
-            let stderrPipe = Pipe()
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = stderrPipe
+        let stderrPipe = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = stderrPipe
 
-            process.terminationHandler = { _ in
-                let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let output = String(data: data, encoding: .utf8) ?? ""
-                continuation.resume(returning: output)
+        return try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { _ in
+                    let data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    let output = String(data: data, encoding: .utf8) ?? ""
+                    continuation.resume(returning: output)
+                }
+
+                do {
+                    try process.run()
+                } catch {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                // 超时保护：3 分钟
+                DispatchQueue.global().asyncAfter(deadline: .now() + 180) {
+                    if process.isRunning {
+                        MixLog.error("FFmpeg (stderr) 进程超时（3分钟），强制终止")
+                        FFmpegRunner.forceTerminate(process)
+                    }
+                }
             }
-
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-                return
+        }, onCancel: {
+            if process.isRunning {
+                MixLog.info("FFmpeg (stderr) 进程因 Task 取消被终止")
+                FFmpegRunner.forceTerminate(process)
             }
-
-            DispatchQueue.global().asyncAfter(deadline: .now() + 300) {
-                if process.isRunning { process.terminate() }
-            }
-        }
+        })
     }
 
     /// 取消当前执行
     func cancel() {
-        runningProcess?.terminate()
+        if let p = runningProcess {
+            FFmpegRunner.forceTerminate(p)
+        }
         runningProcess = nil
     }
 
@@ -267,25 +353,24 @@ actor FFmpegRunner {
             return true  // 无 ffprobe 时默认有音频
         }
 
-        do {
-            // 利用已有的 runForStderr 思路，用 withCheckedContinuation 异步等待
-            return await withCheckedContinuation { continuation in
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: ffprobePath)
-                process.arguments = [
-                    "-v", "quiet",
-                    "-select_streams", "a",
-                    "-show_entries", "stream=codec_type",
-                    "-of", "csv=p=0",
-                    path
-                ]
-                process.qualityOfService = .userInitiated
-                let binDir = (ffprobePath as NSString).deletingLastPathComponent
-                process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = FileHandle.nullDevice
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffprobePath)
+        process.arguments = [
+            "-v", "quiet",
+            "-select_streams", "a",
+            "-show_entries", "stream=codec_type",
+            "-of", "csv=p=0",
+            path
+        ]
+        process.qualityOfService = .userInitiated
+        let binDir = (ffprobePath as NSString).deletingLastPathComponent
+        process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
 
+        return await withTaskCancellationHandler(operation: {
+            await withCheckedContinuation { continuation in
                 process.terminationHandler = { _ in
                     let data = pipe.fileHandleForReading.readDataToEndOfFile()
                     let output = String(data: data, encoding: .utf8) ?? ""
@@ -296,9 +381,22 @@ actor FFmpegRunner {
                     try process.run()
                 } catch {
                     continuation.resume(returning: true) // 出错时默认有音频
+                    return
+                }
+
+                // 超时保护：30 秒（ffprobe 通常瞬时返回）
+                DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+                    if process.isRunning {
+                        MixLog.error("ffprobe (hasAudio) 进程超时（30秒），强制终止")
+                        FFmpegRunner.forceTerminate(process)
+                    }
                 }
             }
-        }
+        }, onCancel: {
+            if process.isRunning {
+                FFmpegRunner.forceTerminate(process)
+            }
+        })
     }
 
     /// 拼接多个视频片段为一个 MP4（统一编码，确保多源视频可混剪）
