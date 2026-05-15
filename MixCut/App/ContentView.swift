@@ -32,6 +32,8 @@ struct ContentView: View {
 
     @State private var selectedNavItem: NavigationItem? = .overview
 
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+
     var body: some View {
         HStack(spacing: 0) {
             // 侧边栏
@@ -60,6 +62,16 @@ struct ContentView: View {
             schemeVM.setModelContext(modelContext)
         }
         .frame(minWidth: 900, minHeight: 600)
+        .sheet(isPresented: Binding(
+            get: { !hasCompletedOnboarding },
+            set: { newValue in
+                if !newValue { hasCompletedOnboarding = true }
+            }
+        )) {
+            OnboardingView {
+                hasCompletedOnboarding = true
+            }
+        }
     }
 
     @ViewBuilder

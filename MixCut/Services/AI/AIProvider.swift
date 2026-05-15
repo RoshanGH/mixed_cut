@@ -34,7 +34,10 @@ protocol AIProvider: Actor {
 enum AIProviderType: String, CaseIterable, Identifiable, Codable {
     case qwen = "qwen"
     case minimax = "minimax"
+    case deepseek = "deepseek"
     case claude = "claude"
+    /// 国内转发网关（要求 OpenAI 兼容协议，下面再选具体平台 Claude / Gemini / OpenAI）
+    /// rawValue 保留为 `claude_relay` 以兼容历史用户配置
     case claudeRelay = "claude_relay"
     case custom = "custom"
 
@@ -44,8 +47,9 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .qwen: return "千问"
         case .minimax: return "MiniMax"
+        case .deepseek: return "DeepSeek"
         case .claude: return "Claude"
-        case .claudeRelay: return "Claude (国内转发)"
+        case .claudeRelay: return "国内转发网关"
         case .custom: return "自定义"
         }
     }
@@ -53,13 +57,41 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
     var models: [String] {
         switch self {
         case .qwen:
-            return ["qwen-max-latest", "qwen-plus-latest", "qwen-turbo-latest"]
+            // 阿里云通义千问 — DashScope OpenAI 兼容接口
+            return [
+                "qwen3-max",
+                "qwen-max-latest",
+                "qwen3-coder-plus",
+                "qwen-plus-latest",
+                "qwen-flash",
+                "qwen-turbo-latest",
+            ]
         case .minimax:
-            return ["MiniMax-M2.5", "MiniMax-M1-80k", "MiniMax-Text-01", "abab6.5s-chat"]
+            return [
+                "MiniMax-M2.7",
+                "MiniMax-M2.5",
+                "MiniMax-M2.1",
+                "MiniMax-M2.7-highspeed",
+                "MiniMax-M2.5-highspeed",
+            ]
+        case .deepseek:
+            return [
+                "deepseek-v4-pro",
+                "deepseek-v4-flash",
+                "deepseek-chat",
+                "deepseek-reasoner",
+            ]
         case .claude:
-            return ["claude-sonnet-4-20250514", "claude-haiku-4-20250414"]
+            return [
+                "claude-opus-4-7",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5-20251001",
+                "claude-opus-4-6",
+                "claude-sonnet-4-5-20250929",
+            ]
         case .claudeRelay:
-            return ["claude-sonnet-4-6", "claude-sonnet-4-5-20250929", "claude-haiku-4-5-20251001", "claude-opus-4-6"]
+            // 国内转发网关：模型列表取决于二级选择的平台
+            return KeychainHelper.relayPlatform.models
         case .custom:
             let name = KeychainHelper.customModelName
             return name.isEmpty ? ["custom-model"] : [name]
@@ -68,10 +100,11 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
 
     var defaultModel: String {
         switch self {
-        case .qwen: return "qwen-max-latest"
+        case .qwen: return "qwen-plus-latest"
         case .minimax: return "MiniMax-M2.5"
-        case .claude: return "claude-sonnet-4-20250514"
-        case .claudeRelay: return "claude-sonnet-4-6"
+        case .deepseek: return "deepseek-v4-flash"
+        case .claude: return "claude-sonnet-4-6"
+        case .claudeRelay: return KeychainHelper.relayPlatform.defaultModel
         case .custom:
             let name = KeychainHelper.customModelName
             return name.isEmpty ? "custom-model" : name
@@ -88,35 +121,133 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .qwen:
             switch model {
-            case "qwen-max-latest": return "Qwen Max (最新)"
-            case "qwen-plus-latest": return "Qwen Plus (最新)"
-            case "qwen-turbo-latest": return "Qwen Turbo (最新)"
+            case "qwen3-max": return "Qwen3 Max (旗舰)"
+            case "qwen-max-latest": return "Qwen Max (稳定旗舰)"
+            case "qwen3-coder-plus": return "Qwen3 Coder Plus (代码强化)"
+            case "qwen-plus-latest": return "Qwen Plus (主力 · 推荐)"
+            case "qwen-flash": return "Qwen Flash (快/高性价比)"
+            case "qwen-turbo-latest": return "Qwen Turbo (极速)"
             default: return model
             }
         case .minimax:
             switch model {
-            case "MiniMax-M2.5": return "MiniMax M2.5 (最新)"
-            case "MiniMax-M1-80k": return "MiniMax M1 80K"
-            case "MiniMax-Text-01": return "MiniMax Text 01"
-            case "abab6.5s-chat": return "abab 6.5s Chat"
+            case "MiniMax-M2.7": return "MiniMax M2.7 (最新旗舰)"
+            case "MiniMax-M2.5": return "MiniMax M2.5 (稳定主力 · 推荐)"
+            case "MiniMax-M2.1": return "MiniMax M2.1 (编程强化)"
+            case "MiniMax-M2.7-highspeed": return "MiniMax M2.7 高速版"
+            case "MiniMax-M2.5-highspeed": return "MiniMax M2.5 高速版"
+            default: return model
+            }
+        case .deepseek:
+            switch model {
+            case "deepseek-v4-pro": return "DeepSeek V4 Pro (旗舰 · 1M ctx)"
+            case "deepseek-v4-flash": return "DeepSeek V4 Flash (推荐 · 1M ctx)"
+            case "deepseek-chat": return "DeepSeek Chat (兼容别名 · 2026-07 废弃)"
+            case "deepseek-reasoner": return "DeepSeek Reasoner (兼容别名 · 2026-07 废弃)"
             default: return model
             }
         case .claude:
             switch model {
-            case "claude-sonnet-4-20250514": return "Claude Sonnet 4"
-            case "claude-haiku-4-20250414": return "Claude Haiku 4"
+            case "claude-opus-4-7": return "Claude Opus 4.7 (最强)"
+            case "claude-sonnet-4-6": return "Claude Sonnet 4.6 (推荐)"
+            case "claude-haiku-4-5-20251001": return "Claude Haiku 4.5 (快速)"
+            case "claude-opus-4-6": return "Claude Opus 4.6"
+            case "claude-sonnet-4-5-20250929": return "Claude Sonnet 4.5"
             default: return model
             }
         case .claudeRelay:
-            switch model {
-            case "claude-sonnet-4-6": return "Claude Sonnet 4.6"
-            case "claude-sonnet-4-5-20250929": return "Claude Sonnet 4.5"
-            case "claude-haiku-4-5-20251001": return "Claude Haiku 4.5"
-            case "claude-opus-4-6": return "Claude Opus 4.6"
-            default: return model
-            }
+            return KeychainHelper.relayPlatform.modelDisplayName(model)
         case .custom:
             return model
+        }
+    }
+}
+
+/// 国内转发网关支持的二级平台
+/// 网关要求兼容 OpenAI 协议，model 名按各家平台规范填写
+enum RelayPlatform: String, CaseIterable, Identifiable, Codable {
+    case claude
+    case gemini
+    case openai
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude (Anthropic)"
+        case .gemini: return "Gemini (Google)"
+        case .openai: return "OpenAI / GPT"
+        }
+    }
+
+    var models: [String] {
+        switch self {
+        case .claude:
+            return [
+                "claude-opus-4-7",
+                "claude-sonnet-4-6",
+                "claude-haiku-4-5-20251001",
+                "claude-opus-4-6",
+                "claude-sonnet-4-5-20250929",
+            ]
+        case .gemini:
+            return [
+                "gemini-3.1-pro-preview",
+                "gemini-2.5-pro",
+                "gemini-3-flash-preview",
+                "gemini-2.5-flash",
+                "gemini-3.1-flash-lite",
+            ]
+        case .openai:
+            return [
+                "gpt-5.5",
+                "gpt-5.4-mini",
+                "gpt-5-mini",
+                "o3",
+                "gpt-5-nano",
+                "gpt-4o",
+            ]
+        }
+    }
+
+    var defaultModel: String {
+        switch self {
+        case .claude: return "claude-sonnet-4-6"
+        case .gemini: return "gemini-2.5-flash"
+        case .openai: return "gpt-5.4-mini"
+        }
+    }
+
+    func modelDisplayName(_ model: String) -> String {
+        switch self {
+        case .claude:
+            switch model {
+            case "claude-opus-4-7": return "Claude Opus 4.7 (最强)"
+            case "claude-sonnet-4-6": return "Claude Sonnet 4.6 (推荐)"
+            case "claude-haiku-4-5-20251001": return "Claude Haiku 4.5 (快速)"
+            case "claude-opus-4-6": return "Claude Opus 4.6"
+            case "claude-sonnet-4-5-20250929": return "Claude Sonnet 4.5"
+            default: return model
+            }
+        case .gemini:
+            switch model {
+            case "gemini-3.1-pro-preview": return "Gemini 3.1 Pro (旗舰 · 预览)"
+            case "gemini-2.5-pro": return "Gemini 2.5 Pro (稳定旗舰)"
+            case "gemini-3-flash-preview": return "Gemini 3 Flash (新一代主力)"
+            case "gemini-2.5-flash": return "Gemini 2.5 Flash (推荐)"
+            case "gemini-3.1-flash-lite": return "Gemini 3.1 Flash Lite (快/廉价)"
+            default: return model
+            }
+        case .openai:
+            switch model {
+            case "gpt-5.5": return "GPT-5.5 (旗舰)"
+            case "gpt-5.4-mini": return "GPT-5.4 mini (推荐)"
+            case "gpt-5-mini": return "GPT-5 mini"
+            case "o3": return "o3 (深度推理)"
+            case "gpt-5-nano": return "GPT-5 nano (快/廉价)"
+            case "gpt-4o": return "GPT-4o (兼容)"
+            default: return model
+            }
         }
     }
 }

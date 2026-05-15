@@ -9,9 +9,13 @@ struct SettingsView: View {
     @State private var selectedModel: String = ""
     @State private var customBaseURL: String = ""
     @State private var customModelName: String = ""
+    @State private var relayBaseURL: String = ""
+    @State private var relayPlatform: RelayPlatform = KeychainHelper.relayPlatform
     @State private var isDownloadingModel = false
     @State private var modelDownloadError: String?
     @State private var whisperModelReady = false
+
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -106,6 +110,29 @@ struct SettingsView: View {
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12, design: .monospaced))
                 } else {
+                    if selectedProvider == .claudeRelay {
+                        TextField("网关地址", text: $relayBaseURL,
+                                  prompt: Text("https://your-relay.example.com/v1"))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+
+                        Text("要求兼容 OpenAI 协议的转发网关地址")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+
+                        Picker("平台", selection: $relayPlatform) {
+                            ForEach(RelayPlatform.allCases) { platform in
+                                Text(platform.displayName).tag(platform)
+                            }
+                        }
+                        .onChange(of: relayPlatform) { _, newValue in
+                            KeychainHelper.relayPlatform = newValue
+                            // 切换平台后将模型重置为新平台的默认模型
+                            selectedModel = newValue.defaultModel
+                            KeychainHelper.setSelectedModel(selectedModel, for: .claudeRelay)
+                        }
+                    }
+
                     Picker("模型", selection: $selectedModel) {
                         ForEach(selectedProvider.models, id: \.self) { model in
                             Text(selectedProvider.modelDisplayName(model)).tag(model)
@@ -134,8 +161,11 @@ struct SettingsView: View {
                         saveAPIKey()
                     }
                     .controlSize(.small)
-                    .disabled(apiKey.isEmpty || apiKey.starts(with: "•") ||
-                             (selectedProvider == .custom && (customBaseURL.isEmpty || customModelName.isEmpty)))
+                    .disabled(
+                        apiKey.isEmpty || apiKey.starts(with: "•") ||
+                        (selectedProvider == .custom && (customBaseURL.isEmpty || customModelName.isEmpty)) ||
+                        (selectedProvider == .claudeRelay && relayBaseURL.isEmpty)
+                    )
 
                     if isAPIKeySaved {
                         Button("清除", role: .destructive) {
@@ -255,6 +285,21 @@ struct SettingsView: View {
             }
 
             Section("关于") {
+                LabeledContent("使用引导") {
+                    Button {
+                        hasCompletedOnboarding = false
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 11))
+                            Text("重新查看")
+                                .font(.system(size: 12))
+                        }
+                    }
+                    .controlSize(.small)
+                }
+
                 LabeledContent("开发者") {
                     Text("MengGang")
                         .font(.system(size: 12))
@@ -300,9 +345,22 @@ struct SettingsView: View {
 
     private func loadProviderState() {
         isAPIKeySaved = KeychainHelper.hasAPIKey(for: selectedProvider)
-        selectedModel = KeychainHelper.selectedModel(for: selectedProvider)
+
+        // 历史保存的 model ID 可能已被新版本移除，回退到 defaultModel
+        let stored = KeychainHelper.selectedModel(for: selectedProvider)
+        if selectedProvider == .custom {
+            selectedModel = stored
+        } else if selectedProvider.models.contains(stored) {
+            selectedModel = stored
+        } else {
+            selectedModel = selectedProvider.defaultModel
+            KeychainHelper.setSelectedModel(selectedModel, for: selectedProvider)
+        }
+
         customBaseURL = KeychainHelper.customBaseURL
         customModelName = KeychainHelper.customModelName
+        relayBaseURL = KeychainHelper.relayBaseURL
+        relayPlatform = KeychainHelper.relayPlatform
         showAPIKey = false
         if isAPIKeySaved {
             apiKey = "••••••••••••••••••••"
@@ -321,6 +379,12 @@ struct SettingsView: View {
                 KeychainHelper.customBaseURL = customBaseURL
                 KeychainHelper.customModelName = customModelName
                 KeychainHelper.setSelectedModel(customModelName, for: .custom)
+            }
+
+            // 国内转发网关额外保存网关地址 + 平台
+            if selectedProvider == .claudeRelay {
+                KeychainHelper.relayBaseURL = relayBaseURL
+                KeychainHelper.relayPlatform = relayPlatform
             }
 
             isAPIKeySaved = true

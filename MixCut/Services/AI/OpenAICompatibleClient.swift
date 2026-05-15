@@ -45,7 +45,7 @@ actor OpenAICompatibleClient: AIProvider {
     private var modelName: String
     private var maxRetries = 3
     private var baseRetryDelay: UInt64 = 2_000_000_000 // 2秒
-    private var requestTimeout: TimeInterval = 300 // 5分钟（批量组合生成需要较长时间）
+    private var requestTimeout: TimeInterval = 120 // 2分钟（单次请求；避免长时间卡死）
 
     init(providerType: AIProviderType, apiKey: String, modelName: String? = nil) {
         self.providerType = providerType
@@ -60,10 +60,15 @@ actor OpenAICompatibleClient: AIProvider {
             return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         case .minimax:
             return "https://api.minimax.chat/v1"
+        case .deepseek:
+            return "https://api.deepseek.com/v1"
         case .claude:
             return "https://api.anthropic.com/v1"
         case .claudeRelay:
-            return "https://apicn.unifyllm.top/v1"
+            let url = KeychainHelper.relayBaseURL
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            return url
         case .custom:
             let url = KeychainHelper.customBaseURL
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -117,6 +122,11 @@ actor OpenAICompatibleClient: AIProvider {
         guard !apiKey.isEmpty else {
             MixLog.error("API Key 为空！provider=\(self.providerType.displayName)")
             throw AIProviderError.apiKeyNotConfigured(providerType)
+        }
+
+        guard !baseURL.isEmpty, baseURL.hasPrefix("http") else {
+            MixLog.error("baseURL 无效！provider=\(self.providerType.displayName), url=\(baseURL)")
+            throw AIProviderError.requestFailed("\(providerType.displayName) 网关地址未配置或格式错误，请在设置中填写")
         }
 
         MixLog.info("发送请求: provider=\(self.providerType.displayName), model=\(self.modelName), prompt长度=\(prompt.count)")

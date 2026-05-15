@@ -59,6 +59,28 @@ enum KeychainHelper {
         set { defaults.set(newValue, forKey: "custom_model_name") }
     }
 
+    /// 国内转发网关地址（用户自行配置，要求兼容 OpenAI 协议）
+    static var relayBaseURL: String {
+        get {
+            // 兼容旧 key：claude_relay_base_url
+            if let v = defaults.string(forKey: "relay_base_url"), !v.isEmpty { return v }
+            return defaults.string(forKey: "claude_relay_base_url") ?? ""
+        }
+        set { defaults.set(newValue, forKey: "relay_base_url") }
+    }
+
+    /// 国内转发网关下选择的平台（Claude / Gemini / OpenAI）
+    static var relayPlatform: RelayPlatform {
+        get {
+            guard let raw = defaults.string(forKey: "relay_platform"),
+                  let platform = RelayPlatform(rawValue: raw) else {
+                return .claude
+            }
+            return platform
+        }
+        set { defaults.set(newValue.rawValue, forKey: "relay_platform") }
+    }
+
     // MARK: - 模型选择
 
     private static let modelKeyPrefix = "selected_model_"
