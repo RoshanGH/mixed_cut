@@ -1,5 +1,16 @@
 import Foundation
 
+/// Whisper 模型下载进度（真实字节数 + 速度）
+struct DownloadProgress: Sendable {
+    let receivedBytes: Int64
+    let totalBytes: Int64
+    let bytesPerSecond: Double
+
+    var fraction: Double {
+        totalBytes > 0 ? Double(receivedBytes) / Double(totalBytes) : 0
+    }
+}
+
 /// ASR 识别结果
 struct TranscriptionResult: Sendable {
     let text: String                      // 完整转录文本
@@ -647,12 +658,15 @@ actor ASRService {
         ],
     ]
 
-    /// 下载 whisper 模型到应用缓存目录（自动尝试多个镜像源）
+    /// 下载 whisper 模型到应用缓存目录
+    /// - 真实字节数进度（流式读，每 250ms 回调一次）
+    /// - HTTP Range 断点续传（partial 文件保留，下次接着下）
+    /// - 每个镜像源重试 3 次（指数退避），失败再切下一个源
+    /// - 可中断（响应 Task 取消）
     func downloadModelIfNeeded(
         modelName: String = "ggml-large-v3-turbo",
-        onProgress: (@Sendable (Double) -> Void)? = nil
+        onProgress: (@Sendable (DownloadProgress) -> Void)? = nil
     ) async throws -> String {
-        // 先检查是否已存在
         if let existing = findWhisperCppModel() {
             return existing
         }
@@ -667,42 +681,155 @@ actor ASRService {
         let modelDir = cacheDir.appendingPathComponent("com.mixcut.app/whisper-models")
         try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
         let destPath = modelDir.appendingPathComponent("\(modelName).bin").path
+        let partialPath = destPath + ".partial"
 
-        // 使用自定义超时的 URLSession（大文件下载，超时 30 分钟）
+        // 单次请求 60s 超时（卡住的连接快速失败切重试）；整体允许 2 小时（够续传多次）
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 1800
-        config.timeoutIntervalForResource = 3600
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 7200
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         let session = URLSession(configuration: config)
         defer { session.finishTasksAndInvalidate() }
 
-        // 依次尝试每个镜像源（国内镜像优先）
         var lastError: Error?
+
         for urlString in urls {
             guard let url = URL(string: urlString) else { continue }
             let source = urlString.contains("hf-mirror") ? "国内镜像" : "HuggingFace"
-            MixLog.info("开始下载 Whisper 模型: \(modelName)（\(source)）")
-            onProgress?(0.1)
 
-            do {
-                let (tempURL, _) = try await session.download(from: url, delegate: nil)
-                onProgress?(0.9)
+            for attempt in 0..<3 {
+                try Task.checkCancellation()
 
-                // 移动到目标路径
-                if FileManager.default.fileExists(atPath: destPath) {
-                    try FileManager.default.removeItem(atPath: destPath)
+                if attempt > 0 {
+                    let delaySec = UInt64(1) << UInt64(attempt) // 2s, 4s
+                    MixLog.info("[\(source)] 第 \(attempt) 次重试（等 \(delaySec)s）...")
+                    try await Task.sleep(nanoseconds: delaySec * 1_000_000_000)
                 }
-                try FileManager.default.moveItem(at: tempURL, to: URL(fileURLWithPath: destPath))
 
-                MixLog.info("Whisper 模型下载完成: \(modelName)")
-                return destPath
-            } catch {
-                MixLog.error("从 \(source) 下载失败: \(error.localizedDescription)，尝试下一个源...")
-                lastError = error
-                continue
+                MixLog.info("开始下载 Whisper 模型: \(modelName)（\(source) · attempt \(attempt + 1)/3）")
+
+                do {
+                    try await downloadOneAttempt(
+                        url: url,
+                        partialPath: partialPath,
+                        session: session,
+                        onProgress: onProgress
+                    )
+
+                    // 成功：move partial → dest
+                    if FileManager.default.fileExists(atPath: destPath) {
+                        try FileManager.default.removeItem(atPath: destPath)
+                    }
+                    try FileManager.default.moveItem(atPath: partialPath, toPath: destPath)
+                    MixLog.info("Whisper 模型下载完成: \(modelName)")
+                    return destPath
+                } catch is CancellationError {
+                    MixLog.info("Whisper 模型下载被用户取消")
+                    throw CancellationError()
+                } catch {
+                    lastError = error
+                    MixLog.error("[\(source) attempt \(attempt + 1)] 下载失败: \(error.localizedDescription)")
+                    // 不删除 partial：下次（即使切换源）也能续传
+                }
             }
         }
 
         throw lastError ?? ASRError.modelNotFound
+    }
+
+    /// 单次下载尝试（支持 Range 续传，流式写入 partial 文件，250ms 回调一次进度）
+    private func downloadOneAttempt(
+        url: URL,
+        partialPath: String,
+        session: URLSession,
+        onProgress: (@Sendable (DownloadProgress) -> Void)?
+    ) async throws {
+        let fm = FileManager.default
+        let existingSize: Int64 = ((try? fm.attributesOfItem(atPath: partialPath))?[.size] as? NSNumber)?.int64Value ?? 0
+
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 60
+        if existingSize > 0 {
+            req.setValue("bytes=\(existingSize)-", forHTTPHeaderField: "Range")
+            MixLog.info("Range 续传: 已下载 \(existingSize) bytes")
+        }
+
+        let (bytes, response) = try await session.bytes(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        // 416 Range Not Satisfiable：通常意味着 partial 已经下完了
+        if http.statusCode == 416, existingSize > 0 {
+            MixLog.info("服务器返回 416，假定 partial 文件已完整")
+            return
+        }
+        guard (200...299).contains(http.statusCode) else {
+            throw URLError(URLError.Code(rawValue: http.statusCode))
+        }
+
+        // 服务器是否真的接受了 Range（206 Partial Content）
+        let appendMode = (http.statusCode == 206 && existingSize > 0)
+        if !appendMode && existingSize > 0 {
+            // 服务器不支持 Range 或忽略了 Range，丢弃旧 partial 重新下
+            MixLog.info("服务器未支持 Range（status=\(http.statusCode)），从头开始")
+            try? fm.removeItem(atPath: partialPath)
+        }
+
+        // total = existing + remaining，Content-Range 优先
+        let remaining = http.expectedContentLength
+        let total: Int64 = {
+            if let cr = http.value(forHTTPHeaderField: "Content-Range"),
+               let slashPart = cr.split(separator: "/").last,
+               let n = Int64(slashPart) {
+                return n
+            }
+            if remaining > 0 { return (appendMode ? existingSize : 0) + remaining }
+            return 0
+        }()
+
+        if !fm.fileExists(atPath: partialPath) {
+            fm.createFile(atPath: partialPath, contents: nil)
+        }
+        let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: partialPath))
+        if appendMode {
+            try handle.seekToEnd()
+        } else {
+            try handle.truncate(atOffset: 0)
+        }
+        defer { try? handle.close() }
+
+        var written: Int64 = appendMode ? existingSize : 0
+        var buffer = Data()
+        buffer.reserveCapacity(64 * 1024)
+        var lastReportTime = Date()
+        var lastReportBytes = written
+        // 立即报一次起始进度
+        onProgress?(DownloadProgress(receivedBytes: written, totalBytes: total, bytesPerSecond: 0))
+
+        for try await byte in bytes {
+            try Task.checkCancellation()
+            buffer.append(byte)
+            if buffer.count >= 64 * 1024 {
+                try handle.write(contentsOf: buffer)
+                written += Int64(buffer.count)
+                buffer.removeAll(keepingCapacity: true)
+
+                let now = Date()
+                let elapsed = now.timeIntervalSince(lastReportTime)
+                if elapsed >= 0.25 {
+                    let bps = Double(written - lastReportBytes) / elapsed
+                    onProgress?(DownloadProgress(receivedBytes: written, totalBytes: total, bytesPerSecond: bps))
+                    lastReportTime = now
+                    lastReportBytes = written
+                }
+            }
+        }
+        if !buffer.isEmpty {
+            try handle.write(contentsOf: buffer)
+            written += Int64(buffer.count)
+        }
+        onProgress?(DownloadProgress(receivedBytes: written, totalBytes: max(total, written), bytesPerSecond: 0))
     }
 
     /// 检查模型是否可用

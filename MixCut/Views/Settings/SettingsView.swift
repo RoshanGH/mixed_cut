@@ -13,6 +13,8 @@ struct SettingsView: View {
     @State private var relayPlatform: RelayPlatform = KeychainHelper.relayPlatform
     @State private var isDownloadingModel = false
     @State private var modelDownloadError: String?
+    @State private var downloadProgress: DownloadProgress?
+    @State private var downloadTask: Task<Void, Never>?
     @State private var whisperModelReady = false
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
@@ -206,12 +208,33 @@ struct SettingsView: View {
                                 .font(.system(size: 12))
                         }
                     } else if isDownloadingModel {
-                        HStack(spacing: 4) {
-                            ProgressView()
-                                .controlSize(.small)
-                            Text("下载中...")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let p = downloadProgress, p.totalBytes > 0 {
+                                ProgressView(value: p.fraction)
+                                    .controlSize(.small)
+                                    .frame(width: 200)
+                                HStack(spacing: 6) {
+                                    Text(String(format: "%.1f%%", p.fraction * 100))
+                                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    Text("\(formatBytes(p.receivedBytes)) / \(formatBytes(p.totalBytes))")
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                    if p.bytesPerSecond > 0 {
+                                        Text("• \(formatBytes(Int64(p.bytesPerSecond)))/s")
+                                            .font(.system(size: 10, design: .monospaced))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                            } else {
+                                HStack(spacing: 4) {
+                                    ProgressView().controlSize(.small)
+                                    Text("连接中…").font(.system(size: 12)).foregroundStyle(.secondary)
+                                }
+                            }
+                            Button("取消") {
+                                downloadTask?.cancel()
+                            }
+                            .controlSize(.small)
                         }
                     } else {
                         VStack(alignment: .leading, spacing: 4) {
@@ -404,15 +427,32 @@ struct SettingsView: View {
     private func downloadWhisperModel() {
         isDownloadingModel = true
         modelDownloadError = nil
-        Task {
+        downloadProgress = nil
+        downloadTask = Task { @MainActor in
             do {
                 let asr = ASRService()
-                _ = try await asr.downloadModelIfNeeded(modelName: "ggml-large-v3-turbo")
+                _ = try await asr.downloadModelIfNeeded(
+                    modelName: "ggml-large-v3-turbo",
+                    onProgress: { progress in
+                        Task { @MainActor in
+                            downloadProgress = progress
+                        }
+                    }
+                )
                 whisperModelReady = true
+            } catch is CancellationError {
+                modelDownloadError = "已取消"
             } catch {
                 modelDownloadError = error.localizedDescription
             }
             isDownloadingModel = false
+            downloadProgress = nil
+            downloadTask = nil
         }
+    }
+
+    /// 把字节数格式化为 KB / MB / GB
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
     }
 }
