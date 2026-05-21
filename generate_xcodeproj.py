@@ -457,7 +457,7 @@ pbxproj += f"""\t\t{DEBUG_CONFIG_TARGET} /* Debug */ = {{
 \t\t\t\t\t"$(inherited)",
 \t\t\t\t\t"@executable_path/../Frameworks",
 \t\t\t\t);
-\t\t\t\tMARKETING_VERSION = 0.2.0;
+\t\t\t\tMARKETING_VERSION = 0.2.1;
 \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 \t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
 \t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;
@@ -486,7 +486,7 @@ pbxproj += f"""\t\t{RELEASE_CONFIG_TARGET} /* Release */ = {{
 \t\t\t\t\t"$(inherited)",
 \t\t\t\t\t"@executable_path/../Frameworks",
 \t\t\t\t);
-\t\t\t\tMARKETING_VERSION = 0.2.0;
+\t\t\t\tMARKETING_VERSION = 0.2.1;
 \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 \t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
 \t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;
