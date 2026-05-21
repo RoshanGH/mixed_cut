@@ -135,6 +135,10 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 - **不要自动提交 git 和发布版本**：修改代码后只做编译+重启+打包 DMG，不要执行 `git add/commit/push` 和 `gh release`。必须等用户验证没问题后，用户明确要求才能提交和发版。
 - **不要自作主张 `git tag` 或 `gh release create`**：版本号和发布时机由用户决定。
+- **每次发版必须双端同步：GitHub + Gitee 都要有对应 release（含 DMG 附件）**。
+  GitHub 用 `gh release create vX.Y.Z ~/Desktop/MixCut.dmg --title ... --notes ...`；
+  Gitee 同步用仓库根目录的 `./release_gitee.sh`（默认拿最新 tag，会自动复用 GitHub 上的 release notes 并上传 DMG）。
+  Gitee Token 保存在 `~/.config/mixcut/gitee.env`（不在 git 仓库内），换 token 编辑这个文件。
 
 ## 关键开发规则（必须遵守）
 

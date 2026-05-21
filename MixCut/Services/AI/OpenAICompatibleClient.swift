@@ -200,7 +200,8 @@ actor OpenAICompatibleClient: AIProvider {
                     var b: [String: Any] = [
                         "model": modelName,
                         "messages": messages,
-                        "temperature": jsonMode ? 0.3 : 0.7
+                        "temperature": jsonMode ? 0.3 : 0.7,
+                        "max_tokens": 8192
                     ]
                     // 多数 OpenAI 兼容转发网关对 Claude/Gemini 后端不识别 response_format，硬传可能 400
                     let lowerModel = modelName.lowercased()
@@ -305,9 +306,18 @@ actor OpenAICompatibleClient: AIProvider {
 
         // 方式 4: 找第一个 { 和最后一个 } 之间的内容（兜底）
         let trimmed = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.hasPrefix("{"), let firstBrace = trimmed.firstIndex(of: "{"),
+        if !trimmed.hasPrefix("{") && !trimmed.hasPrefix("["),
+           let firstBrace = trimmed.firstIndex(of: "{"),
            let lastBrace = trimmed.lastIndex(of: "}") {
             cleaned = String(trimmed[firstBrace...lastBrace])
+        }
+
+        // 方式 5: 数组兜底 —— 返回以 [ 开头或包含数组时，按数组方式提取
+        let trimmed2 = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed2.hasPrefix("{") && !trimmed2.hasPrefix("["),
+           let firstBracket = trimmed2.firstIndex(of: "["),
+           let lastBracket = trimmed2.lastIndex(of: "]") {
+            cleaned = String(trimmed2[firstBracket...lastBracket])
         }
 
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)

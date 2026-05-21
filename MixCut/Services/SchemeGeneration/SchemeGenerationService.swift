@@ -30,6 +30,21 @@ struct SchemeStrategy: Decodable {
     }
 }
 
+// MARK: - 策略批次包装（兼容 response_format=json_object 要求顶层是对象）
+
+struct StrategyBatch: Decodable {
+    let strategies: [SchemeStrategy]
+
+    enum CodingKeys: String, CodingKey {
+        case strategies
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        strategies = (try? container.decode([SchemeStrategy].self, forKey: .strategies)) ?? []
+    }
+}
+
 // MARK: - 精简 AI 输出格式（只有 segment ID 序列）
 
 struct AICompactComposition: Decodable {
@@ -179,24 +194,41 @@ actor SchemeGenerationService {
 
         \(customPrompt.map { "## 用户自定义要求（必须严格遵守）\n\($0)" } ?? "")
 
-        ## 输出要求
-        请输出 JSON 数组，每个元素包含：
-        - name: 方案名称（6-10字）
-        - style: 广告风格
-        - description: 一句话描述核心策略（20-30字）
-        - target_audience: 目标受众（8-15字）
-        - narrative_structure: 叙事结构（箭头连接）
-        - target_duration: 目标时长（秒）
-        - estimated_quality: 预估质量分（0-10）
+        ## 输出格式（JSON 对象）
+        必须输出一个顶层对象，包含 strategies 数组，恰好 \(count) 个元素：
+        {"strategies": [
+          {
+            "name": "方案名",
+            "style": "广告风格",
+            "description": "一句话描述核心策略",
+            "target_audience": "目标受众",
+            "narrative_structure": "开场 → 中段 → 结尾",
+            "target_duration": 30,
+            "estimated_quality": 8.5
+          }
+        ]}
 
         确保 \(count) 个策略之间有明显差异（不同风格、不同受众、不同时长）。
-        直接输出 JSON 数组，不要包含其他内容。
+        直接输出 JSON 对象，不要包含其他内容。
         """
 
-        return try await aiProvider.generateJSON(
-            prompt: prompt,
-            responseType: [SchemeStrategy].self
-        )
+        // 优先按对象包装解析；如果模型固执地返回裸数组也接受
+        do {
+            let batch = try await aiProvider.generateJSON(
+                prompt: prompt,
+                responseType: StrategyBatch.self
+            )
+            if !batch.strategies.isEmpty {
+                return batch.strategies
+            }
+            // 对象包装解析出来是空数组，可能模型直接返回了数组顶层，走回退
+            throw AIProviderError.jsonParsingFailed("strategies 字段为空")
+        } catch {
+            return try await aiProvider.generateJSON(
+                prompt: prompt,
+                responseType: [SchemeStrategy].self
+            )
+        }
     }
 
     // MARK: - Step 2: 批量组合生成
