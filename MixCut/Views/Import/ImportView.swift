@@ -363,8 +363,8 @@ struct ImportedVideoCard: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-            // 文件名（可鼠标选中复制；hover 看完整名）
-            SelectableLabel(text: video.name, fontSize: 11, weight: .medium, maxLines: 2)
+            // 文件名（可鼠标选中复制；自适应高度，完整显示）
+            SelectableLabel(text: video.name, fontSize: 11, weight: .medium)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .help(video.name)
 
@@ -614,8 +614,6 @@ struct EditableSentenceRow: View {
     let sentenceIndex: Int
     let video: Video
 
-    @State private var editText: String = ""
-    @FocusState private var isFocused: Bool
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -626,36 +624,17 @@ struct EditableSentenceRow: View {
                 .frame(width: 26, alignment: .trailing)
                 .padding(.trailing, 4)
 
-            if isFocused {
-                TextField("", text: $editText, axis: .vertical)
-                    .font(.system(size: 11))
-                    .textFieldStyle(.plain)
-                    .lineSpacing(2)
-                    .padding(3)
-                    .background(Color.accentColor.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .focused($isFocused)
-                    .onSubmit { isFocused = false }
-            } else {
-                Text(text)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.primary.opacity(0.85))
-                    .lineSpacing(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onTapGesture(count: 2) {
-                        editText = text
-                        isFocused = true
-                    }
+            // 点击即可编辑，文字随时可选中复制（AppKit NSTextField 原生能力）
+            EditableSentenceField(text: text, fontSize: 11) { newValue in
+                commitEdit(newValue)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 3)
-        .onChange(of: isFocused) { _, focused in
-            if !focused { commitEdit() }
-        }
     }
 
-    private func commitEdit() {
-        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func commitEdit(_ newValue: String) {
+        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != text else { return }
 
         // 更新 ASR 句子数据
@@ -670,6 +649,70 @@ struct EditableSentenceRow: View {
         video.transcript = allText
 
         modelContext.safeSave()
+    }
+}
+
+// MARK: - 可编辑 + 可选中复制的台词字段（AppKit NSTextField，不依赖 SwiftUI @FocusState）
+struct EditableSentenceField: NSViewRepresentable {
+    let text: String
+    let fontSize: CGFloat
+    let onCommit: (String) -> Void
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.stringValue = text
+        field.isEditable = true
+        field.isSelectable = true
+        field.isBordered = false
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = NSFont.systemFont(ofSize: fontSize)
+        field.textColor = NSColor.labelColor.withAlphaComponent(0.85)
+        field.lineBreakMode = .byWordWrapping
+        field.usesSingleLineMode = false
+        field.maximumNumberOfLines = 0
+        field.cell?.wraps = true
+        field.cell?.isScrollable = false
+        field.delegate = context.coordinator
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.onCommit = onCommit
+        // 外部文本变化且当前不在编辑时才同步，避免打断用户输入
+        if !context.coordinator.isEditing, nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        let width = proposal.width ?? 200
+        let bounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
+        let measured = nsView.cell?.cellSize(forBounds: bounds).height ?? (fontSize + 6)
+        return CGSize(width: width, height: ceil(max(measured, fontSize + 6)))
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(onCommit: onCommit) }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var onCommit: (String) -> Void
+        var isEditing = false
+
+        init(onCommit: @escaping (String) -> Void) {
+            self.onCommit = onCommit
+        }
+
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            isEditing = true
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            isEditing = false
+            guard let field = obj.object as? NSTextField else { return }
+            onCommit(field.stringValue)
+        }
     }
 }
 
@@ -720,12 +763,11 @@ struct VideoStatusBadge: View {
     }
 }
 
-// MARK: - 可鼠标选中复制的标签（NSTextField 包装，行高稳定不会破坏布局）
+// MARK: - 可鼠标选中复制的标签（NSTextField 包装，自适应高度完整显示）
 struct SelectableLabel: NSViewRepresentable {
     let text: String
     let fontSize: CGFloat
     let weight: NSFont.Weight
-    let maxLines: Int
 
     func makeNSView(context: Context) -> NSTextField {
         let field = NSTextField(wrappingLabelWithString: text)
@@ -733,18 +775,29 @@ struct SelectableLabel: NSViewRepresentable {
         field.isEditable = false
         field.isBordered = false
         field.drawsBackground = false
-        field.lineBreakMode = .byTruncatingMiddle
-        field.maximumNumberOfLines = maxLines
+        field.lineBreakMode = .byWordWrapping
+        field.maximumNumberOfLines = 0          // 不限行数，完整显示
         field.font = NSFont.systemFont(ofSize: fontSize, weight: weight)
         field.textColor = .labelColor
         field.cell?.wraps = true
         field.cell?.isScrollable = false
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        field.setContentHuggingPriority(.defaultHigh, for: .vertical)
+        field.setContentCompressionResistancePriority(.required, for: .vertical)
+        field.setContentHuggingPriority(.required, for: .vertical)
         return field
     }
 
     func updateNSView(_ nsView: NSTextField, context: Context) {
         if nsView.stringValue != text { nsView.stringValue = text }
+        nsView.font = NSFont.systemFont(ofSize: fontSize, weight: weight)
+    }
+
+    /// 按 SwiftUI 给定的宽度精确计算多行文本所需高度
+    /// 用 cellSize(forBounds:) 纯计算，不调 invalidateIntrinsicContentSize（会触发无限布局循环）
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextField, context: Context) -> CGSize? {
+        let width = proposal.width ?? 180
+        let bounds = NSRect(x: 0, y: 0, width: width, height: .greatestFiniteMagnitude)
+        let measured = nsView.cell?.cellSize(forBounds: bounds).height ?? (fontSize + 4)
+        return CGSize(width: width, height: ceil(max(measured, fontSize + 4)))
     }
 }
