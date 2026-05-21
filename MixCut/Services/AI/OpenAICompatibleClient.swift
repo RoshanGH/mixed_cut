@@ -78,12 +78,12 @@ actor OpenAICompatibleClient: AIProvider {
     }
 
     func generateJSON<T: Decodable>(prompt: String, responseType: T.Type) async throws -> T {
-        let text = try await sendRequest(prompt: prompt)
+        let text = try await sendRequest(prompt: prompt, jsonMode: true)
         let jsonStr = extractJSON(from: text)
 
         guard let jsonData = jsonStr.data(using: .utf8) else {
             MixLog.error("JSON 编码失败, text: \(jsonStr.prefix(200))")
-            throw AIProviderError.jsonParsingFailed("无法编码为 UTF-8")
+            throw AIProviderError.jsonParsingFailed("无法编码为 UTF-8 | 模型返回片段: \(jsonStr.prefix(80))")
         }
 
         do {
@@ -104,21 +104,29 @@ actor OpenAICompatibleClient: AIProvider {
             }
             MixLog.error("JSON 解析失败: \(detail)")
             MixLog.error("原始 JSON 前500字符: \(jsonStr.prefix(500))")
-            throw AIProviderError.jsonParsingFailed(detail)
+            // 错误消息里附带模型返回前 80 字符，方便用户判断是格式问题还是内容问题
+            throw AIProviderError.jsonParsingFailed("\(detail) | 模型返回: \(jsonStr.prefix(80))")
         } catch {
             MixLog.error("JSON 解析失败: \(error)")
             MixLog.error("原始 JSON 前500字符: \(jsonStr.prefix(500))")
-            throw AIProviderError.jsonParsingFailed("\(error)")
+            throw AIProviderError.jsonParsingFailed("\(error) | 模型返回: \(jsonStr.prefix(80))")
         }
     }
 
     func generateText(prompt: String) async throws -> String {
-        try await sendRequest(prompt: prompt)
+        try await sendRequest(prompt: prompt, jsonMode: false)
     }
+
+    // MARK: - JSON 输出强提示
+    private static let jsonSystemPrompt = """
+    You are a strict JSON-only responder. \
+    Output ONLY a single valid JSON value. No markdown code fences (no ```), no explanations, no prose. \
+    Your entire response must be directly parseable by a JSON parser.
+    """
 
     // MARK: - 内部实现
 
-    private func sendRequest(prompt: String) async throws -> String {
+    private func sendRequest(prompt: String, jsonMode: Bool) async throws -> String {
         guard !apiKey.isEmpty else {
             MixLog.error("API Key 为空！provider=\(self.providerType.displayName)")
             throw AIProviderError.apiKeyNotConfigured(providerType)
@@ -168,21 +176,40 @@ actor OpenAICompatibleClient: AIProvider {
 
                 let body: [String: Any]
                 if isClaudeAPI {
-                    body = [
+                    // Anthropic 原生 API：用顶层 system 字段强提示 JSON 输出
+                    var b: [String: Any] = [
                         "model": modelName,
                         "max_tokens": 8192,
                         "messages": [
                             ["role": "user", "content": prompt]
                         ]
                     ]
+                    if jsonMode {
+                        b["system"] = Self.jsonSystemPrompt
+                        b["temperature"] = 0.3
+                    }
+                    body = b
                 } else {
-                    body = [
+                    // OpenAI 兼容：system message + 视情况加 response_format
+                    var messages: [[String: Any]] = []
+                    if jsonMode {
+                        messages.append(["role": "system", "content": Self.jsonSystemPrompt])
+                    }
+                    messages.append(["role": "user", "content": prompt])
+
+                    var b: [String: Any] = [
                         "model": modelName,
-                        "messages": [
-                            ["role": "user", "content": prompt]
-                        ],
-                        "temperature": 0.7
+                        "messages": messages,
+                        "temperature": jsonMode ? 0.3 : 0.7
                     ]
+                    // 多数 OpenAI 兼容转发网关对 Claude/Gemini 后端不识别 response_format，硬传可能 400
+                    let lowerModel = modelName.lowercased()
+                    let isRelayClaudeOrGemini = providerType == .claudeRelay
+                        && (lowerModel.hasPrefix("claude") || lowerModel.hasPrefix("gemini"))
+                    if jsonMode && !isRelayClaudeOrGemini {
+                        b["response_format"] = ["type": "json_object"]
+                    }
+                    body = b
                 }
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
