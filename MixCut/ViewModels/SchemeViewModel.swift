@@ -239,6 +239,7 @@ final class SchemeViewModel {
 
             loadSchemes(for: project)
             generationProgress = "生成完成：\(strategies.count) 个策略，共 \(schemes.count) 个视频方案"
+            ToastCenter.shared.show("已生成 \(strategies.count) 个策略 · \(schemes.count) 个方案", icon: "sparkles", style: .success)
         } catch {
             errorMessage = "方案生成失败: \(error.localizedDescription)\n(\(String(describing: error).prefix(300)))"
             project.status = .ready

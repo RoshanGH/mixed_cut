@@ -323,6 +323,24 @@ struct SettingsView: View {
                     .controlSize(.small)
                 }
 
+                LabeledContent("键盘快捷键") {
+                    Button {
+                        dismiss()
+                        // 延迟 让 dismiss 完成再发通知
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            NotificationCenter.default.post(name: .mixCutShowShortcuts, object: nil)
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "keyboard")
+                                .font(.system(size: 11))
+                            Text("查看")
+                                .font(.system(size: 12))
+                        }
+                    }
+                    .controlSize(.small)
+                }
+
                 LabeledContent("开发者") {
                     Text("MengGang")
                         .font(.system(size: 12))

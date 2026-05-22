@@ -83,19 +83,34 @@ struct ExportView: View {
                 .background(.orange.opacity(0.06))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
+                let totalDuration = schemeVM.schemes.reduce(0.0) { $0 + $1.totalDuration }
+                let estimatedMB = estimatedFileSizeMB(durationSec: totalDuration)
+
                 HStack(spacing: 0) {
                     statBlock(value: "\(totalStrategies)", label: "策略")
                     Divider().frame(height: 32)
                     statBlock(value: "\(totalSchemes)", label: "视频")
                     Divider().frame(height: 32)
-                    let totalDuration = schemeVM.schemes.reduce(0.0) { $0 + $1.totalDuration }
                     statBlock(value: String(format: "%.0fs", totalDuration), label: "总时长")
+                    Divider().frame(height: 32)
+                    statBlock(value: estimatedMB >= 1024
+                        ? String(format: "%.1f GB", Double(estimatedMB) / 1024)
+                        : "\(estimatedMB) MB",
+                              label: "预估大小")
                 }
                 .padding(16)
                 .background(.quaternary.opacity(0.3))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
         }
+    }
+
+    /// 根据当前编码配置和总时长估算导出文件总大小（MB）
+    private func estimatedFileSizeMB(durationSec: Double) -> Int {
+        let kbps = exportConfig.quality.videoBitrateKbps(for: exportConfig.codec)
+        // bitrate (kbps) × duration (s) / 8 = KB；÷ 1024 = MB
+        let mb = Double(kbps) * durationSec / 8.0 / 1024.0
+        return max(1, Int(mb))
     }
 
     // MARK: - 导出设置
@@ -166,11 +181,19 @@ struct ExportView: View {
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
         .disabled(schemeVM.schemes.isEmpty || isExporting)
+        .help(schemeVM.schemes.isEmpty
+              ? "暂无方案可导出，请先在「混剪方案」页面生成"
+              : isExporting ? "正在导出中" : "导出全部 \(schemeVM.schemes.count) 个方案")
 
         if schemeVM.schemes.isEmpty && !isExporting {
-            Text("请先在「混剪方案」页面生成方案")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+                Text("请先在「混剪方案」页面生成方案")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -425,8 +448,13 @@ struct ExportView: View {
 
                 if totalFailed > 0 && totalFailed == total {
                     errorMessage = "所有视频导出失败，请检查视频文件是否存在"
+                    ToastCenter.shared.show("导出失败", icon: "exclamationmark.triangle.fill", style: .error)
                 } else if totalFailed > 0 {
                     errorMessage = "\(totalFailed) 个视频导出失败或跳过"
+                    let succeeded = validTotal - totalFailed
+                    ToastCenter.shared.show("成功 \(succeeded) / 失败 \(totalFailed)", icon: "exclamationmark.triangle.fill", style: .warning)
+                } else {
+                    ToastCenter.shared.show("已导出 \(validTotal) 个视频", icon: "checkmark.seal.fill", style: .success)
                 }
 
                 exportedFolder = url.path

@@ -170,6 +170,35 @@ final class ImportViewModel {
         phase = .completed
         progress = 1.0
         isProcessing = false
+
+        let totalDone = videosToAnalyze.count
+        if totalDone > 0 {
+            ToastCenter.shared.show("已分析完成 \(totalDone) 个视频", icon: "checkmark.seal.fill", style: .success)
+        }
+    }
+
+    /// 仅重新跑 ASR（用于 ASR 输出粒度异常时用户主动触发）
+    /// 重做完后会自动连带重做 AI 分析（因为 sentence 变了 → AI 切分也要变）
+    func retryASR(for video: Video, in project: Project) async {
+        guard let context = modelContext else { return }
+        MixLog.info("retryASR 被调用: video=\(video.name)")
+
+        // 清空旧的 ASR 数据 → analyzeVideo 流程中 retryAIAnalysis 会重新识别
+        video.transcript = ""
+        video.asrWords = []
+        video.asrSentences = []
+
+        // 清空旧分镜（避免 UI 卡在中间态）
+        for oldSeg in video.segments {
+            context.delete(oldSeg)
+        }
+        video.status = .transcribing
+        video.errorMessage = nil
+        errorMessage = nil
+        context.safeSave()
+
+        // 跑完整重试链
+        await retryAIAnalysis(for: video, in: project)
     }
 
     /// 重试 AI 分析

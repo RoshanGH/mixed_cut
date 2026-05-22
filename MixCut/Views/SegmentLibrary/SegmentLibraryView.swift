@@ -5,11 +5,39 @@ struct SegmentLibraryView: View {
     let project: Project
     @Bindable var viewModel: SegmentLibraryViewModel
 
+    @State private var showBatchExportSheet = false
+    @State private var showBatchDeleteConfirm = false
+    @State private var isLoading = true
+
     var body: some View {
+        if isLoading {
+            SkeletonView(layout: .segmentLibrary)
+                .task(id: project.id) {
+                    let t0 = Date()
+                    let thumbPaths = project.videos.compactMap(\.thumbnailPath)
+                    ThumbnailCache.shared.prewarm(paths: thumbPaths)
+                    viewModel.loadSegments(for: project)
+                    MixLog.info("[Perf] SegmentLibrary: \(Int(Date().timeIntervalSince(t0) * 1000))ms / segs=\(viewModel.segments.count)")
+                    isLoading = false
+                }
+        } else {
+            mainContent
+        }
+    }
+
+    private var mainContent: some View {
         VStack(spacing: 0) {
             filterToolbar
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+
+            if viewModel.isSelectionMode {
+                Divider()
+                batchActionBar
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.accentColor.opacity(0.06))
+            }
 
             Divider()
 
@@ -19,13 +47,115 @@ struct SegmentLibraryView: View {
                 segmentContent
             }
         }
-        .onAppear {
-            viewModel.loadSegments(for: project)
-        }
-        .onChange(of: project.id) {
-            viewModel.loadSegments(for: project)
-        }
         .navigationTitle("分镜素材库")
+        .sheet(isPresented: $showBatchExportSheet) {
+            BatchExportSheet(
+                segments: viewModel.selectedSegments,
+                numberProvider: { viewModel.number(for: $0) }
+            )
+        }
+        .background(
+            // 隐藏快捷键：ESC 退出多选；⌘A 全选；⌘D 反选；⌘0 清空
+            Group {
+                if viewModel.isSelectionMode {
+                    Button("") {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            viewModel.setSelectionMode(false)
+                        }
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .opacity(0)
+
+                    Button("") { viewModel.selectAllVisible() }
+                        .keyboardShortcut("a", modifiers: .command)
+                        .opacity(0)
+
+                    Button("") { viewModel.invertSelectionVisible() }
+                        .keyboardShortcut("d", modifiers: .command)
+                        .opacity(0)
+
+                    Button("") { viewModel.clearSelection() }
+                        .keyboardShortcut("0", modifiers: .command)
+                        .opacity(0)
+                }
+            }
+        )
+    }
+
+    // MARK: - 多选操作栏（启用多选时显示）
+
+    private var batchActionBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "checkmark.square.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentColor)
+            let selectedDur = viewModel.selectedSegments.reduce(0.0) { $0 + $1.duration }
+            Text("已选 \(viewModel.selectedSegmentIDs.count) 个 · \(String(format: "%.1fs", selectedDur))")
+                .font(.system(size: 12, weight: .semibold))
+
+            Divider().frame(height: 12)
+
+            Button("全选") { viewModel.selectAllVisible() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentColor)
+
+            Button("反选") { viewModel.invertSelectionVisible() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentColor)
+
+            Button("清空选择") { viewModel.clearSelection() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .disabled(viewModel.selectedSegmentIDs.isEmpty)
+
+            Spacer()
+
+            Button {
+                showBatchDeleteConfirm = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("批量删除")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .tint(.red)
+            .disabled(viewModel.selectedSegmentIDs.isEmpty)
+
+            Button {
+                showBatchExportSheet = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("批量导出 \(viewModel.selectedSegmentIDs.count) 个")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(viewModel.selectedSegmentIDs.isEmpty)
+        }
+        .alert("确认批量删除", isPresented: $showBatchDeleteConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) {
+                let count = viewModel.selectedSegmentIDs.count
+                viewModel.deleteSelectedSegments()
+                ToastCenter.shared.show("已删除 \(count) 个分镜", icon: "trash.fill", style: .warning)
+            }
+        } message: {
+            Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜，此操作不可恢复。")
+        }
     }
 
     // MARK: - 筛选工具栏
@@ -76,6 +206,27 @@ struct SegmentLibraryView: View {
                     viewModel.applyFilter()
                 }
                 .frame(width: 100)
+
+                // 多选开关
+                Button {
+                    viewModel.setSelectionMode(!viewModel.isSelectionMode)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: viewModel.isSelectionMode
+                            ? "checkmark.square.fill" : "square.dashed")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(viewModel.isSelectionMode ? "退出多选" : "多选")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(viewModel.isSelectionMode
+                        ? Color.accentColor.opacity(0.15)
+                        : Color.secondary.opacity(0.08))
+                    .foregroundStyle(viewModel.isSelectionMode ? Color.accentColor : .primary)
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
 
             // 语义类型筛选芯片
@@ -153,7 +304,7 @@ struct SegmentLibraryView: View {
             // 视频标题栏
             HStack(spacing: 10) {
                 if let thumbPath = group.video.thumbnailPath,
-                   let image = NSImage(contentsOfFile: thumbPath) {
+                   let image = ThumbnailCache.shared.image(for: thumbPath) {
                     Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
@@ -248,7 +399,101 @@ struct SegmentCard: View {
         viewModel.selectedSegment?.id == segment.id
     }
 
+    private var isChecked: Bool {
+        viewModel.selectedSegmentIDs.contains(segment.id)
+    }
+
+    private var sequenceNumber: Int {
+        viewModel.number(for: segment)
+    }
+
     var body: some View {
+        // 多选模式下用极简渲染：只显示缩略图 + checkbox + 编号 + 类型标签
+        // 不渲染 SegmentInlinePlayer + BoundaryAdjustRow + rightPanel（台词面板），
+        // 大幅减少滚动时新卡片入屏的实例化开销
+        if viewModel.isSelectionMode {
+            compactSelectionCard
+        } else {
+            fullCard
+        }
+    }
+
+    /// 多选模式极简卡片
+    private var compactSelectionCard: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(isChecked ? Color.accentColor : .secondary)
+
+            // 静态缩略图
+            compactThumbnail
+                .frame(width: 90, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 5) {
+                    if sequenceNumber > 0 {
+                        Text("#\(sequenceNumber)")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Capsule())
+                    }
+                    Text(String(format: "%.1fs", segment.duration))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+
+                HStack(spacing: 3) {
+                    ForEach(segment.semanticTypes.prefix(2), id: \.self) { type in
+                        SemanticTypeTag(type: type)
+                    }
+                    PositionTypeTag(type: segment.positionType)
+                }
+
+                if !segment.text.isEmpty {
+                    Text(segment.text)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isChecked
+                      ? Color.accentColor.opacity(0.10)
+                      : Color(.controlBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isChecked ? Color.accentColor : .white.opacity(0.04),
+                        lineWidth: isChecked ? 2 : 1)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            viewModel.toggleSelection(segment)
+        }
+    }
+
+    @ViewBuilder
+    private var compactThumbnail: some View {
+        if let thumbPath = segment.thumbnailPath,
+           let image = ThumbnailCache.shared.image(for: thumbPath) {
+            Image(nsImage: image)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } else {
+            Rectangle().fill(.quaternary.opacity(0.5))
+        }
+    }
+
+    /// 完整卡片（非多选模式）
+    private var fullCard: some View {
         HStack(alignment: .top, spacing: 0) {
             // 左侧：视频 + 标签 + 时间调整
             leftPanel
@@ -291,6 +536,35 @@ struct SegmentCard: View {
             }
         }
         .contextMenu {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(segment.text, forType: .string)
+                ToastCenter.shared.show("台词已复制", icon: "doc.on.doc.fill")
+            } label: {
+                Label("复制台词", systemImage: "doc.on.doc")
+            }
+            .disabled(segment.text.isEmpty)
+
+            if let videoPath = segment.video?.localPath, !videoPath.isEmpty {
+                Button {
+                    let url = URL(fileURLWithPath: videoPath)
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } label: {
+                    Label("在 Finder 中显示原视频", systemImage: "folder")
+                }
+            }
+
+            if viewModel.isSelectionMode {
+                Button {
+                    viewModel.toggleSelection(segment)
+                } label: {
+                    Label(viewModel.selectedSegmentIDs.contains(segment.id) ? "取消选中" : "选中",
+                          systemImage: viewModel.selectedSegmentIDs.contains(segment.id) ? "checkmark.square" : "square")
+                }
+            }
+
+            Divider()
+
             Button(role: .destructive) {
                 showDeleteConfirm = true
             } label: {
@@ -301,6 +575,7 @@ struct SegmentCard: View {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) {
                 viewModel.deleteSegment(segment)
+                ToastCenter.shared.show("已删除分镜", icon: "trash.fill", style: .warning)
             }
         } message: {
             Text("确定要删除这个分镜吗？此操作不可恢复。")
@@ -310,8 +585,29 @@ struct SegmentCard: View {
     // MARK: - 左侧面板
     private var leftPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // 播放器
+            // 播放器 + 左上角 #编号 + 多选 checkbox 叠加
             SegmentInlinePlayer(segment: segment, viewModel: viewModel)
+                .overlay(alignment: .topLeading) {
+                    HStack(spacing: 4) {
+                        if viewModel.isSelectionMode {
+                            Image(systemName: isChecked
+                                ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(isChecked ? Color.accentColor : .white)
+                                .shadow(color: .black.opacity(0.5), radius: 1)
+                        }
+                        if sequenceNumber > 0 {
+                            Text("#\(sequenceNumber)")
+                                .font(.system(size: 10, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(Color.black.opacity(0.6))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(6)
+                }
 
             // 标签行：语义类型 + 位置
             FlowLayout(spacing: 3) {
@@ -322,8 +618,17 @@ struct SegmentCard: View {
                 QualityBadge(score: segment.qualityScore)
             }
 
-            // 边界微调
-            BoundaryAdjustRow(segment: segment, viewModel: viewModel)
+            // 边界微调 —— hover 或选中时才显示（性能优化：含多 TextField+@FocusState，
+            // 默认全部展示会让 50 个分镜卡片同步实例化 100+ 个交互控件）
+            if isHovering || isSelected {
+                BoundaryAdjustRow(segment: segment, viewModel: viewModel)
+                    .transition(.opacity)
+            } else {
+                // 占位：保持卡片高度稳定
+                Rectangle()
+                    .fill(.clear)
+                    .frame(height: 24)
+            }
         }
         .padding(8)
     }
@@ -375,20 +680,7 @@ struct SegmentCard: View {
 
 // MARK: - 缩略图缓存（避免 View body 中反复磁盘 IO）
 
-@MainActor
-final class ThumbnailCache {
-    static let shared = ThumbnailCache()
-    private var cache: [String: NSImage] = [:]
-
-    func image(for path: String) -> NSImage? {
-        if let cached = cache[path] { return cached }
-        guard let img = NSImage(contentsOfFile: path) else { return nil }
-        cache[path] = img
-        return img
-    }
-
-    func clear() { cache.removeAll() }
-}
+// ThumbnailCache 已移到 Views/Shared/ThumbnailCache.swift，全局共享
 
 // MARK: - 分镜原地播放器（hover 播放，全局唯一播放，原始比例）
 
@@ -421,9 +713,43 @@ struct SegmentInlinePlayer: View {
     }
 
     var body: some View {
+        // 性能关键：默认只渲染缩略图 + 时长（最轻量），hover/播放才组装完整 ZStack
+        if !isHovering && !isPlaying {
+            // 静态轻量态：只有缩略图 + 时长角标
+            thumbnailView
+                .overlay(alignment: .bottomTrailing) {
+                    Text(String(format: "%.1fs", segmentDuration))
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.55))
+                        .clipShape(Capsule())
+                        .padding(5)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .onHover { hovering in
+                    isHovering = hovering
+                    if hovering {
+                        hoverTimer?.invalidate()
+                        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
+                            Task { @MainActor in
+                                guard isHovering else { return }
+                                viewModel.requestPlay(segment: segment)
+                            }
+                        }
+                    }
+                }
+        } else {
+            // hover 或播放态：完整 player UI
+            playerUI
+        }
+    }
+
+    @ViewBuilder
+    private var playerUI: some View {
         ZStack {
             if isPlaying, let player {
-                // 播放器也用 fill + clip，和缩略图一样大小
                 PlayerRepresentable(player: player)
                     .aspectRatio(videoAspectRatio, contentMode: .fill)
                     .frame(maxWidth: .infinity)
@@ -433,25 +759,6 @@ struct SegmentInlinePlayer: View {
                 thumbnailView
             }
 
-            // 右下角时长角标（非 hover、非播放时显示）
-            if !isPlaying && !isHovering {
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Text(String(format: "%.1fs", segmentDuration))
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(.black.opacity(0.55))
-                            .clipShape(Capsule())
-                    }
-                }
-                .padding(5)
-            }
-
-            // hover 等待播放提示
             if isHovering && !isPlaying {
                 Color.black.opacity(0.15)
                 Image(systemName: "play.fill")
@@ -460,7 +767,6 @@ struct SegmentInlinePlayer: View {
                     .shadow(color: .black.opacity(0.3), radius: 4)
             }
 
-            // 播放中：底部进度条
             if isPlaying {
                 VStack {
                     Spacer()
@@ -594,10 +900,38 @@ struct SegmentRow: View {
         viewModel.selectedSegment?.id == segment.id
     }
 
+    private var isChecked: Bool {
+        viewModel.selectedSegmentIDs.contains(segment.id)
+    }
+
+    private var sequenceNumber: Int {
+        viewModel.number(for: segment)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
+            // 多选 checkbox（只在多选模式下显示）
+            if viewModel.isSelectionMode {
+                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isChecked ? Color.accentColor : .secondary)
+                    .frame(width: 20)
+            }
+
             SegmentInlinePlayer(segment: segment, viewModel: viewModel)
                 .frame(width: 160)
+                .overlay(alignment: .topLeading) {
+                    if sequenceNumber > 0 {
+                        Text("#\(sequenceNumber)")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(Color.black.opacity(0.6))
+                            .clipShape(Capsule())
+                            .padding(6)
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 6) {
                 // 标签行
@@ -615,21 +949,28 @@ struct SegmentRow: View {
                     .lineLimit(2)
                     .foregroundStyle(.secondary)
 
-                BoundaryAdjustRow(segment: segment, viewModel: viewModel)
+                // 边界微调 hover/选中才显示
+                if isHovering || isSelected {
+                    BoundaryAdjustRow(segment: segment, viewModel: viewModel)
+                        .transition(.opacity)
+                }
             }
         }
         .padding(10)
         .background {
             RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected
-                      ? Color.accentColor.opacity(0.06)
-                      : isHovering
-                        ? Color(.controlBackgroundColor).opacity(0.8)
-                        : Color(.controlBackgroundColor).opacity(0.5))
+                .fill(isChecked
+                      ? Color.accentColor.opacity(0.10)
+                      : isSelected
+                        ? Color.accentColor.opacity(0.06)
+                        : isHovering
+                          ? Color(.controlBackgroundColor).opacity(0.8)
+                          : Color(.controlBackgroundColor).opacity(0.5))
         }
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.accentColor.opacity(0.5) : .white.opacity(0.04), lineWidth: 1)
+                .stroke(isChecked ? Color.accentColor : isSelected ? Color.accentColor.opacity(0.5) : .white.opacity(0.04),
+                        lineWidth: isChecked ? 2 : 1)
         )
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
@@ -637,7 +978,11 @@ struct SegmentRow: View {
             }
         }
         .onTapGesture {
-            viewModel.selectedSegment = segment
+            if viewModel.isSelectionMode {
+                viewModel.toggleSelection(segment)
+            } else {
+                viewModel.selectedSegment = segment
+            }
         }
     }
 }

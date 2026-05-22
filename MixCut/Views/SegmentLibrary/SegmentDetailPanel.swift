@@ -253,7 +253,7 @@ struct SegmentPreviewPlayer: View {
     @ViewBuilder
     private var thumbnailView: some View {
         if let thumbPath = segment.thumbnailPath,
-           let image = NSImage(contentsOfFile: thumbPath) {
+           let image = ThumbnailCache.shared.image(for: thumbPath) {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(aspectRatio, contentMode: .fit)

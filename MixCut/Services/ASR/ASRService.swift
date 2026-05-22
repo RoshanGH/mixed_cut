@@ -24,11 +24,24 @@ struct TranscriptionResult: Sendable {
         TranscriptionResult(text: "", words: [], rawSentences: [], language: language, duration: 0)
     }
 
-    /// 句子列表：优先用 Whisper 原生 segments，降级才从 words 聚合
+    /// 句子列表：3 级降级，确保任何情况下都能拿到合理粒度的句子。
+    ///
+    /// 关键防御：Whisper 在「短视频 + 一气呵成的口播」下经常把整段压成 1 个长 segment，
+    /// 导致下游所有依赖句级时间戳的功能（AI 分镜、UI 显示、台词编辑）全部失效。
+    /// 因此即使有 rawSentences，也要先检测异常 → 异常时强制重切。
     var sentences: [TranscriptionSentence] {
-        if !rawSentences.isEmpty {
+        // ⚠️ 修复（v0.2.4 第二版）：禁止用 buildSentencesFromWords 做整体替换。
+        // whisper.cpp 的 words 输出会丢失部分 token（特殊字符 / 控制 token），拼接会丢字。
+        // 只有「单 segment 且 >8s 且 >30 字」时才走 textFallback（按标点重切，文字完整）。
+        let isSingleLongSegment: Bool = {
+            guard rawSentences.count == 1 else { return false }
+            let s = rawSentences[0]
+            return (s.end - s.start) > 8.0 && s.text.count > 30
+        }()
+
+        if !rawSentences.isEmpty && !isSingleLongSegment {
+            // 正常路径：用 whisper 原生切分（多 segment 永远走这里，文字 100% 完整）
             return rawSentences.map { s in
-                // 找出属于这个句子时间范围内的 words
                 let sentenceWords = words.filter { w in
                     w.start < s.end && w.end > s.start
                 }
@@ -40,7 +53,13 @@ struct TranscriptionResult: Sendable {
                 )
             }
         }
-        return buildSentencesFromWords()
+
+        // 单 segment 整段压成一行 → 按标点重切（文字完整，只重切粒度）
+        if !rawSentences.isEmpty {
+            return buildSentencesFromTextFallback()
+        }
+
+        return []
     }
 
     /// 降级方案：从 words 聚合句子
@@ -102,6 +121,66 @@ struct TranscriptionResult: Sendable {
         }
 
         return sentences
+    }
+
+    /// 终极兜底：rawSentences 太粗 + 没有 words 时，用标点切分 + 按字符比例均分时间
+    /// 用例：whisper.cpp 没启用 word timestamps，只有 1 个长 segment
+    private func buildSentencesFromTextFallback() -> [TranscriptionSentence] {
+        guard let raw = rawSentences.first else { return [] }
+        let totalStart = rawSentences.first?.start ?? 0
+        let totalEnd = rawSentences.last?.end ?? 0
+        let fullText = rawSentences.map(\.text).joined()
+        let totalDuration = max(0.1, totalEnd - totalStart)
+
+        // 按标点切（句号/问号/感叹号/逗号/分号都算）
+        let separators: Set<Character> = ["。", "！", "？", "，", "、", ";", "；", ".", "!", "?", ","]
+        var pieces: [String] = []
+        var current = ""
+        for ch in fullText {
+            current.append(ch)
+            if separators.contains(ch) && current.count >= 8 {
+                pieces.append(current)
+                current = ""
+            }
+        }
+        let remainder = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !remainder.isEmpty { pieces.append(remainder) }
+
+        // 没标点的极端情况：按 15 字硬切
+        if pieces.count <= 1 {
+            pieces = []
+            var buf = ""
+            for ch in fullText {
+                buf.append(ch)
+                if buf.count >= 15 {
+                    pieces.append(buf)
+                    buf = ""
+                }
+            }
+            if !buf.isEmpty { pieces.append(buf) }
+        }
+
+        guard !pieces.isEmpty else {
+            return [TranscriptionSentence(text: raw.text, startTime: totalStart, endTime: totalEnd, words: [])]
+        }
+
+        // 按字数比例分配时间戳
+        let totalChars = pieces.reduce(0) { $0 + $1.count }
+        var t = totalStart
+        var result: [TranscriptionSentence] = []
+        for piece in pieces {
+            let ratio = totalChars > 0 ? Double(piece.count) / Double(totalChars) : 0
+            let segDur = totalDuration * ratio
+            let segEnd = min(t + segDur, totalEnd)
+            result.append(TranscriptionSentence(
+                text: piece,
+                startTime: t,
+                endTime: segEnd,
+                words: []
+            ))
+            t = segEnd
+        }
+        return result
     }
 }
 
@@ -177,6 +256,16 @@ actor ASRService {
         }
 
         onProgress?(1.0)
+
+        // 健康指标埋点：ASR 输出粒度异常告警
+        let sentencesCount = result.sentences.count
+        let rawCount = result.rawSentences.count
+        let wordsCount = result.words.count
+        let duration = result.duration
+        if rawCount == 1 && duration > 8.0 {
+            MixLog.error("⚠️ ASR 输出粒度异常：rawSentences=1（全文一段），时长 \(String(format: "%.1f", duration))s，已自动二次切分为 \(sentencesCount) 句")
+        }
+        MixLog.info("ASR 完成：原生 \(rawCount) segments / words \(wordsCount) / 最终 \(sentencesCount) 句")
         return result
     }
 
@@ -219,6 +308,8 @@ actor ASRService {
         //   --output_dir /tmp/xxx --word_timestamps True
         let process = Process()
         process.executableURL = URL(fileURLWithPath: whisperPath)
+        // ⚠️ 同样不用 --max_line_count/--max_line_width 强制切段
+        // 原因见 runWhisperCpp 注释。粒度问题完全由 TranscriptionResult.sentences 二次切分解决。
         process.arguments = [
             audioPath,
             "--model", "small",
@@ -365,6 +456,13 @@ actor ASRService {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: whisperPath)
+        // ⚠️ 关键决定：不使用 -ml 强制切段。
+        // 之前尝试过 -ml 60 + -sow + --word-thold，结果是 whisper 在每个 60 token 边界强制
+        // 切换上下文，导致长上下文的识别能力被破坏，识别内容大量错误。
+        //
+        // 正确做法：让 whisper 保持默认 30s 大段识别（最佳识别质量），
+        // 然后依赖 TranscriptionResult.sentences 的二次切分逻辑（防御层 2）
+        // 根据 words 时间戳重新切句子。
         process.arguments = [
             "-m", modelPath,
             "-f", audioPath,

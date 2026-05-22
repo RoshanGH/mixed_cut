@@ -331,17 +331,53 @@ actor FFmpegRunner {
         _ = try await run(arguments: args, onProgress: onProgress)
     }
 
-    /// 裁切视频片段（精确裁切，-i 在 -ss 前确保帧精度）
+    /// 裁切视频片段（用 trim filter 精确切 + setpts 重置时间戳，**保证第一帧立即有画面**）
+    ///
+    /// 关键技术：
+    ///   - 不用 -ss 跳关键帧（input seeking 不精确），从 0 开始解码所有帧
+    ///   - 用 `trim` filter 精确取 [start, end] 区间的视频帧
+    ///   - `atrim` 精确取音频
+    ///   - `setpts=PTS-STARTPTS` / `asetpts=PTS-STARTPTS` 把第一帧时间戳重置为 0
+    ///   - 重编码确保输出第一帧就是关键帧
+    ///
+    /// 这是 FFmpeg 文档推荐的「精确切片且无开头黑屏」标准方法，速度比 -ss output seeking 略慢
+    /// （因为要解码到 start 时间），但对短分镜（几秒）几乎无感。
     func cutSegment(from videoPath: String, start: Double, end: Double,
-                    to outputPath: String) async throws {
+                    to outputPath: String,
+                    reencode: Bool = true) async throws {
+        if !reencode {
+            // 兼容旧的流复制模式（仅用于关键帧已对齐场景）
+            let args = [
+                "-ss", String(format: "%.3f", start),
+                "-i", videoPath,
+                "-t", String(format: "%.3f", end - start),
+                "-c", "copy",
+                "-avoid_negative_ts", "make_zero",
+                "-y", outputPath
+            ]
+            _ = try await run(arguments: args)
+            return
+        }
+
+        // 用 trim filter 精确切片，第一帧立即有画面
+        let videoFilter = "trim=start=\(String(format: "%.3f", start)):end=\(String(format: "%.3f", end)),setpts=PTS-STARTPTS"
+        let audioFilter = "atrim=start=\(String(format: "%.3f", start)):end=\(String(format: "%.3f", end)),asetpts=PTS-STARTPTS"
+
         let args = [
             "-i", videoPath,
-            "-ss", String(format: "%.3f", start),
-            "-to", String(format: "%.3f", end),
-            "-c", "copy",
-            "-avoid_negative_ts", "make_zero",
-            "-y",
-            outputPath
+            "-vf", videoFilter,
+            "-af", audioFilter,
+            // VideoToolbox 硬件加速编码
+            "-c:v", "h264_videotoolbox",
+            "-b:v", "8000k",
+            "-maxrate", "16000k",
+            "-tag:v", "avc1",
+            "-allow_sw", "1",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-movflags", "+faststart",
+            "-y", outputPath
         ]
         _ = try await run(arguments: args)
     }

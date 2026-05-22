@@ -39,6 +39,19 @@ struct SchemeDetailView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(scheme.name)
                     .font(.system(size: 20, weight: .semibold))
+                    .textSelection(.enabled)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(scheme.name, forType: .string)
+                    ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("复制方案名")
+
                 Spacer()
                 Text(String(format: "%.1f", scheme.totalDuration))
                     .font(.system(size: 24, weight: .light, design: .rounded))

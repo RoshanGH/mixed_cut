@@ -14,8 +14,24 @@ struct ImportView: View {
     @Bindable var importVM: ImportViewModel
     @State private var isDragTargeted = false
     @State private var showingFilePicker = false
+    @State private var isLoading = true
 
     var body: some View {
+        if isLoading {
+            SkeletonView(layout: .importMedia)
+                .task(id: project.id) {
+                    let t0 = Date()
+                    let thumbPaths = project.videos.compactMap(\.thumbnailPath)
+                    ThumbnailCache.shared.prewarm(paths: thumbPaths)
+                    MixLog.info("[Perf] Import: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(project.videos.count)")
+                    isLoading = false
+                }
+        } else {
+            mainContent
+        }
+    }
+
+    private var mainContent: some View {
         VStack(spacing: 0) {
             if importVM.isProcessing {
                 processingBanner
@@ -89,8 +105,11 @@ struct ImportView: View {
             Image(systemName: "arrow.down.doc.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(isDragTargeted ? Color.accentColor : Color.secondary)
-            Text("拖拽视频文件到此处")
+                .scaleEffect(isDragTargeted ? 1.15 : 1.0)
+                .animation(.spring(response: 0.35, dampingFraction: 0.65), value: isDragTargeted)
+            Text(isDragTargeted ? "松开手即可导入" : "拖拽视频文件到此处")
                 .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(isDragTargeted ? Color.accentColor : Color.primary)
             Text("支持 MP4, MOV, AVI 格式")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
@@ -109,9 +128,10 @@ struct ImportView: View {
                 )
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(isDragTargeted ? Color.accentColor.opacity(0.05) : .clear)
+                        .fill(isDragTargeted ? Color.accentColor.opacity(0.08) : .clear)
                 )
         )
+        .animation(.easeOut(duration: 0.2), value: isDragTargeted)
         .dropDestination(for: URL.self) { urls, _ in
             var accessedURLs: [URL] = []
             var securedURLs: [URL] = []
@@ -138,24 +158,31 @@ struct ImportView: View {
 
     // MARK: - 已导入视频列表（网格并排）
     private var videoListSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let videos = project.videos   // 一次性取出，避免多次访问 SwiftData 关系
+        return VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("已导入视频")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Text("\(project.videos.count) 个视频")
+                Text("\(videos.count) 个视频")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
 
             // 每张卡片固定宽度约 400px (190*2 + 分隔线 + padding)，可并排
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 380, maximum: 440))], alignment: .leading, spacing: 16) {
-                ForEach(project.videos) { video in
+                ForEach(videos) { video in
                     ImportedVideoCard(video: video, onDelete: {
                         importVM.deleteVideo(video, from: project)
                     }, onRetryAI: {
+                        ToastCenter.shared.show("重新分析中…", icon: "arrow.clockwise", style: .info)
                         Task {
                             await importVM.retryAIAnalysis(for: video, in: project)
+                        }
+                    }, onRetryASR: {
+                        ToastCenter.shared.show("重新识别语音…", icon: "waveform", style: .info)
+                        Task {
+                            await importVM.retryASR(for: video, in: project)
                         }
                     })
                 }
@@ -172,28 +199,11 @@ struct ImportView: View {
     @ViewBuilder
     private var errorBanner: some View {
         if let error = importVM.errorMessage, !error.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 13))
-                    .foregroundStyle(.orange)
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(nil)
-                    .textSelection(.enabled)
-                Spacer()
-                Button {
+            InlineBanner(style: .warning, message: error) {
+                withAnimation(.easeOut(duration: 0.2)) {
                     importVM.errorMessage = nil
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.plain)
             }
-            .padding(10)
-            .background(.orange.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
 }
@@ -203,12 +213,18 @@ struct ImportedVideoCard: View {
     let video: Video
     var onDelete: (() -> Void)?
     var onRetryAI: (() -> Void)?
+    var onRetryASR: (() -> Void)?
 
     private let panelWidth: CGFloat = 190
 
     @State private var showDeleteConfirm = false
     @State private var isRetrying = false
     @State private var leftHeight: CGFloat = 300
+    /// 默认折叠台词，只显示前 8 句，避免初次加载时同步实例化 N×NSTextField
+    @State private var showAllSentences: Bool = false
+    /// 缓存格式化后的句子列表，避免 body 重绘时反复重建 TranscriptionResult
+    @State private var cachedSentences: [(index: Int, text: String, time: String)] = []
+    @State private var cachedIsASRAbnormal: Bool = false
 
     private var videoAspectRatio: CGFloat {
         guard video.width > 0, video.height > 0 else { return 9.0 / 16.0 }
@@ -260,6 +276,20 @@ struct ImportedVideoCard: View {
         return sentences.enumerated().map { (index: $0.offset + 1, text: $0.element, time: "") }
     }
 
+    /// 检测 ASR 输出粒度是否异常（基于 cachedSentences）
+    private func computeIsASRAbnormal(_ sentences: [(index: Int, text: String, time: String)]) -> Bool {
+        guard video.status == .completed else { return false }
+        guard !sentences.isEmpty else { return false }
+        if sentences.count == 1 && video.duration > 8.0 { return true }
+        return sentences.contains { $0.text.count > 50 }
+    }
+
+    /// 刷新缓存（在 onAppear / video 关键字段变化时调用）
+    private func refreshSentenceCache() {
+        cachedSentences = formattedSentences
+        cachedIsASRAbnormal = computeIsASRAbnormal(cachedSentences)
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             // 左侧：视频 + 信息（自然高度，决定整体高度）
@@ -290,6 +320,7 @@ struct ImportedVideoCard: View {
             Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(video.name, forType: .string)
+                ToastCenter.shared.show("文件名已复制", icon: "doc.on.doc.fill")
             } label: {
                 Label("复制文件名", systemImage: "doc.on.doc")
             }
@@ -311,13 +342,20 @@ struct ImportedVideoCard: View {
         }
         .onChange(of: video.status) { _, newStatus in
             if newStatus != .analyzing { isRetrying = false }
+            refreshSentenceCache()
         }
-        .onChange(of: video.segments.count) { _, newCount in
-            if newCount > 0 { isRetrying = false }
+        .onChange(of: video.transcript) { _, _ in
+            refreshSentenceCache()
+        }
+        .task {
+            refreshSentenceCache()
         }
         .alert("确认删除", isPresented: $showDeleteConfirm) {
             Button("取消", role: .cancel) {}
-            Button("删除", role: .destructive) { onDelete?() }
+            Button("删除", role: .destructive) {
+                onDelete?()
+                ToastCenter.shared.show("已删除「\(video.name)」", icon: "trash.fill", style: .warning)
+            }
         } message: {
             Text("确定要删除「\(video.name)」吗？视频文件和相关分镜数据都将被删除，此操作不可恢复。")
         }
@@ -456,12 +494,49 @@ struct ImportedVideoCard: View {
                 }
 
                 Spacer()
+
+                // ASR 异常时显示「重新识别」入口
+                if cachedIsASRAbnormal, let onRetryASR {
+                    Button {
+                        onRetryASR()
+                    } label: {
+                        HStack(spacing: 2) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("重做")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.orange.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("ASR 分句异常，点击重新识别")
+                }
             }
             .padding(.horizontal, 10)
             .padding(.top, 10)
             .padding(.bottom, 6)
 
-            if formattedSentences.isEmpty {
+            // 异常提示条
+            if cachedIsASRAbnormal {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.orange)
+                    Text("分句较粗，可点击右上「重做」或下方「拆分」")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.orange.opacity(0.06))
+            }
+
+            if cachedSentences.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "waveform.slash")
                         .font(.system(size: 18))
@@ -473,14 +548,37 @@ struct ImportedVideoCard: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 1) {
-                        ForEach(formattedSentences, id: \.index) { item in
+                    let visibleSentences = showAllSentences
+                        ? cachedSentences
+                        : Array(cachedSentences.prefix(8))
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(visibleSentences, id: \.index) { item in
                             EditableSentenceRow(
                                 time: item.time.isEmpty ? "\(item.index)" : item.time,
                                 text: item.text,
                                 sentenceIndex: item.index - 1,
-                                video: video
+                                video: video,
+                                allowSplit: cachedIsASRAbnormal
                             )
+                        }
+
+                        if !showAllSentences && cachedSentences.count > 8 {
+                            Button {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    showAllSentences = true
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 8, weight: .semibold))
+                                    Text("展开全部 \(cachedSentences.count - 8) 句")
+                                        .font(.system(size: 10))
+                                }
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.vertical, 4)
+                                .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -494,7 +592,7 @@ struct ImportedVideoCard: View {
     @ViewBuilder
     private var thumbnailOrPlaceholder: some View {
         if let thumbPath = video.thumbnailPath,
-           let image = NSImage(contentsOfFile: thumbPath) {
+           let image = ThumbnailCache.shared.image(for: thumbPath) {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(videoAspectRatio, contentMode: .fit)
@@ -613,8 +711,10 @@ struct EditableSentenceRow: View {
     let text: String
     let sentenceIndex: Int
     let video: Video
+    var allowSplit: Bool = false   // ASR 异常时由父视图传 true，显示「拆分」按钮
 
     @Environment(\.modelContext) private var modelContext
+    @State private var isHovered = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -629,8 +729,22 @@ struct EditableSentenceRow: View {
                 commitEdit(newValue)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if allowSplit && text.count >= 8 && (isHovered || text.count > 30) {
+                Button {
+                    splitSentence()
+                } label: {
+                    Image(systemName: "scissors")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.blue.opacity(0.7))
+                        .padding(2)
+                }
+                .buttonStyle(.plain)
+                .help("从中点拆分为两句")
+            }
         }
         .padding(.vertical, 3)
+        .onHover { isHovered = $0 }
     }
 
     private func commitEdit(_ newValue: String) {
@@ -648,6 +762,53 @@ struct EditableSentenceRow: View {
         let allText = sentences.map(\.text).joined(separator: " ")
         video.transcript = allText
 
+        modelContext.safeSave()
+    }
+
+    /// 把当前句子从字符中点（优先标点附近）拆成两句
+    private func splitSentence() {
+        var sentences = video.asrSentences
+        guard sentenceIndex >= 0, sentenceIndex < sentences.count else { return }
+
+        let current = sentences[sentenceIndex]
+        guard current.text.count >= 6 else { return }
+
+        // 找拆分点：优先在中点附近找标点，没有就用中点
+        let midIdx = current.text.count / 2
+        let chars = Array(current.text)
+        let punct: Set<Character> = ["，", "。", "！", "？", "、", "；", "：", ",", ".", "!", "?", ";", ":"]
+
+        var splitAt = midIdx
+        // 在 [midIdx - 6, midIdx + 6] 范围内找最近标点
+        for offset in 0..<min(6, midIdx) {
+            if midIdx + offset < chars.count, punct.contains(chars[midIdx + offset]) {
+                splitAt = midIdx + offset + 1; break
+            }
+            if midIdx - offset > 0, punct.contains(chars[midIdx - offset]) {
+                splitAt = midIdx - offset + 1; break
+            }
+        }
+        splitAt = max(1, min(chars.count - 1, splitAt))
+
+        let firstText = String(chars[0..<splitAt]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let secondText = String(chars[splitAt..<chars.count]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !firstText.isEmpty, !secondText.isEmpty else { return }
+
+        // 时间按字数比例分配
+        let totalDur = current.end - current.start
+        let firstRatio = Double(firstText.count) / Double(firstText.count + secondText.count)
+        let midTime = current.start + totalDur * firstRatio
+
+        let first = ASRSentence(text: firstText, start: current.start, end: midTime)
+        let second = ASRSentence(text: secondText, start: midTime, end: current.end)
+
+        sentences.remove(at: sentenceIndex)
+        sentences.insert(second, at: sentenceIndex)
+        sentences.insert(first, at: sentenceIndex)
+        video.asrSentences = sentences
+
+        let allText = sentences.map(\.text).joined(separator: " ")
+        video.transcript = allText
         modelContext.safeSave()
     }
 }

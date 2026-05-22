@@ -7,7 +7,14 @@ import SwiftUI
 @Observable
 final class ProjectViewModel {
     var projects: [Project] = []
-    var selectedProject: Project?
+    var selectedProject: Project? {
+        didSet {
+            // 记忆最后访问的项目，下次启动自动选中
+            if let id = selectedProject?.id {
+                UserDefaults.standard.set(id.uuidString, forKey: "lastSelectedProjectID")
+            }
+        }
+    }
     var isCreatingProject = false
     var newProjectName = ""
     var errorMessage: String?
@@ -17,6 +24,13 @@ final class ProjectViewModel {
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
         fetchProjects()
+        // 启动时恢复上次选中的项目
+        if selectedProject == nil,
+           let idString = UserDefaults.standard.string(forKey: "lastSelectedProjectID"),
+           let id = UUID(uuidString: idString),
+           let proj = projects.first(where: { $0.id == id }) {
+            selectedProject = proj
+        }
     }
 
     /// 获取所有项目

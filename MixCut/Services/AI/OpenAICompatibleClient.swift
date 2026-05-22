@@ -93,7 +93,8 @@ actor OpenAICompatibleClient: AIProvider {
 
     func generateJSON<T: Decodable>(prompt: String, responseType: T.Type) async throws -> T {
         let text = try await sendRequest(prompt: prompt, jsonMode: true)
-        let jsonStr = extractJSON(from: text)
+        // 预清洗：移除 ASCII 控制字符（保留 \t \n \r），这些是 MiniMax 等常见的 JSON 污染源
+        let jsonStr = Self.sanitizeForJSON(extractJSON(from: text))
 
         guard let jsonData = jsonStr.data(using: .utf8) else {
             MixLog.error("JSON 编码失败, text: \(jsonStr.prefix(200))")
@@ -114,7 +115,18 @@ actor OpenAICompatibleClient: AIProvider {
             return result
         }
 
-        // 仍然解不出：抛带详细原因的错误
+        // 第三次：用 JSONSerialization 定位精确错误位置，截断到错误前最后一个完整 segment 再解
+        if let truncatedAtError = Self.truncateAtJSONError(jsonStr),
+           truncatedAtError != jsonStr,
+           let data = truncatedAtError.data(using: .utf8),
+           let result = try? JSONDecoder().decode(T.self, from: data) {
+            MixLog.info("JSON 错误位置救援成功，原长 \(jsonStr.count) → 救援后 \(truncatedAtError.count)")
+            return result
+        }
+
+        // 仍然解不出：把完整 JSON 写到独立文件方便事后诊断
+        Self.dumpFailedJSON(jsonStr)
+
         do {
             return try JSONDecoder().decode(T.self, from: jsonData)
         } catch let decodingError as DecodingError {
@@ -127,7 +139,9 @@ actor OpenAICompatibleClient: AIProvider {
             case .valueNotFound(_, let context):
                 detail = "字段值为空: \(context.codingPath.map(\.stringValue).joined(separator: "."))"
             case .dataCorrupted(let context):
-                detail = "数据损坏: \(context.debugDescription)"
+                // 用 NSJSONSerialization 拿更详细的错误（包含位置信息）
+                let nsErrorInfo = Self.detailedJSONErrorInfo(jsonData)
+                detail = "数据损坏: \(context.debugDescription)\(nsErrorInfo.map { " | \($0)" } ?? "")"
             @unknown default:
                 detail = "\(decodingError)"
             }
@@ -140,6 +154,88 @@ actor OpenAICompatibleClient: AIProvider {
             MixLog.error("原始 JSON 前500字符: \(jsonStr.prefix(500))")
             throw AIProviderError.jsonParsingFailed("\(error) | 模型返回: \(jsonStr.prefix(80))")
         }
+    }
+
+    /// 预清洗：移除 ASCII 控制字符（0x00-0x1F 除了 \t \n \r），这些字符会让 JSONDecoder 报「数据损坏」
+    private static func sanitizeForJSON(_ raw: String) -> String {
+        var result = ""
+        result.reserveCapacity(raw.count)
+        for ch in raw {
+            let scalar = ch.unicodeScalars.first?.value ?? 0
+            // 保留 \t (9), \n (10), \r (13)；移除其他 0x00-0x1F 控制字符
+            if scalar < 0x20 && scalar != 0x09 && scalar != 0x0A && scalar != 0x0D {
+                continue   // skip
+            }
+            // 移除 U+FEFF (BOM) 和 U+FFFE
+            if scalar == 0xFEFF || scalar == 0xFFFE {
+                continue
+            }
+            result.append(ch)
+        }
+        return result
+    }
+
+    /// 用 NSJSONSerialization 拿到 JSON 错误的精确位置（line/column），返回可读字符串
+    private static func detailedJSONErrorInfo(_ data: Data) -> String? {
+        do {
+            _ = try JSONSerialization.jsonObject(with: data, options: [])
+            return nil
+        } catch let nsError as NSError {
+            var info = "NSError code=\(nsError.code)"
+            if let desc = nsError.userInfo["NSDebugDescription"] as? String {
+                info += ", \(desc)"
+            }
+            return info
+        }
+    }
+
+    /// 当 JSON 解析失败时，尝试找到错误位置，截断到错误前最后一个完整对象再补齐闭合
+    private static func truncateAtJSONError(_ jsonStr: String) -> String? {
+        guard let data = jsonStr.data(using: .utf8) else { return nil }
+        do {
+            _ = try JSONSerialization.jsonObject(with: data, options: [])
+            return nil   // 没错误，不需要救援
+        } catch let nsError as NSError {
+            // 从 NSDebugDescription 提取「around character N」之类的位置信息
+            guard let debug = nsError.userInfo["NSDebugDescription"] as? String else { return nil }
+
+            // 常见格式：「Invalid escape sequence around character 1234.」
+            //          「Unexpected character 'x' around line 1, column 1234.」
+            let pattern = "character\\s+(\\d+)"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: []),
+                  let match = regex.firstMatch(in: debug, range: NSRange(debug.startIndex..., in: debug)),
+                  let range = Range(match.range(at: 1), in: debug),
+                  let errorPos = Int(debug[range])
+            else { return nil }
+
+            // 取错误位置之前的字符串，截断到最后一个完整 `},`
+            let safeChars = Array(jsonStr.prefix(errorPos))
+            guard !safeChars.isEmpty else { return nil }
+
+            // 找最后一个 `},` 作为安全切点
+            var lastSafeIdx = -1
+            for i in 1..<safeChars.count {
+                if safeChars[i - 1] == "}" && safeChars[i] == "," {
+                    lastSafeIdx = i - 1   // 截到 } 包含
+                }
+            }
+            if lastSafeIdx < 0 { return nil }
+
+            let trimmed = String(safeChars[0...lastSafeIdx])
+            // 用 repairTruncatedJSON 补齐闭合括号
+            return repairTruncatedJSON(trimmed + ",")   // 加 , 让 repair 把数组/对象闭合
+        }
+    }
+
+    /// 把解析失败的完整 JSON 保存到独立文件方便事后诊断
+    private static func dumpFailedJSON(_ jsonStr: String) {
+        guard let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
+        let dir = cacheDir.appendingPathComponent("com.mixcut.app/ai-fail")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let file = dir.appendingPathComponent("ai-fail-\(timestamp).json")
+        try? jsonStr.data(using: .utf8)?.write(to: file)
+        MixLog.info("失败的 JSON 已保存到: \(file.path)")
     }
 
     func generateText(prompt: String) async throws -> String {

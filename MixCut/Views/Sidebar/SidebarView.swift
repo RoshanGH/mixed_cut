@@ -9,6 +9,12 @@ struct SidebarView: View {
     @State private var hoveredProject: UUID?
     @State private var hoveredNavItem: NavigationItem?
     @State private var isSettingsHovered = false
+    @State private var hasAPIKey: Bool = true
+    @State private var hasWhisperModel: Bool = true
+    @State private var renamingProjectID: UUID?
+    @State private var renameText: String = ""
+
+    private var hasMissingDependency: Bool { !hasAPIKey || !hasWhisperModel }
 
     private var activeProjects: [Project] {
         projectVM.projects.filter { $0.status != .archived }
@@ -16,15 +22,23 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 标题栏
-            HStack(spacing: 8) {
-                Image(systemName: "film.stack.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(.blue)
-                Text("MixCut")
-                    .font(.system(size: 14, weight: .bold))
-                Spacer()
+            // 标题栏（点击回 Welcome）
+            Button {
+                projectVM.selectedProject = nil
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "film.stack.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.blue)
+                    Text("MixCut")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.primary)
+                    Spacer()
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .help("回到欢迎页")
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
 
@@ -70,6 +84,13 @@ struct SidebarView: View {
                     Text("设置")
                         .font(.system(size: 12))
                     Spacer()
+                    if hasMissingDependency {
+                        // 未配置依赖时显示橙色感叹号
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                            .help(hasAPIKey ? "Whisper 语音模型未下载" : "AI API Key 未配置")
+                    }
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -79,7 +100,7 @@ struct SidebarView: View {
                 )
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(hasMissingDependency ? .secondary : .tertiary)
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.15)) {
                     isSettingsHovered = hovering
@@ -87,6 +108,11 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+        }
+        .onAppear { refreshDependencyStatus() }
+        .onChange(of: showSettings) { _, newValue in
+            // Settings 关闭时重新检查
+            if !newValue { refreshDependencyStatus() }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -130,10 +156,13 @@ struct SidebarView: View {
     private func projectRow(_ project: Project) -> some View {
         let isSelected = projectVM.selectedProject?.id == project.id
         let isHovered = hoveredProject == project.id
+        let isRenaming = renamingProjectID == project.id
         return Button {
-            projectVM.selectedProject = project
-            if selectedNavItem == nil {
-                selectedNavItem = .overview
+            if !isRenaming {
+                projectVM.selectedProject = project
+                if selectedNavItem == nil {
+                    selectedNavItem = .overview
+                }
             }
         } label: {
             HStack(spacing: 8) {
@@ -141,12 +170,23 @@ struct SidebarView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                     .frame(width: 18)
-                Text(project.name)
+                if isRenaming {
+                    TextField("项目名", text: $renameText, onCommit: {
+                        commitRename(project)
+                    })
                     .font(.system(size: 12))
-                    .lineLimit(1)
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                    .textFieldStyle(.plain)
+                    .onExitCommand {
+                        renamingProjectID = nil
+                    }
+                } else {
+                    Text(project.name)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                }
                 Spacer()
-                if isSelected {
+                if isSelected && !isRenaming {
                     Circle()
                         .fill(Color.accentColor)
                         .frame(width: 5, height: 5)
@@ -166,7 +206,17 @@ struct SidebarView: View {
                 hoveredProject = hovering ? project.id : nil
             }
         }
+        .simultaneousGesture(
+            TapGesture(count: 2).onEnded {
+                renameText = project.name
+                renamingProjectID = project.id
+            }
+        )
         .contextMenu {
+            Button("重命名") {
+                renameText = project.name
+                renamingProjectID = project.id
+            }
             Button("归档") {
                 projectVM.archiveProject(project)
             }
@@ -177,12 +227,24 @@ struct SidebarView: View {
         }
     }
 
+    private func commitRename(_ project: Project) {
+        let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty, name != project.name {
+            projectVM.renameProject(project, to: name)
+            ToastCenter.shared.show("已重命名为「\(name)」", icon: "pencil")
+        }
+        renamingProjectID = nil
+    }
+
     private func navRow(_ item: NavigationItem) -> some View {
         let isSelected = selectedNavItem == item && projectVM.selectedProject != nil
         let isHovered = hoveredNavItem == item
+        let shortcut = shortcutHint(for: item)
         return Button {
             guard projectVM.selectedProject != nil else { return }
-            selectedNavItem = item
+            withAnimation(.easeOut(duration: 0.18)) {
+                selectedNavItem = item
+            }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: item.icon)
@@ -193,6 +255,11 @@ struct SidebarView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                 Spacer()
+                if isHovered, !shortcut.isEmpty {
+                    Text(shortcut)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -209,6 +276,22 @@ struct SidebarView: View {
             }
         }
         .disabled(projectVM.selectedProject == nil)
+        .help(shortcut.isEmpty ? item.rawValue : "\(item.rawValue) (\(shortcut))")
+    }
+
+    private func refreshDependencyStatus() {
+        hasAPIKey = KeychainHelper.hasAPIKey(for: KeychainHelper.activeProvider)
+        hasWhisperModel = ASRService().isModelAvailable()
+    }
+
+    private func shortcutHint(for item: NavigationItem) -> String {
+        switch item {
+        case .overview:       return "⌘1"
+        case .importMedia:    return "⌘2"
+        case .segmentLibrary: return "⌘3"
+        case .schemes:        return "⌘4"
+        case .export:         return "⌘5"
+        }
     }
 
     private var newProjectButton: some View {
@@ -221,12 +304,17 @@ struct SidebarView: View {
                     .frame(width: 18)
                 Text("新建项目")
                     .font(.system(size: 12))
+                Spacer()
+                Text("⌘N")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
         }
         .buttonStyle(.plain)
         .foregroundStyle(Color.accentColor.opacity(0.8))
+        .help("新建项目 (⌘N)")
     }
 }
 

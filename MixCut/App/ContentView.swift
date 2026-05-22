@@ -2,6 +2,12 @@ import SwiftUI
 import SwiftData
 
 /// 侧边栏导航项
+extension Notification.Name {
+    static let mixCutNavigate = Notification.Name("mixCutNavigate")
+    static let mixCutNewProject = Notification.Name("mixCutNewProject")
+    static let mixCutShowShortcuts = Notification.Name("mixCutShowShortcuts")
+}
+
 enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
     case overview = "项目概览"
     case importMedia = "素材导入"
@@ -33,19 +39,27 @@ struct ContentView: View {
     @State private var selectedNavItem: NavigationItem? = .overview
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @State private var sidebarVisible = true
+    @State private var showShortcuts = false
 
     var body: some View {
+        ZStack {
         HStack(spacing: 0) {
-            // 侧边栏
-            SidebarView(
-                projectVM: projectVM,
-                selectedNavItem: $selectedNavItem
-            )
-            .frame(width: 220)
+            // 侧边栏（可隐藏，⌘B）
+            if sidebarVisible {
+                SidebarView(
+                    projectVM: projectVM,
+                    selectedNavItem: $selectedNavItem
+                )
+                .frame(width: 220)
+                .transition(.move(edge: .leading).combined(with: .opacity))
 
-            Divider()
+                Divider()
+            }
 
-            // 详情区域
+            // 详情区域 — 切换菜单 / 项目时加平滑过渡
+            // 关键：不用 .id() 强制重建，否则每次切换都从零构造大量 NSView/AVPlayer，
+            // 直接慢 500-1000ms。让 SwiftUI 自然 diff 重用就好。
             VStack(spacing: 0) {
                 if let project = projectVM.selectedProject {
                     detailView(for: project)
@@ -60,6 +74,38 @@ struct ContentView: View {
             importVM.setModelContext(modelContext)
             segmentLibraryVM.setModelContext(modelContext)
             schemeVM.setModelContext(modelContext)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mixCutNavigate)) { notification in
+            if let item = notification.object as? NavigationItem {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    selectedNavItem = item
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mixCutNewProject)) { _ in
+            projectVM.createProject()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mixCutShowShortcuts)) { _ in
+            showShortcuts = true
+        }
+        .background(
+            VStack(spacing: 0) {
+                Button("") {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        sidebarVisible.toggle()
+                    }
+                }
+                .keyboardShortcut("b", modifiers: .command)
+                Button("") { showShortcuts = true }
+                    .keyboardShortcut("/", modifiers: .command)
+            }
+            .opacity(0)
+        )
+        .sheet(isPresented: $showShortcuts) {
+            KeyboardShortcutsSheet()
+        }
+
+        ToastOverlay()
         }
         .frame(minWidth: 900, minHeight: 600)
         .sheet(isPresented: Binding(

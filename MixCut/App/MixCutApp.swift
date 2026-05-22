@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import SQLite3
+import AppKit
 
 @main
 struct MixCutApp: App {
@@ -9,6 +10,14 @@ struct MixCutApp: App {
     private let initError: String?
 
     init() {
+        // 强制浅色外观（AppKit + SwiftUI 同时生效）
+        // 用 NSAppearance 设置而非 SwiftUI 的 .preferredColorScheme，
+        // 后者只影响 SwiftUI 颜色环境，AppKit 嵌入的 NSTextField 仍读 system effectiveAppearance
+        // 导致 NSColor.labelColor 在系统深色下返回白色，文字在浅色背景上完全不可见。
+        DispatchQueue.main.async {
+            NSApplication.shared.appearance = NSAppearance(named: .aqua)
+        }
+
         do {
             let schema = Schema([
                 Project.self,
@@ -80,6 +89,36 @@ struct MixCutApp: App {
             }
         }
         .modelContainer(modelContainer)
+        .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("新建项目") {
+                    NotificationCenter.default.post(name: .mixCutNewProject, object: nil)
+                }
+                .keyboardShortcut("n", modifiers: .command)
+            }
+            CommandGroup(after: .toolbar) {
+                Button("项目概览") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.overview)
+                }
+                .keyboardShortcut("1", modifiers: .command)
+                Button("素材导入") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.importMedia)
+                }
+                .keyboardShortcut("2", modifiers: .command)
+                Button("分镜素材库") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.segmentLibrary)
+                }
+                .keyboardShortcut("3", modifiers: .command)
+                Button("混剪方案") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.schemes)
+                }
+                .keyboardShortcut("4", modifiers: .command)
+                Button("导出") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.export)
+                }
+                .keyboardShortcut("5", modifiers: .command)
+            }
+        }
 
         Settings {
             SettingsView()

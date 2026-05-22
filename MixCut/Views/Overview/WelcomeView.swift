@@ -56,9 +56,33 @@ struct WelcomeView: View {
             .controlSize(.large)
 
             if !projectVM.projects.isEmpty {
-                Text("或从左侧选择一个已有项目")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
+                VStack(spacing: 8) {
+                    Text("或继续最近的项目")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+
+                    HStack(spacing: 8) {
+                        ForEach(projectVM.projects.filter { $0.status != .archived }.prefix(3)) { project in
+                            Button {
+                                projectVM.selectedProject = project
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "film.fill")
+                                        .font(.system(size: 9))
+                                    Text(project.name)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(.quaternary.opacity(0.5))
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help("打开 \(project.name)")
+                        }
+                    }
+                }
             }
 
             // 依赖状态提示

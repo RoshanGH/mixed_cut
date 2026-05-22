@@ -263,13 +263,26 @@ struct SchemeListView: View {
                 let numStrategies = targetVideoCount <= 30 ? 3 : (targetVideoCount <= 80 ? 4 : 5)
                 let perStrategy = Int(ceil(Double(targetVideoCount) / Double(numStrategies)))
                 let estimatedCalls = numStrategies * Int(ceil(Double(perStrategy) / 8.0)) + 1
+                // 按每次 AI 调用 ~8 秒估计总耗时
+                let estimatedSeconds = estimatedCalls * 8
+                let timeText: String = estimatedSeconds < 60
+                    ? "约 \(estimatedSeconds) 秒"
+                    : "约 \(estimatedSeconds / 60) 分钟"
                 VStack(alignment: .leading, spacing: 4) {
                     Text("预估：\(numStrategies) 个策略 × ~\(perStrategy) 个变体/策略")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
-                    Text("约 \(estimatedCalls) 次 AI 调用（\(numStrategies) 个策略并行生成）")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.quaternary)
+                    HStack(spacing: 8) {
+                        Text("约 \(estimatedCalls) 次 AI 调用")
+                        Text("·").foregroundStyle(.quaternary)
+                        HStack(spacing: 3) {
+                            Image(systemName: "clock")
+                                .font(.system(size: 9))
+                            Text("耗时 \(timeText)")
+                        }
+                    }
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
                 }
             }
             .frame(width: 380)
@@ -405,8 +418,17 @@ struct StrategySection: View {
                         viewModel.selectedScheme = scheme
                     }
                     .contextMenu {
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(scheme.name, forType: .string)
+                            ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
+                        } label: {
+                            Label("复制方案名", systemImage: "doc.on.doc")
+                        }
+                        Divider()
                         Button("删除变体", role: .destructive) {
                             viewModel.deleteScheme(scheme)
+                            ToastCenter.shared.show("已删除变体", icon: "trash.fill", style: .warning)
                         }
                     }
                 }
@@ -460,8 +482,18 @@ struct SchemeVariationRow: View {
                 ? Color.accentColor.opacity(0.12)
                 : (isHovering ? Color.secondary.opacity(0.04) : .clear)
         )
+        .overlay(alignment: .leading) {
+            // 选中状态左侧加蓝色 indicator bar
+            if isSelected {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 2.5)
+            }
+        }
         .onHover { hovering in
-            isHovering = hovering
+            withAnimation(.easeOut(duration: 0.12)) {
+                isHovering = hovering
+            }
         }
     }
 }
