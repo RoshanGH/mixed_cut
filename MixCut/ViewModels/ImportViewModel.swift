@@ -521,8 +521,17 @@ final class ImportViewModel {
             video.errorMessage = "已删除"
         }
 
-        // 删除当前项目与该视频的关联（先收集再删除，避免遍历时修改 SwiftData 关系数组）
-        let pvsToDelete = project.projectVideos.filter { $0.video?.id == videoID }
+        // 删除当前项目与该视频的关联。
+        // 关键：必须先从 project.projectVideos 数组里显式 remove，再 context.delete()。
+        // 单靠 context.delete() 不会触发 SwiftUI Observation —— 因为关系数组里仍指向被标记删除的实体，
+        // ForEach(project.videos) 不会感知变化，会导致当前页 UI 不刷新（要切到其他页再回来才正常）。
+        let pvIDsToDelete = Set(
+            project.projectVideos
+                .filter { $0.video?.id == videoID }
+                .map(\.id)
+        )
+        let pvsToDelete = project.projectVideos.filter { pvIDsToDelete.contains($0.id) }
+        project.projectVideos.removeAll { pvIDsToDelete.contains($0.id) }
         for pv in pvsToDelete {
             context.delete(pv)
         }

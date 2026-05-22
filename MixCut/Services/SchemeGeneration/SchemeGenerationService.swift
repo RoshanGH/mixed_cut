@@ -30,18 +30,62 @@ struct SchemeStrategy: Decodable {
     }
 }
 
-// MARK: - 策略批次包装（兼容 response_format=json_object 要求顶层是对象）
+// MARK: - 跳过坏数据用的占位（lossless 解码用）
 
-struct StrategyBatch: Decodable {
+private struct _SkipDecodable: Decodable {}
+
+/// lossless 解码一段数组：单条失败不影响其他条
+private func decodeLossless<T: Decodable>(
+    container: inout UnkeyedDecodingContainer,
+    type: T.Type
+) -> [T] {
+    var result: [T] = []
+    while !container.isAtEnd {
+        if let v = try? container.decode(T.self) {
+            result.append(v)
+        } else {
+            _ = try? container.decode(_SkipDecodable.self)
+        }
+    }
+    return result
+}
+
+// MARK: - 策略响应（自适应 3 种格式：对象包装 / 裸数组 / 单对象）
+
+/// 一种类型同时接受：
+/// - `{"strategies": [{...}, {...}]}`（推荐，与 response_format=json_object 兼容）
+/// - `[{...}, {...}]`（模型固执返回裸数组）
+/// - `{...}`（模型只输出 1 个策略当成对象）
+struct SchemeStrategyResponse: Decodable {
     let strategies: [SchemeStrategy]
 
-    enum CodingKeys: String, CodingKey {
-        case strategies
-    }
+    enum CodingKeys: String, CodingKey { case strategies }
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        strategies = (try? container.decode([SchemeStrategy].self, forKey: .strategies)) ?? []
+        // 格式 A: 对象包装 {"strategies": [...]}（lossless）
+        if let keyed = try? decoder.container(keyedBy: CodingKeys.self) {
+            if var arrayC = try? keyed.nestedUnkeyedContainer(forKey: .strategies) {
+                let list = decodeLossless(container: &arrayC, type: SchemeStrategy.self)
+                if !list.isEmpty { self.strategies = list; return }
+            }
+            // 退化：键存在但 nestedUnkeyedContainer 失败时也尝试直接解
+            if let direct = try? keyed.decode([SchemeStrategy].self, forKey: .strategies),
+               !direct.isEmpty {
+                self.strategies = direct; return
+            }
+            // 没有 strategies 字段时，尝试当作单个策略对象
+            if let single = try? SchemeStrategy(from: decoder) {
+                self.strategies = [single]; return
+            }
+        }
+
+        // 格式 B: 裸数组 [...]（lossless）
+        if var arrayC = try? decoder.unkeyedContainer() {
+            let list = decodeLossless(container: &arrayC, type: SchemeStrategy.self)
+            if !list.isEmpty { self.strategies = list; return }
+        }
+
+        self.strategies = []
     }
 }
 
@@ -62,16 +106,33 @@ struct AICompactComposition: Decodable {
     }
 }
 
-struct AICompactBatch: Decodable {
+/// 同上，一种类型同时接受 3 种格式
+struct CompositionResponse: Decodable {
     let compositions: [AICompactComposition]
 
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        compositions = (try? container.decode([AICompactComposition].self, forKey: .compositions)) ?? []
-    }
+    enum CodingKeys: String, CodingKey { case compositions }
 
-    enum CodingKeys: String, CodingKey {
-        case compositions
+    init(from decoder: Decoder) throws {
+        // 格式 A: {"compositions": [...]}（lossless）
+        if let keyed = try? decoder.container(keyedBy: CodingKeys.self) {
+            if var arrayC = try? keyed.nestedUnkeyedContainer(forKey: .compositions) {
+                let list = decodeLossless(container: &arrayC, type: AICompactComposition.self)
+                if !list.isEmpty { self.compositions = list; return }
+            }
+            if let direct = try? keyed.decode([AICompactComposition].self, forKey: .compositions),
+               !direct.isEmpty {
+                self.compositions = direct; return
+            }
+            if let single = try? AICompactComposition(from: decoder), !single.segments.isEmpty {
+                self.compositions = [single]; return
+            }
+        }
+        // 格式 B: 裸数组（lossless）
+        if var arrayC = try? decoder.unkeyedContainer() {
+            let list = decodeLossless(container: &arrayC, type: AICompactComposition.self)
+            if !list.isEmpty { self.compositions = list; return }
+        }
+        self.compositions = []
     }
 }
 
@@ -212,23 +273,17 @@ actor SchemeGenerationService {
         直接输出 JSON 对象，不要包含其他内容。
         """
 
-        // 优先按对象包装解析；如果模型固执地返回裸数组也接受
-        do {
-            let batch = try await aiProvider.generateJSON(
-                prompt: prompt,
-                responseType: StrategyBatch.self
-            )
-            if !batch.strategies.isEmpty {
-                return batch.strategies
-            }
-            // 对象包装解析出来是空数组，可能模型直接返回了数组顶层，走回退
-            throw AIProviderError.jsonParsingFailed("strategies 字段为空")
-        } catch {
-            return try await aiProvider.generateJSON(
-                prompt: prompt,
-                responseType: [SchemeStrategy].self
+        // 单次调用 —— SchemeStrategyResponse 自适应 3 种格式 + lossless 数组解码
+        let response = try await aiProvider.generateJSON(
+            prompt: prompt,
+            responseType: SchemeStrategyResponse.self
+        )
+        guard !response.strategies.isEmpty else {
+            throw AIProviderError.jsonParsingFailed(
+                "AI 返回内容未能解析出任何策略。可能原因：模型输出被 max_tokens 截断、或返回格式异常。请重试，或更换模型/手动添加策略。"
             )
         }
+        return response.strategies
     }
 
     // MARK: - Step 2: 批量组合生成
@@ -278,26 +333,18 @@ actor SchemeGenerationService {
             直接输出 JSON，不要其他文字。必须包含 \(batchCount) 个 composition。
             """
 
+            // 单次调用 —— CompositionResponse 自适应 3 种格式 + lossless
+            // 解码失败不再重新发请求（之前的嵌套 try-catch 会重发 2-3 次烧 token 但结果一样）
             let batchResult: [AICompactComposition]
             do {
-                let batch = try await aiProvider.generateJSON(
+                let response = try await aiProvider.generateJSON(
                     prompt: prompt,
-                    responseType: AICompactBatch.self
+                    responseType: CompositionResponse.self
                 )
-                batchResult = batch.compositions
+                batchResult = response.compositions
             } catch {
-                do {
-                    batchResult = try await aiProvider.generateJSON(
-                        prompt: prompt,
-                        responseType: [AICompactComposition].self
-                    )
-                } catch {
-                    let single = try await aiProvider.generateJSON(
-                        prompt: prompt,
-                        responseType: AICompactComposition.self
-                    )
-                    batchResult = [single]
-                }
+                MixLog.info(" 批量生成解析失败，本批跳过: \(error.localizedDescription)")
+                batchResult = []
             }
 
             let valid = batchResult.filter { !$0.segments.isEmpty }

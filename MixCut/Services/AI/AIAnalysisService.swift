@@ -12,9 +12,25 @@ struct AnnotatedSegment: Codable {
     let dataQuality: DataQuality
     let keywords: [String]
 
+    /// 数据质量：所有字段宽容化，AI 输出被截断或省略时仍能解出整条 segment
     struct DataQuality: Codable {
         let score: Double
         let reasoning: String
+
+        enum CodingKeys: String, CodingKey {
+            case score, reasoning
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            score = (try? c.decode(Double.self, forKey: .score)) ?? 7.0
+            reasoning = (try? c.decode(String.self, forKey: .reasoning)) ?? ""
+        }
+
+        init(score: Double, reasoning: String) {
+            self.score = score
+            self.reasoning = reasoning
+        }
     }
 
     enum CodingKeys: String, CodingKey {
@@ -35,11 +51,13 @@ struct AnnotatedSegment: Codable {
         id = try c.decode(String.self, forKey: .id)
         startTime = try c.decode(Double.self, forKey: .startTime)
         endTime = try c.decode(Double.self, forKey: .endTime)
-        duration = try c.decode(Double.self, forKey: .duration)
-        text = try c.decode(String.self, forKey: .text)
-        position = try c.decode(String.self, forKey: .position)
-        dataQuality = try c.decode(DataQuality.self, forKey: .dataQuality)
-        keywords = try c.decodeIfPresent([String].self, forKey: .keywords) ?? []
+        let decodedDuration = (try? c.decode(Double.self, forKey: .duration)) ?? (endTime - startTime)
+        duration = decodedDuration > 0 ? decodedDuration : max(0, endTime - startTime)
+        text = (try? c.decode(String.self, forKey: .text)) ?? ""
+        position = (try? c.decode(String.self, forKey: .position)) ?? "中间"
+        dataQuality = (try? c.decode(DataQuality.self, forKey: .dataQuality))
+            ?? DataQuality(score: 7.0, reasoning: "")
+        keywords = (try? c.decode([String].self, forKey: .keywords)) ?? []
 
         // 优先解 types 数组，降级解 type 单字符串
         if let arr = try? c.decode([String].self, forKey: .types) {
@@ -66,6 +84,9 @@ struct AnnotatedSegment: Codable {
 }
 
 /// AI 分析输出
+///
+/// 设计：所有顶层字段都宽容化（容错被截断的响应）；segments 数组采用 lossless decoding：
+/// 任何一条 segment 解码失败仅丢这一条，前面已解出的完整 segments 仍然可用。
 struct AISegmentationResult: Codable {
     let videoId: String
     let totalDuration: Double
@@ -78,7 +99,38 @@ struct AISegmentationResult: Codable {
         case totalSegments = "total_segments"
         case segments
     }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        videoId = (try? c.decode(String.self, forKey: .videoId)) ?? ""
+        totalDuration = (try? c.decode(Double.self, forKey: .totalDuration)) ?? 0
+        totalSegments = (try? c.decode(Int.self, forKey: .totalSegments)) ?? 0
+
+        // 逐条解码 segments —— 单条失败不影响其他条
+        var lossless: [AnnotatedSegment] = []
+        if var arrayContainer = try? c.nestedUnkeyedContainer(forKey: .segments) {
+            while !arrayContainer.isAtEnd {
+                if let seg = try? arrayContainer.decode(AnnotatedSegment.self) {
+                    lossless.append(seg)
+                } else {
+                    // 跳过当前一条坏数据继续往后
+                    _ = try? arrayContainer.decode(AnyDecodable.self)
+                }
+            }
+        }
+        segments = lossless
+    }
+
+    init(videoId: String, totalDuration: Double, totalSegments: Int, segments: [AnnotatedSegment]) {
+        self.videoId = videoId
+        self.totalDuration = totalDuration
+        self.totalSegments = totalSegments
+        self.segments = segments
+    }
 }
+
+/// 用于跳过坏 segment 的占位类型
+private struct AnyDecodable: Decodable {}
 
 /// AI 语义分析服务
 actor AIAnalysisService {

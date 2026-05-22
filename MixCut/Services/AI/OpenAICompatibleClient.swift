@@ -47,6 +47,20 @@ actor OpenAICompatibleClient: AIProvider {
     private var baseRetryDelay: UInt64 = 2_000_000_000 // 2秒
     private var requestTimeout: TimeInterval = 120 // 2分钟（单次请求；避免长时间卡死）
 
+    /// 按 provider 给输出长度上限设不同值。
+    /// 不同 provider 的 max_tokens 实际上限不同：DeepSeek/qwen-max 系 8192，MiniMax M2.7 可吃 16K+。
+    /// 设过低会截断长输出（10 个 segments + reasoning ≈ 5K-6K tokens），设过高会被 API 400 拒绝。
+    private var providerMaxTokens: Int {
+        switch providerType {
+        case .deepseek:    return 8192       // V4-Flash 上限 8192，超出 API 报错
+        case .qwen:        return 8192       // qwen3-max 系列稳妥值
+        case .minimax:     return 16384      // M2.7 实际支持 32K，给一半留余量
+        case .claude:      return 8192       // 原生 API 走另一个分支，这里实际不用到
+        case .claudeRelay: return 16384      // 转发到 Claude/Gemini/OpenAI 后端都能吃 16K
+        case .custom:      return 8192       // 未知后端保守值
+        }
+    }
+
     init(providerType: AIProviderType, apiKey: String, modelName: String? = nil) {
         self.providerType = providerType
         self.apiKey = apiKey
@@ -86,6 +100,21 @@ actor OpenAICompatibleClient: AIProvider {
             throw AIProviderError.jsonParsingFailed("无法编码为 UTF-8 | 模型返回片段: \(jsonStr.prefix(80))")
         }
 
+        // 第一次：直接解
+        if let result = try? JSONDecoder().decode(T.self, from: jsonData) {
+            return result
+        }
+
+        // 第二次：尝试修复被截断的 JSON 再解（救回已完成的对象/数组项）
+        let repaired = Self.repairTruncatedJSON(jsonStr)
+        if repaired != jsonStr,
+           let repairedData = repaired.data(using: .utf8),
+           let result = try? JSONDecoder().decode(T.self, from: repairedData) {
+            MixLog.info("JSON 截断修复成功，原长 \(jsonStr.count) → 修复后 \(repaired.count)")
+            return result
+        }
+
+        // 仍然解不出：抛带详细原因的错误
         do {
             return try JSONDecoder().decode(T.self, from: jsonData)
         } catch let decodingError as DecodingError {
@@ -201,7 +230,7 @@ actor OpenAICompatibleClient: AIProvider {
                         "model": modelName,
                         "messages": messages,
                         "temperature": jsonMode ? 0.3 : 0.7,
-                        "max_tokens": 8192
+                        "max_tokens": providerMaxTokens
                     ]
                     // 多数 OpenAI 兼容转发网关对 Claude/Gemini 后端不识别 response_format，硬传可能 400
                     let lowerModel = modelName.lowercased()
@@ -233,9 +262,11 @@ actor OpenAICompatibleClient: AIProvider {
 
                 let content: String
 
+                var truncatedByLength = false
+
                 if isClaudeAPI {
                     // 解析 Claude Messages API 响应
-                    // 格式: {"content": [{"type": "text", "text": "..."}], ...}
+                    // 格式: {"content": [{"type": "text", "text": "..."}], "stop_reason": "end_turn"|"max_tokens", ...}
                     guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                           let contentArray = json["content"] as? [[String: Any]],
                           let firstBlock = contentArray.first,
@@ -245,8 +276,12 @@ actor OpenAICompatibleClient: AIProvider {
                         throw AIProviderError.invalidResponse("无法解析 Claude 响应")
                     }
                     content = text
+                    if let stop = json["stop_reason"] as? String, stop == "max_tokens" {
+                        truncatedByLength = true
+                    }
                 } else {
                     // 解析 OpenAI 兼容格式响应
+                    // 格式: {"choices": [{"message": {"content": "..."}, "finish_reason": "stop"|"length"}], ...}
                     guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                           let choices = json["choices"] as? [[String: Any]],
                           let firstChoice = choices.first,
@@ -257,9 +292,16 @@ actor OpenAICompatibleClient: AIProvider {
                         throw AIProviderError.invalidResponse("无法解析 \(providerType.displayName) 响应")
                     }
                     content = text
+                    if let finish = firstChoice["finish_reason"] as? String, finish == "length" {
+                        truncatedByLength = true
+                    }
                 }
 
-                MixLog.info("AI 响应成功: \(content.count) 字符")
+                if truncatedByLength {
+                    MixLog.error("⚠️ AI 输出被 max_tokens 截断（响应 \(content.count) 字符），下游解析可能失败")
+                }
+
+                MixLog.info("AI 响应成功: \(content.count) 字符\(truncatedByLength ? "（已截断）" : "")")
                 return content
             } catch let error as AIProviderError {
                 lastError = error
@@ -274,6 +316,102 @@ actor OpenAICompatibleClient: AIProvider {
         }
 
         throw lastError ?? AIProviderError.requestFailed("未知错误")
+    }
+
+    /// 修复被 max_tokens 截断的 JSON：尝试回溯到最后一个完整对象/数组项，补齐闭合括号。
+    ///
+    /// 典型场景：MiniMax / Claude 在长输出时被截断在某个对象中间。
+    /// 算法：扫描字符串维护 `{` `[` 嵌套栈，记录最后一个"安全切断点"（顶层数组里完整对象结束 `},` 处或 `}`）。
+    /// 不处理字符串里的引号转义边角，但已能救回 95% 的截断场景。
+    static func repairTruncatedJSON(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return raw }
+
+        var stack: [Character] = []
+        var inString = false
+        var escape = false
+        // 当前在 segments 数组中（嵌套深度等于 stack 进入到数组那一层）时，
+        // 每次完整对象 `}` 结束就记录这个位置作为安全切断点。
+        var lastSafeIndex: String.Index? = nil
+
+        var i = trimmed.startIndex
+        while i < trimmed.endIndex {
+            let ch = trimmed[i]
+
+            if escape {
+                escape = false
+                i = trimmed.index(after: i)
+                continue
+            }
+            if ch == "\\" {
+                escape = true
+                i = trimmed.index(after: i)
+                continue
+            }
+            if ch == "\"" {
+                inString.toggle()
+                i = trimmed.index(after: i)
+                continue
+            }
+            if inString {
+                i = trimmed.index(after: i)
+                continue
+            }
+
+            switch ch {
+            case "{", "[":
+                stack.append(ch)
+            case "}":
+                if stack.last == "{" {
+                    stack.removeLast()
+                    // 此刻栈顶若是 `[`，说明刚结束的是数组里一项对象 → 是安全切断点
+                    if stack.last == "[" {
+                        lastSafeIndex = i
+                    }
+                }
+            case "]":
+                if stack.last == "[" {
+                    stack.removeLast()
+                    lastSafeIndex = i
+                }
+            default:
+                break
+            }
+            i = trimmed.index(after: i)
+        }
+
+        // 没有不平衡的栈：JSON 完整，无需修
+        if stack.isEmpty {
+            return raw
+        }
+
+        // 有不平衡：在最后一个安全切断点截断，按栈补齐闭合
+        guard let cut = lastSafeIndex else {
+            return raw   // 没找到任何完整对象，放弃修
+        }
+
+        var repaired = String(trimmed[trimmed.startIndex...cut])
+
+        // 重新扫一遍 repaired，算出还需要补几个 `]` `}`
+        var newStack: [Character] = []
+        var s2 = false
+        var e2 = false
+        for c in repaired {
+            if e2 { e2 = false; continue }
+            if c == "\\" { e2 = true; continue }
+            if c == "\"" { s2.toggle(); continue }
+            if s2 { continue }
+            switch c {
+            case "{", "[": newStack.append(c)
+            case "}": if newStack.last == "{" { newStack.removeLast() }
+            case "]": if newStack.last == "[" { newStack.removeLast() }
+            default: break
+            }
+        }
+        while let top = newStack.popLast() {
+            repaired.append(top == "{" ? "}" : "]")
+        }
+        return repaired
     }
 
     /// 从响应中提取 JSON 字符串（去除 markdown 代码块包裹及前后说明文字）

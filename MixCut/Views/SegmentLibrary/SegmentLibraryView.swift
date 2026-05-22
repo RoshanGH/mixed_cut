@@ -85,6 +85,7 @@ struct SegmentLibraryView: View {
                         FilterChip(
                             label: type.rawValue,
                             color: SemanticTypeTag.color(for: type),
+                            count: viewModel.countByType[type] ?? 0,
                             isSelected: viewModel.filter.semanticTypes.contains(type)
                         ) {
                             if viewModel.filter.semanticTypes.contains(type) {
@@ -721,22 +722,37 @@ struct PositionTypeTag: View {
 struct FilterChip: View {
     let label: String
     let color: Color
+    let count: Int
     let isSelected: Bool
     let action: () -> Void
 
+    private var isEmpty: Bool { count == 0 }
+
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(isSelected ? color.opacity(0.15) : Color.secondary.opacity(0.06))
-                .foregroundStyle(isSelected ? color : .secondary)
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(isSelected ? color.opacity(0.3) : .clear, lineWidth: 1)
-                )
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundStyle(isSelected ? color : color.opacity(0.7))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(
+                        Capsule().fill(color.opacity(isSelected ? 0.20 : 0.12))
+                    )
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(color.opacity(isSelected ? 0.15 : 0.06))
+            .foregroundStyle(isSelected ? color : color.opacity(0.85))
+            .clipShape(Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(color.opacity(isSelected ? 0.4 : 0.15), lineWidth: 1)
+            )
+            .opacity(isEmpty ? 0.35 : 1.0)
+            .saturation(isEmpty ? 0.4 : 1.0)
         }
         .buttonStyle(.plain)
     }

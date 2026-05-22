@@ -67,6 +67,18 @@ final class SegmentLibraryViewModel {
         applyFilter()
     }
 
+    /// 每个语义类型对应的镜头数量（基于全部 segments，不随筛选变化）
+    var countByType: [SemanticType: Int] {
+        var result: [SemanticType: Int] = [:]
+        for type in SemanticType.allCases { result[type] = 0 }
+        for seg in segments {
+            for t in seg.semanticTypes {
+                result[t, default: 0] += 1
+            }
+        }
+        return result
+    }
+
     /// 按视频分组的筛选结果
     var groupedSegments: [VideoSegmentGroup] {
         var videoMap: [UUID: (video: Video, segments: [Segment])] = [:]

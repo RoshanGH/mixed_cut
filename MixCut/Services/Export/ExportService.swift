@@ -3,7 +3,7 @@ import Foundation
 /// 导出配置
 struct ExportConfig {
     var resolution: ExportResolution = .original
-    var codec: ExportCodec = .h264
+    var codec: ExportCodec = .h264Hardware    // 默认硬件加速：5-10× 速度
     var quality: ExportQuality = .high
 
     enum ExportResolution: String, CaseIterable, Identifiable {
@@ -25,15 +25,27 @@ struct ExportConfig {
     }
 
     enum ExportCodec: String, CaseIterable, Identifiable {
-        case h264 = "H.264"
-        case h265 = "H.265 (HEVC)"
+        case h264Hardware = "H.264（硬件加速・推荐）"
+        case h265Hardware = "H.265 / HEVC（硬件加速）"
+        case h264 = "H.264（CPU 软件编码・最佳画质）"
+        case h265 = "H.265 / HEVC（CPU 软件编码）"
 
         var id: String { rawValue }
 
         var ffmpegCodec: String {
             switch self {
-            case .h264: return "libx264"
-            case .h265: return "libx265"
+            case .h264:         return "libx264"
+            case .h265:         return "libx265"
+            case .h264Hardware: return "h264_videotoolbox"
+            case .h265Hardware: return "hevc_videotoolbox"
+            }
+        }
+
+        /// 是否使用 Apple VideoToolbox 硬件编码（M 系列 Media Engine / Intel Quick Sync）
+        var isHardware: Bool {
+            switch self {
+            case .h264Hardware, .h265Hardware: return true
+            case .h264, .h265:                 return false
             }
         }
     }
@@ -46,17 +58,62 @@ struct ExportConfig {
 
         var id: String { rawValue }
 
-        /// 根据编码器返回合适的 CRF 值（H.265 同等视觉质量 CRF 更高）
+        /// 软件编码用的 CRF 值（H.265 同等视觉质量 CRF 更高）
         func crf(for codec: ExportCodec = .h264) -> Int {
             switch (self, codec) {
-            case (.low, .h264): return 28
-            case (.low, .h265): return 30
-            case (.medium, .h264): return 23
-            case (.medium, .h265): return 26
-            case (.high, .h264): return 18
-            case (.high, .h265): return 22
-            case (.lossless, _): return 0
+            case (.low, .h264), (.low, .h264Hardware):     return 28
+            case (.low, .h265), (.low, .h265Hardware):     return 30
+            case (.medium, .h264), (.medium, .h264Hardware): return 23
+            case (.medium, .h265), (.medium, .h265Hardware): return 26
+            case (.high, .h264), (.high, .h264Hardware):   return 18
+            case (.high, .h265), (.high, .h265Hardware):   return 22
+            case (.lossless, _):                            return 0
             }
+        }
+
+        /// 硬件编码用的目标比特率（kbps，按 1080p 估算；FFmpeg 会按实际分辨率扩缩）
+        /// VideoToolbox 不支持 CRF，用比特率控质量。
+        func videoBitrateKbps(for codec: ExportCodec) -> Int {
+            switch (self, codec) {
+            case (.low, .h264Hardware):    return 3_000
+            case (.medium, .h264Hardware): return 6_000
+            case (.high, .h264Hardware):   return 10_000
+            case (.low, .h265Hardware):    return 1_800
+            case (.medium, .h265Hardware): return 3_500
+            case (.high, .h265Hardware):   return 6_500
+            case (.lossless, _):           return 50_000   // 硬件不支持真无损，给极高比特率近似
+            default:                        return 8_000
+            }
+        }
+    }
+
+    /// 用户可读的质量说明（含码率/CRF + 文件大小估算）
+    /// 在 UI 下方显示，让用户知道选择对应的画质和文件大小
+    var qualityHint: String {
+        if codec.isHardware {
+            let kbps = quality.videoBitrateKbps(for: codec)
+            let mbps = Double(kbps) / 1000.0
+            let mbpsStr = mbps >= 10 ? String(format: "%.0f", mbps) : String(format: "%.1f", mbps)
+            // 30 秒视频文件大小估算 = bitrate × duration / 8
+            let sizeMB = mbps * 30 / 8
+            let sizeStr = sizeMB >= 10 ? String(format: "%.0f", sizeMB) : String(format: "%.1f", sizeMB)
+            return "目标码率 \(mbpsStr) Mbps（1080p 基准）· 30 秒视频约 \(sizeStr) MB"
+        } else {
+            let crf = quality.crf(for: codec)
+            let approxMbps: String
+            // CRF 与视觉等效码率的经验对照（H.264 1080p）
+            switch (codec, quality) {
+            case (.h264, .low):    approxMbps = "约 2-4 Mbps"
+            case (.h264, .medium): approxMbps = "约 5-8 Mbps"
+            case (.h264, .high):   approxMbps = "约 12-20 Mbps"
+            case (.h264, .lossless): approxMbps = "无损（极大文件）"
+            case (.h265, .low):    approxMbps = "约 1-2 Mbps"
+            case (.h265, .medium): approxMbps = "约 2-4 Mbps"
+            case (.h265, .high):   approxMbps = "约 6-12 Mbps"
+            case (.h265, .lossless): approxMbps = "无损（极大文件）"
+            default:               approxMbps = ""
+            }
+            return "CRF \(crf)（数值越小画质越好）· 实际码率 \(approxMbps)"
         }
     }
 }
@@ -151,6 +208,8 @@ actor ExportService {
             resolution: resolution,
             crf: config.quality.crf(for: config.codec),
             codec: config.codec.ffmpegCodec,
+            isHardware: config.codec.isHardware,
+            videoBitrateKbps: config.quality.videoBitrateKbps(for: config.codec),
             onProgress: { ffmpegProgress in
                 onProgress?(ExportProgress(
                     phase: .encoding,

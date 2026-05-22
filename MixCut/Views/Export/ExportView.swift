@@ -129,6 +129,19 @@ struct ExportView: View {
                         Text(q.rawValue).tag(q)
                     }
                 }
+
+                // 质量提示：根据当前 codec + quality 显示对应码率和预估文件大小
+                HStack(spacing: 4) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                    Text(exportConfig.qualityHint)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer()
+                }
+                .padding(.top, 2)
             }
             .controlSize(.regular)
         }

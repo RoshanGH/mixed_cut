@@ -406,6 +406,8 @@ actor FFmpegRunner {
                 resolution: String? = nil,
                 crf: Int = 18,
                 codec: String = "libx264",
+                isHardware: Bool = false,
+                videoBitrateKbps: Int = 8_000,
                 onProgress: (@Sendable (FFmpegProgress) -> Void)? = nil) async throws {
         guard !segments.isEmpty else { return }
 
@@ -475,15 +477,28 @@ actor FFmpegRunner {
         args += ["-filter_complex", filterComplex]
         args += ["-map", "[outv]", "-map", "[outa]"]
 
-        // 编码设置：根据质量等级调整 preset
-        let preset: String
-        switch crf {
-        case 0...10:  preset = "slower"   // 无损/极高质量
-        case 11...20: preset = "slow"     // 高质量
-        case 21...25: preset = "medium"   // 中等质量
-        default:      preset = "fast"     // 快速导出
+        // 编码设置：根据软件/硬件分支
+        if isHardware {
+            // VideoToolbox 硬件编码（Apple Silicon Media Engine / Intel Quick Sync）：
+            // 不支持 CRF，用目标比特率控质量；不支持 -preset；速度通常 5-10× 软件编码
+            args += ["-c:v", codec]
+            args += ["-b:v", "\(videoBitrateKbps)k"]
+            // 给一个最大比特率上限，避免突发码率过高
+            args += ["-maxrate", "\(videoBitrateKbps * 2)k"]
+            args += ["-tag:v", codec.contains("hevc") ? "hvc1" : "avc1"]   // QuickTime/Safari 兼容
+            // 让 VideoToolbox 走高质量预设（仍比 libx264 快很多）
+            args += ["-allow_sw", "0"]
+        } else {
+            // 软件编码（libx264 / libx265）
+            let preset: String
+            switch crf {
+            case 0...10:  preset = "slower"   // 无损/极高质量
+            case 11...20: preset = "slow"     // 高质量
+            case 21...25: preset = "medium"   // 中等质量
+            default:      preset = "fast"     // 快速导出
+            }
+            args += ["-c:v", codec, "-crf", "\(crf)", "-preset", preset]
         }
-        args += ["-c:v", codec, "-crf", "\(crf)", "-preset", preset]
         args += ["-c:a", "aac", "-b:a", "192k"]
         args += ["-movflags", "+faststart"]  // 支持网络流式播放（信息流广告必须）
         args += ["-y", outputPath]
