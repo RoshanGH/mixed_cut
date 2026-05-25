@@ -17,17 +17,21 @@ struct ImportView: View {
     @State private var isLoading = true
 
     var body: some View {
-        if isLoading {
-            SkeletonView(layout: .importMedia)
-                .task(id: project.id) {
-                    let t0 = Date()
-                    let thumbPaths = project.videos.compactMap(\.thumbnailPath)
-                    ThumbnailCache.shared.prewarm(paths: thumbPaths)
-                    MixLog.info("[Perf] Import: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(project.videos.count)")
-                    isLoading = false
-                }
-        } else {
-            mainContent
+        // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
+        Group {
+            if isLoading {
+                SkeletonView(layout: .importMedia)
+            } else {
+                mainContent
+            }
+        }
+        .task(id: project.id) {
+            let t0 = Date()
+            isLoading = true
+            let thumbPaths = project.videos.compactMap(\.thumbnailPath)
+            ThumbnailCache.shared.prewarm(paths: thumbPaths)
+            MixLog.info("[Perf] Import: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(project.videos.count)")
+            isLoading = false
         }
     }
 
@@ -220,8 +224,6 @@ struct ImportedVideoCard: View {
     @State private var showDeleteConfirm = false
     @State private var isRetrying = false
     @State private var leftHeight: CGFloat = 300
-    /// 默认折叠台词，只显示前 8 句，避免初次加载时同步实例化 N×NSTextField
-    @State private var showAllSentences: Bool = false
     /// 缓存格式化后的句子列表，避免 body 重绘时反复重建 TranscriptionResult
     @State private var cachedSentences: [(index: Int, text: String, time: String)] = []
     @State private var cachedIsASRAbnormal: Bool = false
@@ -548,11 +550,10 @@ struct ImportedVideoCard: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    let visibleSentences = showAllSentences
-                        ? cachedSentences
-                        : Array(cachedSentences.prefix(8))
+                    // LazyVStack 自带懒加载，屏幕外的台词行不会同步实例化 NSTextField，
+                    // 性能足够；不再需要折叠到 8 句的额外保护
                     LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(visibleSentences, id: \.index) { item in
+                        ForEach(cachedSentences, id: \.index) { item in
                             EditableSentenceRow(
                                 time: item.time.isEmpty ? "\(item.index)" : item.time,
                                 text: item.text,
@@ -560,25 +561,6 @@ struct ImportedVideoCard: View {
                                 video: video,
                                 allowSplit: cachedIsASRAbnormal
                             )
-                        }
-
-                        if !showAllSentences && cachedSentences.count > 8 {
-                            Button {
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    showAllSentences = true
-                                }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "chevron.down")
-                                        .font(.system(size: 8, weight: .semibold))
-                                    Text("展开全部 \(cachedSentences.count - 8) 句")
-                                        .font(.system(size: 10))
-                                }
-                                .foregroundStyle(Color.accentColor)
-                                .padding(.vertical, 4)
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 10)

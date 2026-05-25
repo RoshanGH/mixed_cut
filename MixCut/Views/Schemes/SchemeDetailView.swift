@@ -100,8 +100,9 @@ struct SchemeDetailView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
 
+            // 叙事结构条：横向条形分布，节点不多但用 LazyHStack 保持懒加载一致性
             GeometryReader { geo in
-                HStack(spacing: 2) {
+                LazyHStack(spacing: 2) {
                     ForEach(scheme.orderedSegments) { schemeSeg in
                         if let segment = schemeSeg.segment {
                             let width = max(
@@ -152,7 +153,9 @@ struct SchemeDetailView: View {
                 .foregroundStyle(.secondary)
 
             ScrollView(.horizontal, showsIndicators: true) {
-                HStack(alignment: .top, spacing: 10) {
+                // LazyHStack：横向懒加载，屏幕外的 StoryboardCard 不同步实例化
+                // 关键性能优化（每个 card 含 SegmentInlinePlayer，30+ 个一起渲染会卡）
+                LazyHStack(alignment: .top, spacing: 10) {
                     ForEach(scheme.orderedSegments) { schemeSeg in
                         StoryboardCard(schemeSeg: schemeSeg, segmentLibraryVM: segmentLibraryVM)
                     }

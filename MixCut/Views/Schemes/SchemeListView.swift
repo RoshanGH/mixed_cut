@@ -407,28 +407,30 @@ struct StrategySection: View {
                 }
             }
 
-            // 展开后显示变体列表
+            // 展开后显示变体列表（LazyVStack 懒加载：屏幕外的变体行不同步实例化）
             if isExpanded {
-                ForEach(strategy.orderedSchemes) { scheme in
-                    SchemeVariationRow(
-                        scheme: scheme,
-                        isSelected: viewModel.selectedScheme?.id == scheme.id
-                    )
-                    .onTapGesture {
-                        viewModel.selectedScheme = scheme
-                    }
-                    .contextMenu {
-                        Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(scheme.name, forType: .string)
-                            ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
-                        } label: {
-                            Label("复制方案名", systemImage: "doc.on.doc")
+                LazyVStack(spacing: 0) {
+                    ForEach(strategy.orderedSchemes) { scheme in
+                        SchemeVariationRow(
+                            scheme: scheme,
+                            isSelected: viewModel.selectedScheme?.id == scheme.id
+                        )
+                        .onTapGesture {
+                            viewModel.selectedScheme = scheme
                         }
-                        Divider()
-                        Button("删除变体", role: .destructive) {
-                            viewModel.deleteScheme(scheme)
-                            ToastCenter.shared.show("已删除变体", icon: "trash.fill", style: .warning)
+                        .contextMenu {
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(scheme.name, forType: .string)
+                                ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
+                            } label: {
+                                Label("复制方案名", systemImage: "doc.on.doc")
+                            }
+                            Divider()
+                            Button("删除变体", role: .destructive) {
+                                viewModel.deleteScheme(scheme)
+                                ToastCenter.shared.show("已删除变体", icon: "trash.fill", style: .warning)
+                            }
                         }
                     }
                 }

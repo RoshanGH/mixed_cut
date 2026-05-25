@@ -10,18 +10,24 @@ struct SegmentLibraryView: View {
     @State private var isLoading = true
 
     var body: some View {
-        if isLoading {
-            SkeletonView(layout: .segmentLibrary)
-                .task(id: project.id) {
-                    let t0 = Date()
-                    let thumbPaths = project.videos.compactMap(\.thumbnailPath)
-                    ThumbnailCache.shared.prewarm(paths: thumbPaths)
-                    viewModel.loadSegments(for: project)
-                    MixLog.info("[Perf] SegmentLibrary: \(Int(Date().timeIntervalSince(t0) * 1000))ms / segs=\(viewModel.segments.count)")
-                    isLoading = false
-                }
-        } else {
-            mainContent
+        // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
+        Group {
+            if isLoading {
+                SkeletonView(layout: .segmentLibrary)
+            } else {
+                mainContent
+            }
+        }
+        .task(id: project.id) {
+            let t0 = Date()
+            isLoading = true
+            // 退出多选模式 + 清空选中（避免不同项目的 ID 串到一起）
+            viewModel.setSelectionMode(false)
+            let thumbPaths = project.videos.compactMap(\.thumbnailPath)
+            ThumbnailCache.shared.prewarm(paths: thumbPaths)
+            viewModel.loadSegments(for: project)
+            MixLog.info("[Perf] SegmentLibrary: \(Int(Date().timeIntervalSince(t0) * 1000))ms / segs=\(viewModel.segments.count)")
+            isLoading = false
         }
     }
 
@@ -339,18 +345,38 @@ struct SegmentLibraryView: View {
             .padding(.horizontal, 4)
 
             // 分镜卡片/行
+            // 性能关键：父视图在 ForEach 内一次性算 isChecked / sequenceNumber，
+            // 传给 SegmentCard 作为 props。SegmentCard 实现 Equatable + .equatable() 后，
+            // 选中变化只会重绘那一个卡片，其他卡片跳过 body 评估。
+            let selectionMode = viewModel.isSelectionMode
+            let selectedIDs = viewModel.selectedSegmentIDs    // 读一次本地变量
+            let numberMap = viewModel.numberByVideo
             if viewModel.isGridView {
                 LazyVGrid(columns: [
                     GridItem(.adaptive(minimum: 360, maximum: 460))
                 ], spacing: 12) {
                     ForEach(group.segments) { segment in
-                        SegmentCard(segment: segment, viewModel: viewModel)
+                        SegmentCard(
+                            segment: segment,
+                            isChecked: selectedIDs.contains(segment.id),
+                            isSelectionMode: selectionMode,
+                            sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
+                            viewModel: viewModel
+                        )
+                        .equatable()
                     }
                 }
             } else {
                 LazyVStack(spacing: 8) {
                     ForEach(group.segments) { segment in
-                        SegmentRow(segment: segment, viewModel: viewModel)
+                        SegmentRow(
+                            segment: segment,
+                            isChecked: selectedIDs.contains(segment.id),
+                            isSelectionMode: selectionMode,
+                            sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
+                            viewModel: viewModel
+                        )
+                        .equatable()
                     }
                 }
             }
@@ -387,112 +413,40 @@ private struct SegmentLeftHeightKey: PreferenceKey {
     }
 }
 
-struct SegmentCard: View {
+/// SegmentCard 关键性能优化：
+/// - 实现 Equatable，让 SwiftUI 在 reconcile 时跳过未变化的卡片 body 评估
+/// - isChecked / isSelectionMode / sequenceNumber 通过 props 接收，**不直接访问 viewModel**
+///   避免「访问 selectedSegmentIDs → 整个 Set 注册依赖 → 任意选中变化触发所有卡片重绘」的陷阱
+/// - viewModel 仍然持有，用于 action（toggleSelection / deleteSegment / requestPlay）
+struct SegmentCard: View, Equatable {
     let segment: Segment
+    let isChecked: Bool
+    let isSelectionMode: Bool
+    let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
 
     @State private var isHovering = false
     @State private var leftHeight: CGFloat = 180
     @State private var showDeleteConfirm = false
 
+    // Equatable：SwiftUI 看到这俩相等就跳过 body 评估
+    // viewModel 引用不参与比较（Bindable 让其变化通过 @State observation 触发，跟 Equatable 跳过逻辑互不冲突）
+    static func == (lhs: SegmentCard, rhs: SegmentCard) -> Bool {
+        lhs.segment.id == rhs.segment.id
+            && lhs.isChecked == rhs.isChecked
+            && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.sequenceNumber == rhs.sequenceNumber
+    }
+
     private var isSelected: Bool {
         viewModel.selectedSegment?.id == segment.id
     }
 
-    private var isChecked: Bool {
-        viewModel.selectedSegmentIDs.contains(segment.id)
-    }
-
-    private var sequenceNumber: Int {
-        viewModel.number(for: segment)
-    }
-
     var body: some View {
-        // 多选模式下用极简渲染：只显示缩略图 + checkbox + 编号 + 类型标签
-        // 不渲染 SegmentInlinePlayer + BoundaryAdjustRow + rightPanel（台词面板），
-        // 大幅减少滚动时新卡片入屏的实例化开销
-        if viewModel.isSelectionMode {
-            compactSelectionCard
-        } else {
-            fullCard
-        }
+        fullCard
     }
 
-    /// 多选模式极简卡片
-    private var compactSelectionCard: some View {
-        HStack(spacing: 10) {
-            Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(isChecked ? Color.accentColor : .secondary)
-
-            // 静态缩略图
-            compactThumbnail
-                .frame(width: 90, height: 60)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 5) {
-                    if sequenceNumber > 0 {
-                        Text("#\(sequenceNumber)")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(Color.black.opacity(0.6))
-                            .clipShape(Capsule())
-                    }
-                    Text(String(format: "%.1fs", segment.duration))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                }
-
-                HStack(spacing: 3) {
-                    ForEach(segment.semanticTypes.prefix(2), id: \.self) { type in
-                        SemanticTypeTag(type: type)
-                    }
-                    PositionTypeTag(type: segment.positionType)
-                }
-
-                if !segment.text.isEmpty {
-                    Text(segment.text)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-        }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isChecked
-                      ? Color.accentColor.opacity(0.10)
-                      : Color(.controlBackgroundColor).opacity(0.5))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(isChecked ? Color.accentColor : .white.opacity(0.04),
-                        lineWidth: isChecked ? 2 : 1)
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            viewModel.toggleSelection(segment)
-        }
-    }
-
-    @ViewBuilder
-    private var compactThumbnail: some View {
-        if let thumbPath = segment.thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: thumbPath) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-        } else {
-            Rectangle().fill(.quaternary.opacity(0.5))
-        }
-    }
-
-    /// 完整卡片（非多选模式）
+    /// 完整卡片
     private var fullCard: some View {
         HStack(alignment: .top, spacing: 0) {
             // 左侧：视频 + 标签 + 时间调整
@@ -519,20 +473,29 @@ struct SegmentCard: View {
         .onPreferenceChange(SegmentLeftHeightKey.self) { leftHeight = $0 }
         .background {
             RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected
-                      ? Color.accentColor.opacity(0.06)
-                      : isHovering
-                        ? Color(.controlBackgroundColor).opacity(0.8)
-                        : Color(.controlBackgroundColor).opacity(0.5))
+                .fill(isChecked
+                      ? Color.accentColor.opacity(0.10)
+                      : isSelected
+                        ? Color.accentColor.opacity(0.06)
+                        : isHovering
+                          ? Color(.controlBackgroundColor).opacity(0.8)
+                          : Color(.controlBackgroundColor).opacity(0.5))
         }
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(isSelected ? Color.accentColor.opacity(0.5) : .white.opacity(0.04), lineWidth: 1)
+                .stroke(isChecked ? Color.accentColor :
+                        isSelected ? Color.accentColor.opacity(0.5) : .white.opacity(0.04),
+                        lineWidth: isChecked ? 2 : 1)
         )
         .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
+            }
+        }
+        .onTapGesture {
+            if isSelectionMode {
+                viewModel.toggleSelection(segment)
             }
         }
         .contextMenu {
@@ -554,12 +517,12 @@ struct SegmentCard: View {
                 }
             }
 
-            if viewModel.isSelectionMode {
+            if isSelectionMode {
                 Button {
                     viewModel.toggleSelection(segment)
                 } label: {
-                    Label(viewModel.selectedSegmentIDs.contains(segment.id) ? "取消选中" : "选中",
-                          systemImage: viewModel.selectedSegmentIDs.contains(segment.id) ? "checkmark.square" : "square")
+                    Label(isChecked ? "取消选中" : "选中",
+                          systemImage: isChecked ? "checkmark.square" : "square")
                 }
             }
 
@@ -589,7 +552,7 @@ struct SegmentCard: View {
             SegmentInlinePlayer(segment: segment, viewModel: viewModel)
                 .overlay(alignment: .topLeading) {
                     HStack(spacing: 4) {
-                        if viewModel.isSelectionMode {
+                        if isSelectionMode {
                             Image(systemName: isChecked
                                 ? "checkmark.square.fill" : "square")
                                 .font(.system(size: 16, weight: .semibold))
@@ -891,27 +854,30 @@ struct SegmentInlinePlayer: View {
 
 // MARK: - 分镜行（列表模式）
 
-struct SegmentRow: View {
+/// 同 SegmentCard：Equatable + props 隔离选中状态
+struct SegmentRow: View, Equatable {
     let segment: Segment
+    let isChecked: Bool
+    let isSelectionMode: Bool
+    let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
     @State private var isHovering = false
+
+    static func == (lhs: SegmentRow, rhs: SegmentRow) -> Bool {
+        lhs.segment.id == rhs.segment.id
+            && lhs.isChecked == rhs.isChecked
+            && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.sequenceNumber == rhs.sequenceNumber
+    }
 
     private var isSelected: Bool {
         viewModel.selectedSegment?.id == segment.id
     }
 
-    private var isChecked: Bool {
-        viewModel.selectedSegmentIDs.contains(segment.id)
-    }
-
-    private var sequenceNumber: Int {
-        viewModel.number(for: segment)
-    }
-
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // 多选 checkbox（只在多选模式下显示）
-            if viewModel.isSelectionMode {
+            if isSelectionMode {
                 Image(systemName: isChecked ? "checkmark.square.fill" : "square")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(isChecked ? Color.accentColor : .secondary)
@@ -978,7 +944,7 @@ struct SegmentRow: View {
             }
         }
         .onTapGesture {
-            if viewModel.isSelectionMode {
+            if isSelectionMode {
                 viewModel.toggleSelection(segment)
             } else {
                 viewModel.selectedSegment = segment

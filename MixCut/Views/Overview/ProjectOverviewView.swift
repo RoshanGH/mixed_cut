@@ -13,26 +13,31 @@ struct ProjectOverviewView: View {
     @State private var videosCached: [Video] = []
 
     var body: some View {
-        if isLoading {
-            SkeletonView(layout: .projectOverview)
-                .task(id: project.id) {
-                    let t0 = Date()
-                    // 一次性读取所有 SwiftData 关系字段
-                    let videos = project.videos
-                    let segCount = videos.reduce(0) { $0 + $1.segments.count }
-                    videosCached = videos
-                    videoCount = videos.count
-                    segmentCount = segCount
-                    schemeCount = project.schemeCount
+        // ⚠️ 切换项目联动规则（CLAUDE.md 铁律）：
+        // .task(id: project.id) 必须放在 body 最外层（Group 上），不能放进 if/else 子分支
+        // 否则切换项目时如果当前是 mainContent 分支，SkeletonView 不渲染 → task 消失 → 不联动
+        Group {
+            if isLoading {
+                SkeletonView(layout: .projectOverview)
+            } else {
+                mainContent
+            }
+        }
+        .task(id: project.id) {
+            let t0 = Date()
+            isLoading = true   // 每次切换都重置，确保 skeleton 显示 + 数据刷新
+            // 一次性读取所有 SwiftData 关系字段
+            let videos = project.videos
+            let segCount = videos.reduce(0) { $0 + $1.segments.count }
+            videosCached = videos
+            videoCount = videos.count
+            segmentCount = segCount
+            schemeCount = project.schemeCount
 
-                    let thumbPaths = videos.compactMap(\.thumbnailPath)
-                    ThumbnailCache.shared.prewarm(paths: thumbPaths)
-                    MixLog.info("[Perf] ProjectOverview: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(videoCount) segs=\(segmentCount)")
-                    // 立即切换（无动画），让 SwiftUI 直接渲染 mainContent
-                    isLoading = false
-                }
-        } else {
-            mainContent
+            let thumbPaths = videos.compactMap(\.thumbnailPath)
+            ThumbnailCache.shared.prewarm(paths: thumbPaths)
+            MixLog.info("[Perf] ProjectOverview: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(videoCount) segs=\(segmentCount)")
+            isLoading = false
         }
     }
 

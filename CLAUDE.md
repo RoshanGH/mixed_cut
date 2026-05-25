@@ -142,32 +142,90 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 ## 关键开发规则（必须遵守）
 
-### 不要在修改过程中破坏已有功能（最重要 ⚠️）
+### 不要在修改过程中破坏已有功能（最重要 ⚠️⚠️⚠️）
 
 修改任何代码前，**必须先识别该文件/模块已有的功能点**；改完后这些功能必须依然完整可用。**严禁为了修一个问题而误伤相邻功能**。
 
-- 修改一个视图/组件时，先通读整个文件，列出其中所有交互能力（点击、双击、编辑、选中复制、拖拽、右键菜单等），改完逐一确认仍然有效。
-- 改 UI 布局/样式时，不得移除或破坏相邻的交互逻辑。
-- 不确定某段代码的作用时，先查 `git blame` / `git log`，不要随意删改。
-- 已知容易被误伤的功能（改动相关文件时必须回归验证）：
-  - **素材导入页**：台词行双击编辑、台词文本选中复制、视频卡片文件名选中复制、卡片右键菜单
-  - **分镜素材库 / 混剪方案 / 导出页**：切换项目时的数据联动刷新
-- 每次改完，自查一句：「这个文件里原本能用的功能，现在是否全都还能用？」
+#### 强制 SOP（每次代码改动都必走）
+1. **改动前**：通读要改的文件 + 周边文件（相同 view tree），用一句话列出"这里能做的事"（点击/双击/编辑/选中复制/拖拽/右键菜单/键盘快捷键/项目切换联动 等等）。
+2. **改动中**：每次修改只针对当前任务，不要顺手"重构"周边代码。
+3. **改动后**：人工跑一遍受影响的视图，**逐项验证**第 1 步列出的能力，确认没破坏。
+4. **疑似删改**：不确定某段代码的作用时，先查 `git blame` / `git log`，不要随意删改。
 
-### 切换项目时各模块必须联动刷新
+#### 已知容易被误伤的功能清单（动相关文件时必须回归验证）
+- **素材导入页**：台词行双击编辑、台词文本选中复制、视频卡片文件名选中复制、卡片右键菜单
+- **分镜素材库**：多选模式（checkbox + 全选/反选/清空）、批量导出（编号 + 命名规则）、批量删除、Equatable 性能优化、`isHovering/isSelected` 控制 BoundaryAdjustRow 显示
+- **分镜库 / 项目概览 / 素材导入**：切换项目时的**数据联动刷新**（详见下一节"切换项目铁律"）
+- **导出**：默认 H.264 硬件加速、分镜导出第一帧不黑屏（trim filter + setpts 重置时间戳）
+- **强制浅色外观**：`MixCutApp.init()` 中 `NSApplication.shared.appearance = .aqua`
+- **应用启动恢复上次项目**：`ProjectViewModel.setModelContext` 末尾的 lastSelectedProjectID 恢复
+- **缩略图全局缓存**：`ThumbnailCache.shared`，不要重新引入 `NSImage(contentsOfFile:)` 直接同步加载
+- **Toast / InlineBanner / SkeletonView**：全局共享组件，新视图需要错误提示/loading 时复用
 
-所有依赖项目数据的视图，必须同时使用 `onAppear` **和** `onChange(of: project.id)` 来加载数据。仅用 `onAppear` 不够，因为 SwiftUI 在切换项目时不一定重新创建视图（视图复用），导致数据不刷新。
+#### 当出现 bug 时不要"修一个改坏三个"
+本项目已多次出现"修一个 bug 把别的功能改坏"的情况。**当你的改动跨越多个文件 / 改了核心视图时，必须用第 3 步的人工验证来兜底**，不要假设 SwiftUI 的 diff 会保护你。
+
+### 切换项目时各模块必须联动刷新（多次踩坑，铁律 ⚠️）
+
+所有依赖项目数据的视图，必须使用以下两种之一加载数据：
 
 ```swift
-// ✅ 正确写法
+// ✅ 写法 A：onAppear + onChange（最稳）
 .onAppear { viewModel.loadData(for: project) }
 .onChange(of: project.id) { viewModel.loadData(for: project) }
 
-// ❌ 错误写法（切换项目时不会刷新）
+// ✅ 写法 B：.task(id: project.id) — 在 project.id 变化时自动重新执行
+.task(id: project.id) {
+    isLoading = true
+    viewModel.loadData(for: project)
+    isLoading = false
+}
+
+// ❌ 错误：仅 onAppear（切换项目时视图复用不会重新触发）
 .onAppear { viewModel.loadData(for: project) }
 ```
 
-已修复的视图：SegmentLibraryView、SchemeListView、ExportView。新增视图如果依赖项目数据，必须遵循此模式。
+#### 🚨 致命陷阱：`.task(id:)` 必须放在 body 最外层
+
+**绝对不要**把 `.task(id: project.id)` 附加在条件渲染的子视图上：
+
+```swift
+// ❌ 致命错误：当 isLoading=false 时 SkeletonView 不渲染 → task 消失 → 切换项目不联动！
+var body: some View {
+    if isLoading {
+        SkeletonView()
+            .task(id: project.id) { ... isLoading = false }   // ← task 绑在条件分支上
+    } else {
+        mainContent
+    }
+}
+
+// ✅ 正确：task 在 Group 外层，无论 isLoading 状态如何都监听 project.id
+var body: some View {
+    Group {
+        if isLoading { SkeletonView() } else { mainContent }
+    }
+    .task(id: project.id) {        // ← task 跟随整个 view 生命周期
+        isLoading = true
+        // load data...
+        isLoading = false
+    }
+}
+```
+
+**为什么犯过这个错**：2026-05-23 我把性能优化的 task 绑到了 SkeletonView 上，导致从其他项目切回来时（isLoading 已经是 false）task 不触发，数据停留在上一个项目。这种错误**视觉上一切正常但数据完全是错的**，必须人工切项目验证才能发现。
+
+#### 检查清单（改完依赖项目的视图必须人工跑一遍）
+1. 项目 A → 项目 B：视频列表、分镜、统计数据是否变成 B 的？
+2. B → A 回切：A 数据完整？
+3. 多选状态下切项目：选中状态是否清空？
+
+#### 已修复 / 必须遵循此模式的视图
+- ProjectOverviewView（用 `.task(id: project.id)`）
+- ImportView（用 `.task(id: project.id)`）
+- SegmentLibraryView（用 `.task(id: project.id)`）
+- SchemeListView、ExportView（用 `onAppear + onChange`）
+新增视图如果依赖项目数据，必须遵循以上模式。
 
 ### Schema 变更必须先备份数据库
 
