@@ -10,7 +10,56 @@ struct ExportView: View {
     @State private var exportedFolder: String?
     @State private var errorMessage: String?
 
+    /// 用户选中的方案 ID 集合（默认全选）
+    @State private var selectedSchemeIDs: Set<UUID> = []
+    /// 已展开的策略 ID 集合（默认全部展开）
+    @State private var expandedStrategyIDs: Set<UUID> = []
+
     private let exportService = ExportService()
+
+    /// 当前选中的方案数组（按现有方案顺序）
+    private var selectedSchemes: [MixScheme] {
+        schemeVM.schemes.filter { selectedSchemeIDs.contains($0.id) }
+    }
+
+    /// 全选所有方案
+    private func selectAll() {
+        selectedSchemeIDs = Set(schemeVM.schemes.map(\.id))
+        expandedStrategyIDs = Set(schemeVM.orderedStrategiesForDisplay.map(\.id))
+    }
+
+    /// 切换某个方案的选中
+    private func toggleScheme(_ scheme: MixScheme) {
+        if selectedSchemeIDs.contains(scheme.id) {
+            selectedSchemeIDs.remove(scheme.id)
+        } else {
+            selectedSchemeIDs.insert(scheme.id)
+        }
+    }
+
+    /// 切换整个策略下所有方案
+    private func toggleStrategy(_ strategy: MixStrategy) {
+        let strategySchemeIDs = Set(strategy.orderedSchemes.map(\.id))
+        let allSelected = strategySchemeIDs.isSubset(of: selectedSchemeIDs) && !strategySchemeIDs.isEmpty
+        if allSelected {
+            selectedSchemeIDs.subtract(strategySchemeIDs)
+        } else {
+            selectedSchemeIDs.formUnion(strategySchemeIDs)
+        }
+    }
+
+    /// 是否当前策略全部选中
+    private func isStrategyFullySelected(_ strategy: MixStrategy) -> Bool {
+        let ids = Set(strategy.orderedSchemes.map(\.id))
+        return !ids.isEmpty && ids.isSubset(of: selectedSchemeIDs)
+    }
+
+    /// 是否当前策略部分选中
+    private func isStrategyPartiallySelected(_ strategy: MixStrategy) -> Bool {
+        let ids = Set(strategy.orderedSchemes.map(\.id))
+        let intersection = ids.intersection(selectedSchemeIDs)
+        return !intersection.isEmpty && intersection.count < ids.count
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +67,11 @@ struct ExportView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     // 概览
                     exportOverview
+
+                    // 方案筛选（嵌入式 checkbox 列表）
+                    if !schemeVM.schemes.isEmpty {
+                        selectionSection
+                    }
 
                     // 导出设置
                     exportSettings
@@ -46,11 +100,175 @@ struct ExportView: View {
         }
         .onAppear {
             schemeVM.loadSchemes(for: project)
+            selectAll()
         }
         .onChange(of: project.id) {
             schemeVM.loadSchemes(for: project)
+            selectAll()
         }
         .navigationTitle("导出")
+    }
+
+    // MARK: - 方案筛选
+
+    private var selectionSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                Text("选择要导出的方案")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("已选 \(selectedSchemeIDs.count) / \(schemeVM.schemes.count)")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.secondary.opacity(0.08))
+                    .clipShape(Capsule())
+            }
+
+            // 全选 / 反选 / 清空
+            HStack(spacing: 12) {
+                Button("全选") { selectAll() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color.accentColor)
+
+                Button("反选") {
+                    let allIDs = Set(schemeVM.schemes.map(\.id))
+                    selectedSchemeIDs = allIDs.symmetricDifference(selectedSchemeIDs)
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(Color.accentColor)
+
+                Button("清空") { selectedSchemeIDs.removeAll() }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .disabled(selectedSchemeIDs.isEmpty)
+            }
+
+            // 策略 + 方案树
+            VStack(spacing: 0) {
+                ForEach(schemeVM.orderedStrategiesForDisplay) { strategy in
+                    strategyRow(strategy: strategy)
+                    if expandedStrategyIDs.contains(strategy.id) {
+                        ForEach(strategy.orderedSchemes) { scheme in
+                            schemeRow(scheme: scheme)
+                        }
+                    }
+                    Divider().padding(.leading, 30)
+                }
+            }
+            .background(.quaternary.opacity(0.2))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+    }
+
+    private func strategyRow(strategy: MixStrategy) -> some View {
+        let total = strategy.schemes.count
+        let selectedCount = strategy.schemes.filter { selectedSchemeIDs.contains($0.id) }.count
+        let isExpanded = expandedStrategyIDs.contains(strategy.id)
+        let checkboxIcon: String = {
+            if isStrategyFullySelected(strategy) { return "checkmark.square.fill" }
+            if isStrategyPartiallySelected(strategy) { return "minus.square.fill" }
+            return "square"
+        }()
+
+        return HStack(spacing: 8) {
+            // checkbox（点击切换整个策略）
+            Button {
+                toggleStrategy(strategy)
+            } label: {
+                Image(systemName: checkboxIcon)
+                    .font(.system(size: 13))
+                    .foregroundStyle(isStrategyFullySelected(strategy) || isStrategyPartiallySelected(strategy)
+                                     ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+
+            // 展开/折叠 + 标题
+            Button {
+                if isExpanded {
+                    expandedStrategyIDs.remove(strategy.id)
+                } else {
+                    expandedStrategyIDs.insert(strategy.id)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 10)
+
+                    if strategy.isCustomGroup {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.purple)
+                    }
+
+                    Text(strategy.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    Text("\(selectedCount)/\(total)")
+                        .font(.system(size: 10, design: .rounded))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+    }
+
+    private func schemeRow(scheme: MixScheme) -> some View {
+        let isSelected = selectedSchemeIDs.contains(scheme.id)
+        return HStack(spacing: 8) {
+            Button {
+                toggleScheme(scheme)
+            } label: {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 12))
+                    .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.plain)
+
+            Text("#\(scheme.variationIndex)")
+                .font(.system(size: 10, weight: .bold, design: .rounded))
+                .foregroundStyle(.tertiary)
+                .frame(width: 28, alignment: .leading)
+
+            Text(scheme.name)
+                .font(.system(size: 11))
+                .lineLimit(1)
+
+            if scheme.isManuallyEdited {
+                Text("·已修改")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+
+            Text(String(format: "%.1fs", scheme.totalDuration))
+                .font(.system(size: 10, design: .rounded))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.leading, 36)
+        .padding(.trailing, 12)
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            toggleScheme(scheme)
+        }
     }
 
     // MARK: - 概览
@@ -166,13 +384,16 @@ struct ExportView: View {
 
     @ViewBuilder
     private var exportButton: some View {
+        let count = selectedSchemeIDs.count
+        let isDisabled = selectedSchemeIDs.isEmpty || isExporting || schemeVM.schemes.isEmpty
+
         Button {
             startBatchExport()
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "square.and.arrow.up.fill")
                     .font(.system(size: 13))
-                Text("全部导出")
+                Text(count > 0 ? "导出选中的 \(count) 个" : "请先选择方案")
                     .font(.system(size: 14, weight: .semibold))
             }
             .frame(maxWidth: .infinity)
@@ -180,10 +401,12 @@ struct ExportView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .disabled(schemeVM.schemes.isEmpty || isExporting)
+        .disabled(isDisabled)
         .help(schemeVM.schemes.isEmpty
               ? "暂无方案可导出，请先在「混剪方案」页面生成"
-              : isExporting ? "正在导出中" : "导出全部 \(schemeVM.schemes.count) 个方案")
+              : isExporting ? "正在导出中"
+              : selectedSchemeIDs.isEmpty ? "请先勾选要导出的方案"
+              : "导出选中的 \(count) 个方案")
 
         if schemeVM.schemes.isEmpty && !isExporting {
             HStack(spacing: 4) {
@@ -306,7 +529,7 @@ struct ExportView: View {
     // MARK: - 批量导出（并发）
 
     private func startBatchExport() {
-        let allSchemes = schemeVM.schemes
+        let allSchemes = selectedSchemes
         guard !allSchemes.isEmpty else { return }
 
         exportedFolder = nil
