@@ -360,8 +360,14 @@ final class SchemeViewModel {
         modelContext?.safeSave()
     }
 
-    func removeSegment(_ schemeSeg: SchemeSegment, from scheme: MixScheme) {
-        guard let context = modelContext else { return }
+    @discardableResult
+    func removeSegment(_ schemeSeg: SchemeSegment, from scheme: MixScheme) -> Bool {
+        guard let context = modelContext else { return false }
+        guard scheme.schemeSegments.count > 1 else {
+            ToastCenter.shared.show("方案至少保留 1 个分镜", icon: "exclamationmark.circle.fill")
+            return false
+        }
+
         let deletedID = schemeSeg.id
         context.delete(schemeSeg)
 
@@ -370,6 +376,8 @@ final class SchemeViewModel {
             seg.position = i + 1
         }
 
+        markAsEdited(scheme)
         context.safeSave()
+        return true
     }
 }
