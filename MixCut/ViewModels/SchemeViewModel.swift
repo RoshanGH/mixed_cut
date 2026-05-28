@@ -34,6 +34,21 @@ final class SchemeViewModel {
         strategies.flatMap(\.orderedSchemes)
     }
 
+    /// AI 生成的策略（排除"自定义组合"容器）
+    var aiStrategies: [MixStrategy] {
+        strategies.filter { !$0.isCustomGroup }
+    }
+
+    /// 当前项目的"自定义组合"策略容器
+    var customGroup: MixStrategy? {
+        strategies.first { $0.isCustomGroup }
+    }
+
+    /// 列表渲染用的有序策略：AI 策略在前，自定义组合在后
+    var orderedStrategiesForDisplay: [MixStrategy] {
+        aiStrategies + (customGroup.map { [$0] } ?? [])
+    }
+
     // MARK: - 构建分镜目录（全局唯一 ID）
 
     /// 在 MainActor 上构建分镜目录和 ID 映射
