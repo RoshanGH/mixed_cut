@@ -165,6 +165,15 @@ struct SegmentAnalysis {
     let suggestions: [String]
 }
 
+/// 自定义方案 AI 反推的元信息
+struct CustomSchemeMetadata: Codable, Sendable {
+    let name: String
+    let narrativeStructure: String
+    let targetAudience: String
+    let schemeDescription: String
+    let style: String
+}
+
 /// 方案生成服务
 actor SchemeGenerationService {
 
@@ -387,5 +396,46 @@ actor SchemeGenerationService {
             compositions.enumerated().map { i, comp in
                 "\(i + 1): \(comp.segments.joined(separator: "→"))"
             }.joined(separator: "\n")
+    }
+
+    // MARK: - 自定义方案元信息反推
+
+    /// AI 反推自定义方案的元信息
+    /// 失败时不抛错，返回 nil 让上层走默认兜底
+    func inferMetadata(for segments: [Segment]) async -> CustomSchemeMetadata? {
+        guard !segments.isEmpty,
+              let template = promptLoader.loadPrompt(named: "custom_scheme_inference") else {
+            return nil
+        }
+
+        struct SegmentInfo: Encodable {
+            let position: Int
+            let semanticTypes: [String]
+            let text: String
+            let duration: Double
+        }
+
+        let infos = segments.enumerated().map { idx, seg in
+            SegmentInfo(
+                position: idx + 1,
+                semanticTypes: seg.semanticTypes.map(\.rawValue),
+                text: seg.text,
+                duration: seg.duration
+            )
+        }
+
+        guard let jsonData = try? JSONEncoder().encode(infos),
+              let jsonString = String(data: jsonData, encoding: .utf8) else {
+            return nil
+        }
+
+        let prompt = template.replacingOccurrences(of: "{{SEGMENTS_JSON}}", with: jsonString)
+
+        do {
+            return try await aiProvider.generateJSON(prompt: prompt, responseType: CustomSchemeMetadata.self)
+        } catch {
+            MixLog.error(" inferMetadata 失败: \(error.localizedDescription)")
+            return nil
+        }
     }
 }
