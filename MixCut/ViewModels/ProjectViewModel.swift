@@ -42,7 +42,7 @@ final class ProjectViewModel {
         projects = (try? context.fetch(descriptor)) ?? []
     }
 
-    /// 创建新项目
+    /// 创建新项目（同步创建"自定义组合"策略容器）
     func createProject() {
         guard let context = modelContext else { return }
         let name = newProjectName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -50,6 +50,20 @@ final class ProjectViewModel {
 
         let project = Project(name: name)
         context.insert(project)
+
+        let customGroup = MixStrategy(
+            name: "自定义组合",
+            style: "",
+            description: "手动挑选分镜组合的方案",
+            targetAudience: "",
+            narrativeStructure: "",
+            targetDuration: 0
+        )
+        customGroup.isCustomGroup = true
+        customGroup.project = project
+        project.strategies.append(customGroup)
+        context.insert(customGroup)
+
         context.safeSave()
 
         newProjectName = ""
