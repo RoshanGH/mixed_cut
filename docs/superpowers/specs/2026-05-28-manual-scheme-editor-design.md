@@ -37,28 +37,65 @@ MixCut 当前已经能把广告成片按语义切成分镜，并由 AI 重新排
 
 ## 3. 数据模型变更
 
-### 3.1 `MixScheme` 新增字段
+### 3.1 字段增加（共 2 个 Bool）
 
 ```swift
+@Model
+final class MixStrategy: Identifiable {
+    // ... 已有字段保持不变 ...
+
+    // 新增：标识这是"自定义组合"分组，不会被 AI 生成流程触碰
+    var isCustomGroup: Bool = false
+}
+
 @Model
 final class MixScheme: Identifiable {
     // ... 已有字段保持不变 ...
 
-    // 新增
-    var isCustom: Bool = false           // true = 自定义方案（strategy 为 nil）
-    var isManuallyEdited: Bool = false   // true = AI 方案被手动改过
+    // 新增：true = AI 方案被手动改过
+    var isManuallyEdited: Bool = false
 }
 ```
 
-**默认值兜底**：旧数据 `isCustom = false`、`isManuallyEdited = false`，行为与原 AI 方案完全一致，无迁移风险。
+**默认值兜底**：旧数据 `isCustomGroup = false`、`isManuallyEdited = false`，行为与原 AI 方案完全一致，无迁移风险。
 
-### 3.2 "自定义方案分组"为虚拟节点
+> **设计说明**：不再在 `MixScheme` 上加 `isCustom` 字段。判断"是否自定义方案"的方式 = `scheme.strategy?.isCustomGroup == true`。这是单一信息源，避免冗余。
 
-- `MixStrategy` 不新建实例；自定义方案的 `strategy = nil`、`isCustom = true`
-- `SchemeViewModel` 在 `loadSchemes(for:)` 后计算两个集合：
-  - `aiStrategies: [MixStrategy]` —— 原有 AI 策略
-  - `customSchemes: [MixScheme]` —— 所有 `isCustom == true` 的方案，按 `createdAt` 倒序
-- `SchemeListView` 左栏在 AI 策略下方插入一个**虚拟分组节点**：「✨ 自定义方案」，下面挂 `customSchemes`
+### 3.2 "自定义组合"是真实策略实体
+
+每个项目预创建一个 `MixStrategy`：
+
+```swift
+MixStrategy(
+    name: "自定义组合",
+    style: "",
+    description: "手动挑选分镜组合的方案",
+    targetAudience: "",
+    narrativeStructure: "",
+    targetDuration: 0
+)
+// 然后设置 isCustomGroup = true
+```
+
+**创建时机：**
+
+- **新项目**：在 `ProjectViewModel.createProject` 内立即同步创建
+- **老项目**：`MixCutApp.init()` 中类似 `fixMissingSemanticTypes()` 增加一次性迁移 `ensureCustomGroupStrategy()`，遍历所有项目，缺一条则补一条
+
+**对 AI 生成流程的影响：**
+
+`SchemeGenerationService` 在写入新策略时，**只创建 `isCustomGroup = false` 的策略**；列出现有策略给 AI 看时也必须过滤掉自定义组合（避免 AI 误以为要往里面填变体）。
+
+```swift
+// SchemeViewModel 提供两个派生属性
+var aiStrategies: [MixStrategy] {
+    strategies.filter { !$0.isCustomGroup }
+}
+
+var customGroup: MixStrategy? {
+    strategies.first { $0.isCustomGroup }
+}
+```
 
 ### 3.3 编辑动作打标记的规则
 
@@ -66,12 +103,15 @@ final class MixScheme: Identifiable {
 
 ```swift
 private func markAsEdited(_ scheme: MixScheme) {
-    guard !scheme.isCustom, !scheme.isManuallyEdited else { return }
+    let isCustom = scheme.strategy?.isCustomGroup == true
+    guard !isCustom, !scheme.isManuallyEdited else { return }
     scheme.isManuallyEdited = true
 }
 ```
 
 调用点：`insertSegment`、`replaceSegment`、`removeSegment`、`moveSegment`。
+
+> 自定义方案不打"已编辑"标记 —— 它本来就是手拼的。
 
 ---
 
@@ -116,7 +156,8 @@ private func markAsEdited(_ scheme: MixScheme) {
 1. 按钮转为 loading 状态，禁用其他交互
 2. 调用 `SchemeViewModel.createCustomScheme(from: orderedSegments, in: project)`
 3. 内部流程：
-   - 立即创建 `MixScheme(isCustom: true, name: "自定义 #\(N)")` + N 个 `SchemeSegment`
+   - 找到该项目的 `customGroup` 策略（必定存在，由 §3.2 的迁移保证）
+   - 创建 `MixScheme(strategy: customGroup, name: "自定义 #\(N)")` + N 个 `SchemeSegment`
    - 调用 `SchemeGenerationService.inferMetadata(for: segments)` 发起 AI 调用
    - 成功 → 更新方案的 `name / narrativeStructure / targetAudience / schemeDescription / style`
    - 失败 → 不改 name，顶部 `ToastCenter` 提示「元信息生成失败，方案已保存为『自定义 #N』」
@@ -293,27 +334,45 @@ private func containsSegment(_ segment: Segment, in scheme: MixScheme) -> Bool
 
 ## 7. SchemeListView 改动
 
-左栏在 AI 策略列表后插入「自定义方案」虚拟分组：
+左栏渲染所有策略（`isCustomGroup == true` 的"自定义组合"排在 AI 策略**之后**）：
 
 ```
-┌──────────────────────────┐
-│ 混剪方案  2 策略·5 视频  + │
-├──────────────────────────┤
-│ ▾ 高冷营销风              │
-│   ├ 变体 1                │
-│   └ 变体 2                │
-│ ▾ 热血塑造                │
-│   ├ 变体 1  ·已修改        │
-│   ├ 变体 2                │
-│   └ 变体 3                │
-│ ▾ ✨ 自定义方案 (1)        │
-│   └ 自定义 #1             │
-└──────────────────────────┘
+┌────────────────────────────────────┐
+│ 混剪方案  2 策略·5 视频           +│
+├────────────────────────────────────┤
+│ ▾ 高冷营销风                       │
+│   ├ 变体 1                         │
+│   └ 变体 2                         │
+│ ▾ 热血塑造                         │
+│   ├ 变体 1  ·已修改                 │
+│   ├ 变体 2                         │
+│   └ 变体 3                         │
+│ ▾ ✨ 自定义组合                     │
+│   └ 自定义 #1                      │
+└────────────────────────────────────┘
 ```
 
-- "已修改" badge：当 `mixScheme.isManuallyEdited == true` 时显示，淡灰色小字
-- "自定义方案" 虚拟分组：仅在有至少 1 个自定义方案时显示
-- 自定义方案的卡片不显示 strategy 信息，仅显示名称 + 时长 + 分镜数
+**渲染细节：**
+
+- 用一个 `ForEach(orderedStrategies)` 统一渲染，`orderedStrategies = aiStrategies + [customGroup].compactMap { $0 }`
+- `isCustomGroup` 的策略在分组标题上加 ✨ 图标，区分于 AI 策略
+- **空状态**：当 `customGroup.schemes.isEmpty` 时，展开它会显示一个引导卡：
+  ```
+  ▾ ✨ 自定义组合
+    └ ┌──────────────────────────────┐
+      │ 还没有自定义组合              │
+      │ [去分镜库挑几个分镜试试 →]   │
+      └──────────────────────────────┘
+  ```
+  点击 → 切换到「分镜素材库」板块（不主动开多选模式，让用户自然进入流程）
+- "已修改" badge：当 `mixScheme.isManuallyEdited == true` 时显示，淡灰色小字「·已修改」
+- 自定义方案的卡片不显示 strategy 名（避免冗余「自定义组合 - 自定义 #1」），仅显示方案名 + 时长 + 分镜数
+- "策略数"统计：toolbar 显示 `aiStrategies.count` 而非全部（自定义组合不算策略，否则全新项目会显示"1 策略·0 视频"令人困惑）
+
+**右键菜单的特殊处理：**
+
+- AI 策略支持右键「重命名」「删除策略」
+- 自定义组合策略**禁用**这两个操作（它是系统级容器），只能删它下面的具体方案
 
 ---
 
@@ -321,7 +380,9 @@ private func containsSegment(_ segment: Segment, in scheme: MixScheme) -> Bool
 
 | 模块 | 改动 | 风险 | 缓解 |
 |---|---|---|---|
-| `MixScheme` | 加 2 个 Bool 字段 | 旧数据 false 默认 | 默认值兜底，无破坏 |
+| `MixScheme` | 加 1 个 Bool 字段 (`isManuallyEdited`) | 旧数据 false 默认 | 默认值兜底，无破坏 |
+| `MixStrategy` | 加 1 个 Bool 字段 (`isCustomGroup`) + 老项目迁移 | 老项目可能漏建 | `MixCutApp.init()` 启动迁移 `ensureCustomGroupStrategy()` |
+| `SchemeGenerationService` | AI 生成时过滤掉 `isCustomGroup` 策略 | 不过滤会让 AI 误以为要往里面填 | 在所有读策略列表的位置统一加 filter |
 | `SchemeViewModel` | 新增 3 个 public 方法 + 3 个 private | 单测覆盖 | 写单元测试覆盖：插入、替换、删除最后一条、重复阻止、AI 反推失败 |
 | `SchemeListView` | 加自定义方案虚拟分组 | 切项目联动 | 用 `.task(id: project.id)` 重新加载，跑 CLAUDE.md 的回归清单 |
 | `SchemeDetailView` | 行间 ⊕ + 卡片 hover 按钮 + 拖拽 | 不能伤现有：序号叠加、IN/OUT 微调、台词折叠、SegmentInlinePlayer 性能 | 人工跑一遍：方案选择切换、IN/OUT 调整、播放器加载、删除按钮的 disabled 态 |
@@ -366,7 +427,7 @@ private func containsSegment(_ segment: Segment, in scheme: MixScheme) -> Bool
 | 阶段 | 内容 | 估时 |
 |---|---|---|
 | **P0** | 切独立分支 `feature/manual-scheme-editor` | 5min |
-| **P1** | 数据模型加字段（备份 DB） + SchemeViewModel 新增方法 + 单元测试 | 2h |
+| **P1** | 数据模型加字段（备份 DB） + 老项目迁移 `ensureCustomGroupStrategy()` + SchemeViewModel 新增方法 + 单元测试 | 2.5h |
 | **P2** | 场景 B：行间 ⊕ + SegmentPickerDrawer + 删除/替换按钮 + 重复防御 | 半天 |
 | **P3** | 场景 A：多选工具栏 + 调整顺序 Sheet + AI 反推 prompt + Service 方法 | 半天 |
 | **P4** | SchemeListView 自定义分组 + 「已编辑」badge + 切项目联动 | 2h |
@@ -384,8 +445,8 @@ private func containsSegment(_ segment: Segment, in scheme: MixScheme) -> Bool
 - 若用户验收不通过：
   - 简单路径：`git checkout main` 直接回到 v0.2.6，弃 feature 分支
   - 复杂路径：在 feature 分支上继续迭代直到满意，再合并
-- 数据库：`MixScheme` 新增的两个 Bool 字段有默认值，老数据库可以直接读取；用户回退到 v0.2.6 时，老数据库的新增字段会被 SwiftData 忽略（向下兼容）
-- 用户在新版本下创建的自定义方案，若回退到 v0.2.6，会因 `strategy = nil` 显示为"游离方案"，不影响其他数据，但用户应被告知
+- 数据库：新增的两个 Bool 字段（`MixScheme.isManuallyEdited`、`MixStrategy.isCustomGroup`）有默认值，老数据库直接读取无碍；用户回退到 v0.2.6 时，SwiftData 会忽略未知字段（向下兼容）
+- 用户在新版本下创建的自定义方案，回退到 v0.2.6 后：「自定义组合」策略和它下面的方案依然存在，只是会被当成"一个普通策略"显示在策略列表里（因为 v0.2.6 不认识 `isCustomGroup`）。**用户应被告知此行为**，但数据不会丢失
 
 ---
 
@@ -393,9 +454,11 @@ private func containsSegment(_ segment: Segment, in scheme: MixScheme) -> Bool
 
 - [ ] 创建 `feature/manual-scheme-editor` 分支
 - [ ] 备份 `~/Library/Application Support/default.store` 到 `.bak`
+- [ ] 在 `MixCutApp.init()` 添加 `ensureCustomGroupStrategy()` 老项目迁移（参考 `fixMissingSemanticTypes`）
+- [ ] `ProjectViewModel.createProject` 内同步创建"自定义组合"策略
 - [ ] 提取 `SegmentCardCompact` 公共组件供素材库 + 抽屉复用
 - [ ] 编写 `custom_scheme_inference.md` prompt（含 5 个字段输出约束）
-- [ ] 在 `MixCutApp.fixMissingSemanticTypes()` 类似的位置无需修复（新字段有默认值）
+- [ ] 排查所有读策略列表的位置（`SchemeGenerationService`、`SchemeListView` 工具栏统计等），确保过滤 `isCustomGroup`
 
 ---
 
