@@ -749,42 +749,44 @@ struct SegmentInlinePlayer: View {
 
     @ViewBuilder
     private var playerUI: some View {
-        ZStack {
-            if isPlaying, let player {
-                PlayerRepresentable(player: player)
-                    .aspectRatio(videoAspectRatio, contentMode: .fill)
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(displayAspectRatio, contentMode: .fit)
-                    .clipped()
-            } else {
-                thumbnailView
-            }
+        // 用 Color.clear 撑出 9:16 容器，避免多重 aspectRatio 链塌缩
+        Color.black.opacity(0.001)
+            .aspectRatio(displayAspectRatio, contentMode: .fit)
+            .overlay {
+                ZStack {
+                    if isPlaying, let player {
+                        PlayerRepresentable(player: player)
+                            .aspectRatio(videoAspectRatio, contentMode: .fill)
+                    } else {
+                        thumbnailView
+                    }
 
-            if isHovering && !isPlaying {
-                Color.black.opacity(0.15)
-                Image(systemName: "play.fill")
-                    .font(.system(size: 20))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .shadow(color: .black.opacity(0.3), radius: 4)
-            }
+                    if isHovering && !isPlaying {
+                        Color.black.opacity(0.15)
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .shadow(color: .black.opacity(0.3), radius: 4)
+                    }
 
-            if isPlaying {
-                VStack {
-                    Spacer()
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(.white.opacity(0.3)).frame(height: 3)
-                            Capsule().fill(.white)
-                                .frame(width: progressWidth(in: geo.size.width), height: 3)
+                    if isPlaying {
+                        VStack {
+                            Spacer()
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(.white.opacity(0.3)).frame(height: 3)
+                                    Capsule().fill(.white)
+                                        .frame(width: progressWidth(in: geo.size.width), height: 3)
+                                }
+                            }
+                            .frame(height: 3)
+                            .padding(.horizontal, 4)
+                            .padding(.bottom, 4)
                         }
                     }
-                    .frame(height: 3)
-                    .padding(.horizontal, 4)
-                    .padding(.bottom, 4)
                 }
             }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering in
             isHovering = hovering
             if hovering {
@@ -829,24 +831,26 @@ struct SegmentInlinePlayer: View {
 
     @ViewBuilder
     private var thumbnailView: some View {
-        if let thumbPath = segment.thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: thumbPath) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(displayAspectRatio, contentMode: .fit)
-                .clipped()
-        } else {
-            Rectangle()
-                .fill(Color(.windowBackgroundColor).opacity(0.3))
-                .aspectRatio(displayAspectRatio, contentMode: .fit)
-                .overlay {
-                    Image(systemName: "play.rectangle")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.tertiary)
+        // 用 Color 撑出 9:16 容器，再把图片填充进来；避免多重 aspectRatio 嵌套塌缩
+        Color.black.opacity(0.001)
+            .aspectRatio(displayAspectRatio, contentMode: .fit)
+            .overlay {
+                if let thumbPath = segment.thumbnailPath,
+                   let image = ThumbnailCache.shared.image(for: thumbPath) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Rectangle()
+                        .fill(Color(.windowBackgroundColor).opacity(0.3))
+                        .overlay {
+                            Image(systemName: "play.rectangle")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.tertiary)
+                        }
                 }
-        }
+            }
+            .clipped()
     }
 
     private func play(from startTime: Double, to endTime: Double) {
