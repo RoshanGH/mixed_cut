@@ -1,2 +1,96 @@
 import SwiftUI
-// 占位 - Task 14 填充实现
+
+/// 紧凑分镜卡片（用于抽屉/选择器场景）
+/// 包含缩略图、语义类型标签、台词预览、时长
+struct SegmentCardCompact: View {
+    let segment: Segment
+    let isDisabled: Bool          // true 时整卡片置灰禁用
+    let disabledReason: String?   // 置灰原因 tooltip
+    let onTap: () -> Void
+
+    @State private var isHovering = false
+
+    private let cardWidth: CGFloat = 140
+    private let imageHeight: CGFloat = 80
+
+    var body: some View {
+        Button(action: { if !isDisabled { onTap() } }) {
+            VStack(alignment: .leading, spacing: 4) {
+                ZStack(alignment: .topLeading) {
+                    thumbnail
+                    if isDisabled {
+                        Image(systemName: "nosign")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white)
+                            .padding(4)
+                            .background(.black.opacity(0.45))
+                            .clipShape(Circle())
+                            .padding(4)
+                    }
+                }
+                .frame(width: cardWidth, height: imageHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                HStack(spacing: 3) {
+                    ForEach(Array(segment.semanticTypes.prefix(2)), id: \.self) { type in
+                        SemanticTypeTag(type: type)
+                    }
+                    if segment.semanticTypes.count > 2 {
+                        Text("+\(segment.semanticTypes.count - 2)")
+                            .font(.system(size: 8))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Text(segment.text.isEmpty ? "—" : segment.text)
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .frame(width: cardWidth, alignment: .leading)
+
+                Text(String(format: "%.1fs", segment.duration))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(width: cardWidth)
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovering && !isDisabled
+                          ? Color(.controlBackgroundColor).opacity(0.95)
+                          : Color(.controlBackgroundColor).opacity(0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(.secondary.opacity(isHovering ? 0.18 : 0.06), lineWidth: 1)
+            )
+            .opacity(isDisabled ? 0.4 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .onHover { hovering in
+            if !isDisabled {
+                isHovering = hovering
+            }
+        }
+        .help(isDisabled ? (disabledReason ?? "已禁用") : segment.text)
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let path = segment.thumbnailPath,
+           let image = ThumbnailCache.shared.image(for: path) {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+        } else {
+            Rectangle()
+                .fill(.quaternary)
+                .overlay(
+                    Image(systemName: "film")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.tertiary)
+                )
+        }
+    }
+}
