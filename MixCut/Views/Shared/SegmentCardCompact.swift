@@ -11,7 +11,8 @@ struct SegmentCardCompact: View {
     @State private var isHovering = false
 
     private let cardWidth: CGFloat = 140
-    private let imageHeight: CGFloat = 80
+    // 信息流广告 9:16 手机端比例（见 CLAUDE.md）
+    private var imageHeight: CGFloat { cardWidth * 16.0 / 9.0 }
 
     var body: some View {
         Button(action: { if !isDisabled { onTap() } }) {

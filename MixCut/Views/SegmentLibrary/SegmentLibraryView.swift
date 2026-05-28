@@ -666,9 +666,10 @@ struct SegmentInlinePlayer: View {
         return CGFloat(video.width) / CGFloat(video.height)
     }
 
-    /// 显示用宽高比：竖版视频限制不超过 4:5，避免卡片过高
+    /// 显示用宽高比：固定为手机端 9:16 竖屏（信息流广告投放比例，见 CLAUDE.md）
+    /// 视频原始比例不是 9:16 也会被 fit 到 9:16 容器内（contentMode: .fit 留黑边）
     private var displayAspectRatio: CGFloat {
-        return max(videoAspectRatio, 4.0 / 5.0)
+        return 9.0 / 16.0
     }
 
     private var segmentDuration: Double {
