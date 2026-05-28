@@ -782,11 +782,12 @@ final class ImportViewModel {
                    FileManager.default.fileExists(atPath: existing) {
                     continue
                 }
-                let midTime = (segment.startTime + segment.endTime) / 2
+                // 用「分镜首帧」(startTime + 100ms 偏移避免转场/黑帧) 作为缩略图
+                let firstFrameTime = max(0, segment.startTime + 0.1)
                 let thumbPath = thumbDir.appendingPathComponent("seg_\(segment.id.uuidString).jpg").path
                 group.addTask { [ffmpeg] in
                     do {
-                        try await ffmpeg.generateThumbnail(from: videoPath, at: midTime, to: thumbPath)
+                        try await ffmpeg.generateThumbnail(from: videoPath, at: firstFrameTime, to: thumbPath)
                         return (i, thumbPath)
                     } catch {
                         return (i, nil)

@@ -47,6 +47,9 @@ struct MixCutApp: App {
             Self.resetStaleAnalyzingStatus(container: modelContainer)
             // 为所有老项目补建"自定义组合"策略
             Self.ensureCustomGroupStrategy(container: modelContainer)
+            // 重生所有 segment thumbnail 从中间帧→首帧（一次性后台迁移）
+            let containerForMigration = modelContainer
+            Task { await Self.regenerateSegmentThumbnailsToFirstFrame(container: containerForMigration) }
         } catch {
             // 数据库损坏时尝试内存模式启动，避免 fatalError 崩溃
             let schema = Schema([
@@ -408,6 +411,90 @@ struct MixCutApp: App {
             MixLog.info(" 已为 \(addedCount) 个老项目补建「自定义组合」策略")
         }
 
+        UserDefaults.standard.set(true, forKey: fixKey)
+    }
+
+    /// 一次性迁移：把 segment thumbnail 从「中间帧」重新生成为「首帧」
+    /// 修复历史 bug: ImportViewModel 早期版本用 (start+end)/2 作为缩略图时间点，与用户「分镜首帧」直觉不符
+    @MainActor
+    private static func regenerateSegmentThumbnailsToFirstFrame(container: ModelContainer) async {
+        let fixKey = "didRegenerateSegmentThumbnailsToFirstFrame_v1"
+        if UserDefaults.standard.bool(forKey: fixKey) { return }
+
+        let context = container.mainContext
+        let descriptor = FetchDescriptor<Segment>()
+        guard let segments = try? context.fetch(descriptor), !segments.isEmpty else {
+            UserDefaults.standard.set(true, forKey: fixKey)
+            return
+        }
+
+        struct Job: Sendable {
+            let segmentID: UUID
+            let videoPath: String
+            let firstFrameTime: Double
+            let outputPath: String
+        }
+
+        let thumbDir = FileHelper.globalThumbnailDirectory
+        var jobs: [Job] = []
+        var segmentByID: [UUID: Segment] = [:]
+
+        for segment in segments {
+            guard let video = segment.video,
+                  FileManager.default.fileExists(atPath: video.localPath) else { continue }
+            if let oldPath = segment.thumbnailPath {
+                try? FileManager.default.removeItem(atPath: oldPath)
+            }
+            let firstFrameTime = max(0, segment.startTime + 0.1)
+            let outputPath = thumbDir.appendingPathComponent("seg_\(segment.id.uuidString).jpg").path
+            jobs.append(Job(
+                segmentID: segment.id,
+                videoPath: video.localPath,
+                firstFrameTime: firstFrameTime,
+                outputPath: outputPath
+            ))
+            segmentByID[segment.id] = segment
+        }
+
+        guard !jobs.isEmpty else {
+            UserDefaults.standard.set(true, forKey: fixKey)
+            return
+        }
+
+        MixLog.info(" 开始重生 \(jobs.count) 个分镜缩略图（中间帧 → 首帧）")
+
+        let ffmpeg = FFmpegRunner()
+        let results: [(UUID, String?)] = await withTaskGroup(of: (UUID, String?).self) { group in
+            for job in jobs {
+                group.addTask { [ffmpeg] in
+                    do {
+                        try await ffmpeg.generateThumbnail(
+                            from: job.videoPath,
+                            at: job.firstFrameTime,
+                            to: job.outputPath
+                        )
+                        return (job.segmentID, job.outputPath)
+                    } catch {
+                        return (job.segmentID, nil)
+                    }
+                }
+            }
+            var out: [(UUID, String?)] = []
+            for await r in group { out.append(r) }
+            return out
+        }
+
+        var successCount = 0
+        for (id, path) in results {
+            if let segment = segmentByID[id], let path {
+                segment.thumbnailPath = path
+                successCount += 1
+            }
+        }
+        try? context.save()
+        ThumbnailCache.shared.clear()
+
+        MixLog.info(" 完成重生 \(successCount)/\(jobs.count) 个分镜缩略图")
         UserDefaults.standard.set(true, forKey: fixKey)
     }
 
