@@ -4,9 +4,11 @@ import AVKit
 struct SegmentLibraryView: View {
     let project: Project
     @Bindable var viewModel: SegmentLibraryViewModel
+    @Bindable var schemeVM: SchemeViewModel
 
     @State private var showBatchExportSheet = false
     @State private var showBatchDeleteConfirm = false
+    @State private var showArrangeSheet = false
     @State private var isLoading = true
 
     var body: some View {
@@ -137,6 +139,24 @@ struct SegmentLibraryView: View {
             .disabled(viewModel.selectedSegmentIDs.isEmpty)
 
             Button {
+                showArrangeSheet = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles.rectangle.stack")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("组合为方案")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(.purple)
+            .disabled(viewModel.selectedSegmentIDs.count < 2)
+            .help(viewModel.selectedSegmentIDs.count < 2 ? "至少选择 2 个分镜" : "把选中分镜组合为自定义方案")
+
+            Button {
                 showBatchExportSheet = true
             } label: {
                 HStack(spacing: 4) {
@@ -151,6 +171,23 @@ struct SegmentLibraryView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .disabled(viewModel.selectedSegmentIDs.isEmpty)
+        }
+        .sheet(isPresented: $showArrangeSheet) {
+            ArrangeOrderSheet(
+                initialSegments: viewModel.selectedSegments,
+                onCancel: { showArrangeSheet = false },
+                onConfirm: { ordered in
+                    showArrangeSheet = false
+                    ToastCenter.shared.show("正在生成方案...", icon: "sparkles", style: .info)
+                    let scheme = await schemeVM.createCustomScheme(from: ordered, in: project)
+                    if scheme != nil {
+                        ToastCenter.shared.show("自定义方案已生成", icon: "checkmark.circle.fill", style: .success)
+                        viewModel.setSelectionMode(false)
+                        // 通过通知跳转到方案板块
+                        NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.schemes)
+                    }
+                }
+            )
         }
         .alert("确认批量删除", isPresented: $showBatchDeleteConfirm) {
             Button("取消", role: .cancel) {}
