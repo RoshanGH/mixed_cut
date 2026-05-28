@@ -128,7 +128,7 @@ struct ContentView: View {
         case .importMedia:
             ImportView(project: project, importVM: importVM)
         case .segmentLibrary:
-            SegmentLibraryView(project: project, viewModel: segmentLibraryVM)
+            SegmentLibraryView(project: project, viewModel: segmentLibraryVM, schemeVM: schemeVM)
         case .schemes:
             SchemeListView(project: project, viewModel: schemeVM, segmentLibraryVM: segmentLibraryVM)
         case .export:

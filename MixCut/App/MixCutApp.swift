@@ -45,6 +45,8 @@ struct MixCutApp: App {
             Self.recoverFromDisk(container: modelContainer)
             // 清理上次未正常完成的中间态视频（崩溃 / 强退 / 任务异常导致）
             Self.resetStaleAnalyzingStatus(container: modelContainer)
+            // 为所有老项目补建"自定义组合"策略
+            Self.ensureCustomGroupStrategy(container: modelContainer)
         } catch {
             // 数据库损坏时尝试内存模式启动，避免 fatalError 崩溃
             let schema = Schema([
@@ -368,6 +370,45 @@ struct MixCutApp: App {
             try? context.save()
             MixLog.info(" 启动时已重置 \(fixedCount) 个卡在中间态的视频状态")
         }
+    }
+
+    /// 为所有现有项目补上"自定义组合"策略容器（首次升级后执行一次）
+    /// 新项目走 ProjectViewModel.createProject 同步创建，老项目走这里补
+    @MainActor
+    private static func ensureCustomGroupStrategy(container: ModelContainer) {
+        let fixKey = "didEnsureCustomGroupStrategy_v1"
+        if UserDefaults.standard.bool(forKey: fixKey) { return }
+
+        let context = container.mainContext
+        let descriptor = FetchDescriptor<Project>()
+        guard let projects = try? context.fetch(descriptor) else { return }
+
+        var addedCount = 0
+        for project in projects {
+            let hasCustomGroup = project.strategies.contains { $0.isCustomGroup }
+            if !hasCustomGroup {
+                let strategy = MixStrategy(
+                    name: "自定义组合",
+                    style: "",
+                    description: "手动挑选分镜组合的方案",
+                    targetAudience: "",
+                    narrativeStructure: "",
+                    targetDuration: 0
+                )
+                strategy.isCustomGroup = true
+                strategy.project = project
+                project.strategies.append(strategy)
+                context.insert(strategy)
+                addedCount += 1
+            }
+        }
+
+        if addedCount > 0 {
+            try? context.save()
+            MixLog.info(" 已为 \(addedCount) 个老项目补建「自定义组合」策略")
+        }
+
+        UserDefaults.standard.set(true, forKey: fixKey)
     }
 
     /// 清除 bundle 内 FFmpeg/whisper 二进制及 dylib 的 quarantine 属性

@@ -5,30 +5,63 @@ struct SchemeDetailView: View {
     @Bindable var viewModel: SchemeViewModel
     @Bindable var segmentLibraryVM: SegmentLibraryViewModel
 
+    @State private var drawerOperation: SegmentPickerDrawer.Operation?
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                schemeHeader
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    schemeHeader
 
-                Divider()
+                    Divider()
 
-                narrativeStructureBar
+                    narrativeStructureBar
 
-                Divider()
+                    Divider()
 
-                storyboardView
+                    storyboardView
 
-                // 策略说明
-                if let reasoning = scheme.strategyReasoning, !reasoning.isEmpty {
-                    infoSection(title: "策略说明", icon: "lightbulb", text: reasoning)
+                    // 策略说明
+                    if let reasoning = scheme.strategyReasoning, !reasoning.isEmpty {
+                        infoSection(title: "策略说明", icon: "lightbulb", text: reasoning)
+                    }
+
+                    // 差异化说明
+                    if let diff = scheme.differentiation, !diff.isEmpty {
+                        infoSection(title: "差异化", icon: "arrow.triangle.branch", text: diff)
+                    }
                 }
+                .padding(24)
+            }
+            .frame(maxWidth: .infinity)
 
-                // 差异化说明
-                if let diff = scheme.differentiation, !diff.isEmpty {
-                    infoSection(title: "差异化", icon: "arrow.triangle.branch", text: diff)
+            if let op = drawerOperation, let project = scheme.project {
+                Divider()
+                SegmentPickerDrawer(
+                    project: project,
+                    scheme: scheme,
+                    operation: op,
+                    onPick: { segment in handlePick(segment, operation: op) },
+                    onClose: { drawerOperation = nil }
+                )
+                .transition(.move(edge: .trailing))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: drawerOperation)
+    }
+
+    private func handlePick(_ segment: Segment, operation: SegmentPickerDrawer.Operation) {
+        switch operation {
+        case .insert(let position):
+            if viewModel.insertSegment(segment, at: position, in: scheme) {
+                ToastCenter.shared.show("已插入到 #\(position)", icon: "checkmark.circle.fill", style: .success)
+            }
+        case .replace(let schemeSegmentID, _):
+            if let schemeSeg = scheme.schemeSegments.first(where: { $0.id == schemeSegmentID }) {
+                if viewModel.replaceSegment(schemeSeg, with: segment, in: scheme) {
+                    ToastCenter.shared.show("已替换 #\(schemeSeg.position)", icon: "checkmark.circle.fill", style: .success)
                 }
             }
-            .padding(24)
         }
     }
 
@@ -154,14 +187,30 @@ struct SchemeDetailView: View {
 
             ScrollView(.horizontal, showsIndicators: true) {
                 // LazyHStack：横向懒加载，屏幕外的 StoryboardCard 不同步实例化
-                // 关键性能优化（每个 card 含 SegmentInlinePlayer，30+ 个一起渲染会卡）
-                LazyHStack(alignment: .top, spacing: 10) {
-                    ForEach(scheme.orderedSegments) { schemeSeg in
-                        StoryboardCard(schemeSeg: schemeSeg, segmentLibraryVM: segmentLibraryVM)
+                LazyHStack(alignment: .top, spacing: 0) {
+                    InsertGapButton { drawerOperation = .insert(position: 1) }
+
+                    ForEach(Array(scheme.orderedSegments.enumerated()), id: \.element.id) { idx, schemeSeg in
+                        StoryboardCard(
+                            schemeSeg: schemeSeg,
+                            segmentLibraryVM: segmentLibraryVM,
+                            canDelete: scheme.schemeSegments.count > 1,
+                            onDelete: { viewModel.removeSegment(schemeSeg, from: scheme) },
+                            onReplace: {
+                                let originalTypes = schemeSeg.segment?.semanticTypes ?? []
+                                drawerOperation = .replace(schemeSegmentID: schemeSeg.id, originalSemantic: originalTypes)
+                            }
+                        )
+                        .padding(.horizontal, 5)
+
+                        InsertGapButton { drawerOperation = .insert(position: idx + 2) }
                     }
                 }
                 .padding(.bottom, 4)
+                // 强制最小高度，避免 LazyHStack 被压缩
+                .frame(minHeight: 380)
             }
+            .frame(height: 400)
         }
     }
 
@@ -199,6 +248,9 @@ struct SchemeDetailView: View {
 struct StoryboardCard: View {
     let schemeSeg: SchemeSegment
     @Bindable var segmentLibraryVM: SegmentLibraryViewModel
+    let canDelete: Bool
+    let onDelete: () -> Void
+    let onReplace: () -> Void
     @State private var isHovering = false
 
     private let cardWidth: CGFloat = 150
@@ -206,22 +258,59 @@ struct StoryboardCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let segment = schemeSeg.segment {
-                // 视频播放器 + 序号叠加
-                ZStack(alignment: .topLeading) {
-                    SegmentInlinePlayer(segment: segment, viewModel: segmentLibraryVM)
-                        .frame(width: cardWidth)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                    // 序号角标
-                    Text("#\(schemeSeg.position)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.black.opacity(0.5))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .padding(4)
-                }
+                // 视频播放器 + 序号叠加 + hover 操作按钮
+                // 用 .overlay 而非 ZStack，避免 ZStack propose 不传递 height 导致 SegmentInlinePlayer 塌缩
+                SegmentInlinePlayer(segment: segment, viewModel: segmentLibraryVM)
+                    .frame(width: cardWidth, height: cardWidth * 16.0 / 9.0)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(alignment: .topLeading) {
+                        Text("#\(schemeSeg.position)")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .padding(4)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if isHovering {
+                            HStack(spacing: 4) {
+                                cardActionButton(icon: "arrow.triangle.2.circlepath",
+                                                 help: "替换",
+                                                 action: onReplace)
+                                cardActionButton(icon: "trash.fill",
+                                                 help: canDelete ? "删除" : "方案至少保留 1 个分镜",
+                                                 action: canDelete ? onDelete : {},
+                                                 disabled: !canDelete)
+                            }
+                            .padding(4)
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        Text("#\(schemeSeg.position)")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .padding(4)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if isHovering {
+                            HStack(spacing: 4) {
+                                cardActionButton(icon: "arrow.triangle.2.circlepath",
+                                                 help: "替换",
+                                                 action: onReplace)
+                                cardActionButton(icon: "trash.fill",
+                                                 help: canDelete ? "删除" : "方案至少保留 1 个分镜",
+                                                 action: canDelete ? onDelete : {},
+                                                 disabled: !canDelete)
+                            }
+                            .padding(4)
+                        }
+                    }
 
                 VStack(alignment: .leading, spacing: 5) {
                     // 类型标签
@@ -282,6 +371,29 @@ struct StoryboardCard: View {
                 isHovering = hovering
             }
         }
+        .contextMenu {
+            Button("替换为...", action: onReplace)
+            Divider()
+            Button("删除", role: .destructive, action: onDelete)
+                .disabled(!canDelete)
+        }
+    }
+
+    private func cardActionButton(icon: String,
+                                  help: String,
+                                  action: @escaping () -> Void,
+                                  disabled: Bool = false) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(disabled ? .gray.opacity(0.4) : .black.opacity(0.6))
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .help(help)
     }
 }
 

@@ -26,6 +26,9 @@ final class MixScheme: Identifiable {
 
     var createdAt: Date
 
+    /// true = AI 方案被用户手动改过分镜（添加/删除/替换/换序任一动作触发）
+    var isManuallyEdited: Bool = false
+
     init(
         variationIndex: Int = 1,
         schemeIndex: String = "",

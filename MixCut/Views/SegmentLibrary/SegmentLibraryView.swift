@@ -4,9 +4,11 @@ import AVKit
 struct SegmentLibraryView: View {
     let project: Project
     @Bindable var viewModel: SegmentLibraryViewModel
+    @Bindable var schemeVM: SchemeViewModel
 
     @State private var showBatchExportSheet = false
     @State private var showBatchDeleteConfirm = false
+    @State private var showArrangeSheet = false
     @State private var isLoading = true
 
     var body: some View {
@@ -137,6 +139,24 @@ struct SegmentLibraryView: View {
             .disabled(viewModel.selectedSegmentIDs.isEmpty)
 
             Button {
+                showArrangeSheet = true
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles.rectangle.stack")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("组合为方案")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(.purple)
+            .disabled(viewModel.selectedSegmentIDs.count < 2)
+            .help(viewModel.selectedSegmentIDs.count < 2 ? "至少选择 2 个分镜" : "把选中分镜组合为自定义方案")
+
+            Button {
                 showBatchExportSheet = true
             } label: {
                 HStack(spacing: 4) {
@@ -151,6 +171,23 @@ struct SegmentLibraryView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.small)
             .disabled(viewModel.selectedSegmentIDs.isEmpty)
+        }
+        .sheet(isPresented: $showArrangeSheet) {
+            ArrangeOrderSheet(
+                initialSegments: viewModel.selectedSegments,
+                onCancel: { showArrangeSheet = false },
+                onConfirm: { ordered in
+                    showArrangeSheet = false
+                    ToastCenter.shared.show("正在生成方案...", icon: "sparkles", style: .info)
+                    let scheme = await schemeVM.createCustomScheme(from: ordered, in: project)
+                    if scheme != nil {
+                        ToastCenter.shared.show("自定义方案已生成", icon: "checkmark.circle.fill", style: .success)
+                        viewModel.setSelectionMode(false)
+                        // 通过通知跳转到方案板块
+                        NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.schemes)
+                    }
+                }
+            )
         }
         .alert("确认批量删除", isPresented: $showBatchDeleteConfirm) {
             Button("取消", role: .cancel) {}
@@ -549,7 +586,9 @@ struct SegmentCard: View, Equatable {
     private var leftPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
             // 播放器 + 左上角 #编号 + 多选 checkbox 叠加
+            // SegmentInlinePlayer 不再内部约束 aspect ratio，由调用方给死 9:16 (CLAUDE.md)
             SegmentInlinePlayer(segment: segment, viewModel: viewModel)
+                .frame(width: 200, height: 200.0 * 16.0 / 9.0)
                 .overlay(alignment: .topLeading) {
                     HStack(spacing: 4) {
                         if isSelectionMode {
@@ -666,9 +705,10 @@ struct SegmentInlinePlayer: View {
         return CGFloat(video.width) / CGFloat(video.height)
     }
 
-    /// 显示用宽高比：竖版视频限制不超过 4:5，避免卡片过高
+    /// 显示用宽高比：固定为手机端 9:16 竖屏（信息流广告投放比例，见 CLAUDE.md）
+    /// 视频原始比例不是 9:16 也会被 fit 到 9:16 容器内（contentMode: .fit 留黑边）
     private var displayAspectRatio: CGFloat {
-        return max(videoAspectRatio, 4.0 / 5.0)
+        return 9.0 / 16.0
     }
 
     private var segmentDuration: Double {
@@ -715,9 +755,6 @@ struct SegmentInlinePlayer: View {
             if isPlaying, let player {
                 PlayerRepresentable(player: player)
                     .aspectRatio(videoAspectRatio, contentMode: .fill)
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(displayAspectRatio, contentMode: .fit)
-                    .clipped()
             } else {
                 thumbnailView
             }
@@ -746,6 +783,8 @@ struct SegmentInlinePlayer: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering in
             isHovering = hovering
@@ -791,24 +830,24 @@ struct SegmentInlinePlayer: View {
 
     @ViewBuilder
     private var thumbnailView: some View {
-        if let thumbPath = segment.thumbnailPath,
-           let image = ThumbnailCache.shared.image(for: thumbPath) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(displayAspectRatio, contentMode: .fit)
-                .clipped()
-        } else {
-            Rectangle()
-                .fill(Color(.windowBackgroundColor).opacity(0.3))
-                .aspectRatio(displayAspectRatio, contentMode: .fit)
-                .overlay {
-                    Image(systemName: "play.rectangle")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.tertiary)
-                }
+        Group {
+            if let thumbPath = segment.thumbnailPath,
+               let image = ThumbnailCache.shared.image(for: thumbPath) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Rectangle()
+                    .fill(Color(.windowBackgroundColor).opacity(0.3))
+                    .overlay {
+                        Image(systemName: "play.rectangle")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.tertiary)
+                    }
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
     }
 
     private func play(from startTime: Double, to endTime: Double) {

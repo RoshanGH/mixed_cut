@@ -65,9 +65,9 @@ struct SchemeListView: View {
             Text("混剪方案")
                 .font(.system(size: 13, weight: .semibold))
 
-            if !viewModel.strategies.isEmpty {
-                let totalSchemes = viewModel.schemes.count
-                Text("\(viewModel.strategies.count) 策略 · \(totalSchemes) 视频")
+            if !viewModel.aiStrategies.isEmpty {
+                let totalSchemes = viewModel.aiStrategies.flatMap(\.schemes).count
+                Text("\(viewModel.aiStrategies.count) 策略 · \(totalSchemes) 视频")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6)
@@ -107,7 +107,7 @@ struct SchemeListView: View {
     private var strategyList: some View {
         ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(viewModel.strategies) { strategy in
+                ForEach(viewModel.orderedStrategiesForDisplay) { strategy in
                     StrategySection(
                         strategy: strategy,
                         viewModel: viewModel,
@@ -368,6 +368,11 @@ struct StrategySection: View {
 
                     VStack(alignment: .leading, spacing: 3) {
                         HStack {
+                            if strategy.isCustomGroup {
+                                Image(systemName: "sparkles")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.purple)
+                            }
                             Text(strategy.name)
                                 .font(.system(size: 12, weight: .semibold))
                                 .lineLimit(1)
@@ -377,22 +382,28 @@ struct StrategySection: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        HStack(spacing: 6) {
-                            HStack(spacing: 3) {
-                                Image(systemName: "paintpalette")
-                                    .font(.system(size: 8))
-                                Text(strategy.style)
-                                    .font(.system(size: 10))
-                            }
-                            .foregroundStyle(.secondary)
+                        if !strategy.isCustomGroup {
+                            HStack(spacing: 6) {
+                                HStack(spacing: 3) {
+                                    Image(systemName: "paintpalette")
+                                        .font(.system(size: 8))
+                                    Text(strategy.style)
+                                        .font(.system(size: 10))
+                                }
+                                .foregroundStyle(.secondary)
 
-                            HStack(spacing: 3) {
-                                Image(systemName: "person.2")
-                                    .font(.system(size: 8))
-                                Text(strategy.targetAudience)
-                                    .font(.system(size: 10))
+                                HStack(spacing: 3) {
+                                    Image(systemName: "person.2")
+                                        .font(.system(size: 8))
+                                    Text(strategy.targetAudience)
+                                        .font(.system(size: 10))
+                                }
+                                .foregroundStyle(.secondary)
                             }
-                            .foregroundStyle(.secondary)
+                        } else {
+                            Text("手动挑选分镜组合的方案")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -405,31 +416,37 @@ struct StrategySection: View {
                 Button("删除策略", role: .destructive) {
                     viewModel.deleteStrategy(strategy)
                 }
+                .disabled(strategy.isCustomGroup)
             }
 
             // 展开后显示变体列表（LazyVStack 懒加载：屏幕外的变体行不同步实例化）
             if isExpanded {
-                LazyVStack(spacing: 0) {
-                    ForEach(strategy.orderedSchemes) { scheme in
-                        SchemeVariationRow(
-                            scheme: scheme,
-                            isSelected: viewModel.selectedScheme?.id == scheme.id
-                        )
-                        .onTapGesture {
-                            viewModel.selectedScheme = scheme
-                        }
-                        .contextMenu {
-                            Button {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(scheme.name, forType: .string)
-                                ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
-                            } label: {
-                                Label("复制方案名", systemImage: "doc.on.doc")
+                if strategy.isCustomGroup && strategy.schemes.isEmpty {
+                    // 自定义组合空状态引导
+                    customGroupEmptyState
+                } else {
+                    LazyVStack(spacing: 0) {
+                        ForEach(strategy.orderedSchemes) { scheme in
+                            SchemeVariationRow(
+                                scheme: scheme,
+                                isSelected: viewModel.selectedScheme?.id == scheme.id
+                            )
+                            .onTapGesture {
+                                viewModel.selectedScheme = scheme
                             }
-                            Divider()
-                            Button("删除变体", role: .destructive) {
-                                viewModel.deleteScheme(scheme)
-                                ToastCenter.shared.show("已删除变体", icon: "trash.fill", style: .warning)
+                            .contextMenu {
+                                Button {
+                                    NSPasteboard.general.clearContents()
+                                    NSPasteboard.general.setString(scheme.name, forType: .string)
+                                    ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
+                                } label: {
+                                    Label("复制方案名", systemImage: "doc.on.doc")
+                                }
+                                Divider()
+                                Button("删除变体", role: .destructive) {
+                                    viewModel.deleteScheme(scheme)
+                                    ToastCenter.shared.show("已删除变体", icon: "trash.fill", style: .warning)
+                                }
                             }
                         }
                     }
@@ -439,6 +456,34 @@ struct StrategySection: View {
             Divider()
                 .padding(.leading, 14)
         }
+    }
+
+    private var customGroupEmptyState: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("还没有自定义组合")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Button {
+                NotificationCenter.default.post(
+                    name: .mixCutNavigate,
+                    object: NavigationItem.segmentLibrary
+                )
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.system(size: 11))
+                    Text("去分镜库挑几个分镜试试")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.purple)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .padding(.leading, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.purple.opacity(0.04))
     }
 }
 
@@ -458,9 +503,16 @@ struct SchemeVariationRow: View {
                 .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(scheme.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(scheme.name)
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                    if scheme.isManuallyEdited {
+                        Text("·已修改")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
 
                 HStack(spacing: 4) {
                     Text("\(scheme.segmentCount) 分镜")

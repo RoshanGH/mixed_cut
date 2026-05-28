@@ -62,6 +62,10 @@
 		55C48D531739EAEDDEE856D5 /* video_segmentation_prompt.md in Resources */ = {isa = PBXBuildFile; fileRef = B37CFECCAC0B22A7103027BF /* video_segmentation_prompt.md */; };
 		511A88191D5816DE1CF92754 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 91B1BC657C39A52D189DB078 /* Assets.xcassets */; };
 		254DA9454040AEFB4B6E8E05 /* bin in Resources */ = {isa = PBXBuildFile; fileRef = 1904A3920C65424D0EDF327B /* bin */; };
+		FA6F04366C4DEB5E60A2229B /* InsertGapButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = C16DFD07ED592109D034C02B /* InsertGapButton.swift */; };
+		442DB34CB4AF607DFB365D1C /* SegmentCardCompact.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6760400393A474358D56B7E /* SegmentCardCompact.swift */; };
+		8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */; };
+		E17F20BCEC4DF2B07BE00B0D /* ArrangeOrderSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FD76A2EA40E7657398EBF1 /* ArrangeOrderSheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -122,6 +126,10 @@
 		447BA75BCCBEC31888890E33 /* MixCut.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MixCut.entitlements; sourceTree = "<group>"; };
 		91B1BC657C39A52D189DB078 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1904A3920C65424D0EDF327B /* bin */ = {isa = PBXFileReference; lastKnownFileType = folder; path = bin; sourceTree = "<group>"; };
+		C16DFD07ED592109D034C02B /* InsertGapButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "InsertGapButton.swift"; sourceTree = "<group>"; };
+		F6760400393A474358D56B7E /* SegmentCardCompact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SegmentCardCompact.swift"; sourceTree = "<group>"; };
+		55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SegmentPickerDrawer.swift"; sourceTree = "<group>"; };
+		92FD76A2EA40E7657398EBF1 /* ArrangeOrderSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ArrangeOrderSheet.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -373,6 +381,8 @@
 			children = (
 				510B36E7476585C9BB4D0DC4 /* SchemeDetailView.swift */,
 				E3AAD61DE3F8030CA28E687F /* SchemeListView.swift */,
+				C16DFD07ED592109D034C02B /* InsertGapButton.swift */,
+				55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */,
 			);
 			path = "Schemes";
 			sourceTree = "<group>";
@@ -382,6 +392,7 @@
 			children = (
 				1986C779DBB5CC1CB2DA2E4E /* BatchExportSheet.swift */,
 				055695DBC79101AF660DD82B /* SegmentLibraryView.swift */,
+				92FD76A2EA40E7657398EBF1 /* ArrangeOrderSheet.swift */,
 			);
 			path = "SegmentLibrary";
 			sourceTree = "<group>";
@@ -402,6 +413,7 @@
 				AED3F99B8F8399F532667C69 /* SkeletonView.swift */,
 				7441C758FE1B6F0B996DCC3F /* ThumbnailCache.swift */,
 				0555732A41AACD16AAE4DBF2 /* Toast.swift */,
+				F6760400393A474358D56B7E /* SegmentCardCompact.swift */,
 			);
 			path = "Shared";
 			sourceTree = "<group>";
@@ -532,6 +544,10 @@
 				8DA76769E698732C83DFF23D /* ThumbnailCache.swift in Sources */,
 				0C15885CFC5C9DBBFCCDD9D5 /* Toast.swift in Sources */,
 				2E068775441C4A393BF919B4 /* SidebarView.swift in Sources */,
+				FA6F04366C4DEB5E60A2229B /* InsertGapButton.swift in Sources */,
+				442DB34CB4AF607DFB365D1C /* SegmentCardCompact.swift in Sources */,
+				8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */,
+				E17F20BCEC4DF2B07BE00B0D /* ArrangeOrderSheet.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
