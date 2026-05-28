@@ -586,7 +586,9 @@ struct SegmentCard: View, Equatable {
     private var leftPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
             // 播放器 + 左上角 #编号 + 多选 checkbox 叠加
+            // SegmentInlinePlayer 不再内部约束 aspect ratio，由调用方给死 9:16 (CLAUDE.md)
             SegmentInlinePlayer(segment: segment, viewModel: viewModel)
+                .frame(width: 200, height: 200.0 * 16.0 / 9.0)
                 .overlay(alignment: .topLeading) {
                     HStack(spacing: 4) {
                         if isSelectionMode {
@@ -749,44 +751,41 @@ struct SegmentInlinePlayer: View {
 
     @ViewBuilder
     private var playerUI: some View {
-        // 用 Color.clear 撑出 9:16 容器，避免多重 aspectRatio 链塌缩
-        Color.black.opacity(0.001)
-            .aspectRatio(displayAspectRatio, contentMode: .fit)
-            .overlay {
-                ZStack {
-                    if isPlaying, let player {
-                        PlayerRepresentable(player: player)
-                            .aspectRatio(videoAspectRatio, contentMode: .fill)
-                    } else {
-                        thumbnailView
-                    }
+        ZStack {
+            if isPlaying, let player {
+                PlayerRepresentable(player: player)
+                    .aspectRatio(videoAspectRatio, contentMode: .fill)
+            } else {
+                thumbnailView
+            }
 
-                    if isHovering && !isPlaying {
-                        Color.black.opacity(0.15)
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 20))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .shadow(color: .black.opacity(0.3), radius: 4)
-                    }
+            if isHovering && !isPlaying {
+                Color.black.opacity(0.15)
+                Image(systemName: "play.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .shadow(color: .black.opacity(0.3), radius: 4)
+            }
 
-                    if isPlaying {
-                        VStack {
-                            Spacer()
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(.white.opacity(0.3)).frame(height: 3)
-                                    Capsule().fill(.white)
-                                        .frame(width: progressWidth(in: geo.size.width), height: 3)
-                                }
-                            }
-                            .frame(height: 3)
-                            .padding(.horizontal, 4)
-                            .padding(.bottom, 4)
+            if isPlaying {
+                VStack {
+                    Spacer()
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(.white.opacity(0.3)).frame(height: 3)
+                            Capsule().fill(.white)
+                                .frame(width: progressWidth(in: geo.size.width), height: 3)
                         }
                     }
+                    .frame(height: 3)
+                    .padding(.horizontal, 4)
+                    .padding(.bottom, 4)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering in
             isHovering = hovering
             if hovering {
@@ -831,26 +830,24 @@ struct SegmentInlinePlayer: View {
 
     @ViewBuilder
     private var thumbnailView: some View {
-        // 用 Color 撑出 9:16 容器，再把图片填充进来；避免多重 aspectRatio 嵌套塌缩
-        Color.black.opacity(0.001)
-            .aspectRatio(displayAspectRatio, contentMode: .fit)
-            .overlay {
-                if let thumbPath = segment.thumbnailPath,
-                   let image = ThumbnailCache.shared.image(for: thumbPath) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Rectangle()
-                        .fill(Color(.windowBackgroundColor).opacity(0.3))
-                        .overlay {
-                            Image(systemName: "play.rectangle")
-                                .font(.system(size: 20))
-                                .foregroundStyle(.tertiary)
-                        }
-                }
+        Group {
+            if let thumbPath = segment.thumbnailPath,
+               let image = ThumbnailCache.shared.image(for: thumbPath) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Rectangle()
+                    .fill(Color(.windowBackgroundColor).opacity(0.3))
+                    .overlay {
+                        Image(systemName: "play.rectangle")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.tertiary)
+                    }
             }
-            .clipped()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
     }
 
     private func play(from startTime: Double, to endTime: Double) {

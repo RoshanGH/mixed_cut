@@ -207,7 +207,10 @@ struct SchemeDetailView: View {
                     }
                 }
                 .padding(.bottom, 4)
+                // 强制最小高度，避免 LazyHStack 被压缩
+                .frame(minHeight: 380)
             }
+            .frame(height: 400)
         }
     }
 
@@ -256,37 +259,58 @@ struct StoryboardCard: View {
         VStack(alignment: .leading, spacing: 0) {
             if let segment = schemeSeg.segment {
                 // 视频播放器 + 序号叠加 + hover 操作按钮
-                ZStack(alignment: .topLeading) {
-                    SegmentInlinePlayer(segment: segment, viewModel: segmentLibraryVM)
-                        .frame(width: cardWidth)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                    // 序号角标
-                    Text("#\(schemeSeg.position)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.black.opacity(0.5))
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .padding(4)
-
-                    // hover 时浮出替换/删除按钮
-                    if isHovering {
-                        HStack(spacing: 4) {
-                            Spacer()
-                            cardActionButton(icon: "arrow.triangle.2.circlepath",
-                                             help: "替换",
-                                             action: onReplace)
-                            cardActionButton(icon: "trash.fill",
-                                             help: canDelete ? "删除" : "方案至少保留 1 个分镜",
-                                             action: canDelete ? onDelete : {},
-                                             disabled: !canDelete)
-                        }
-                        .padding(4)
-                        .frame(maxWidth: .infinity, alignment: .topTrailing)
+                // 用 .overlay 而非 ZStack，避免 ZStack propose 不传递 height 导致 SegmentInlinePlayer 塌缩
+                SegmentInlinePlayer(segment: segment, viewModel: segmentLibraryVM)
+                    .frame(width: cardWidth, height: cardWidth * 16.0 / 9.0)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(alignment: .topLeading) {
+                        Text("#\(schemeSeg.position)")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .padding(4)
                     }
-                }
+                    .overlay(alignment: .topTrailing) {
+                        if isHovering {
+                            HStack(spacing: 4) {
+                                cardActionButton(icon: "arrow.triangle.2.circlepath",
+                                                 help: "替换",
+                                                 action: onReplace)
+                                cardActionButton(icon: "trash.fill",
+                                                 help: canDelete ? "删除" : "方案至少保留 1 个分镜",
+                                                 action: canDelete ? onDelete : {},
+                                                 disabled: !canDelete)
+                            }
+                            .padding(4)
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        Text("#\(schemeSeg.position)")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.5))
+                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .padding(4)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        if isHovering {
+                            HStack(spacing: 4) {
+                                cardActionButton(icon: "arrow.triangle.2.circlepath",
+                                                 help: "替换",
+                                                 action: onReplace)
+                                cardActionButton(icon: "trash.fill",
+                                                 help: canDelete ? "删除" : "方案至少保留 1 个分镜",
+                                                 action: canDelete ? onDelete : {},
+                                                 disabled: !canDelete)
+                            }
+                            .padding(4)
+                        }
+                    }
 
                 VStack(alignment: .leading, spacing: 5) {
                     // 类型标签

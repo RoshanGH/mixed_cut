@@ -10,7 +10,8 @@ struct InsertGapButton: View {
             ZStack {
                 Rectangle()
                     .fill(isHovering ? Color.accentColor.opacity(0.12) : Color.clear)
-                    .frame(width: isHovering ? 28 : 12, height: 100)
+                    .frame(width: isHovering ? 28 : 12)
+                    .frame(maxHeight: .infinity)
 
                 if isHovering {
                     Image(systemName: "plus.circle.fill")
@@ -21,6 +22,7 @@ struct InsertGapButton: View {
         }
         .buttonStyle(.plain)
         .frame(width: isHovering ? 28 : 12)
+        .frame(maxHeight: .infinity)
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in
             isHovering = hovering
