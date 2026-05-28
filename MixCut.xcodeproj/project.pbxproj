@@ -66,6 +66,7 @@
 		442DB34CB4AF607DFB365D1C /* SegmentCardCompact.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6760400393A474358D56B7E /* SegmentCardCompact.swift */; };
 		8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */; };
 		E17F20BCEC4DF2B07BE00B0D /* ArrangeOrderSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92FD76A2EA40E7657398EBF1 /* ArrangeOrderSheet.swift */; };
+		4073A3718CC9FAB5EE400BB7 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 398D9F67B6B07F677992CA9D /* UpdateChecker.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -130,6 +131,7 @@
 		F6760400393A474358D56B7E /* SegmentCardCompact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SegmentCardCompact.swift"; sourceTree = "<group>"; };
 		55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SegmentPickerDrawer.swift"; sourceTree = "<group>"; };
 		92FD76A2EA40E7657398EBF1 /* ArrangeOrderSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ArrangeOrderSheet.swift"; sourceTree = "<group>"; };
+		398D9F67B6B07F677992CA9D /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "UpdateChecker.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -239,6 +241,7 @@
 				6F66DECB70475D2374567DEB /* SceneDetection */,
 				0849E7884853CC51AAA2BBEC /* SchemeGeneration */,
 				024B0DBF6FF3DBB26DE1380C /* VideoProcessing */,
+				B3D90C14AE78316E2E14FF41 /* UpdateChecker */,
 			);
 			path = "Services";
 			sourceTree = "<group>";
@@ -426,6 +429,14 @@
 			path = "Sidebar";
 			sourceTree = "<group>";
 		};
+		B3D90C14AE78316E2E14FF41 /* UpdateChecker */ = {
+			isa = PBXGroup;
+			children = (
+				398D9F67B6B07F677992CA9D /* UpdateChecker.swift */,
+			);
+			path = "UpdateChecker";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -548,6 +559,7 @@
 				442DB34CB4AF607DFB365D1C /* SegmentCardCompact.swift in Sources */,
 				8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */,
 				E17F20BCEC4DF2B07BE00B0D /* ArrangeOrderSheet.swift in Sources */,
+				4073A3718CC9FAB5EE400BB7 /* UpdateChecker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -669,7 +681,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.0;
+				MARKETING_VERSION = 0.3.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -695,7 +707,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.0;
+				MARKETING_VERSION = 0.3.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

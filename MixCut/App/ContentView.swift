@@ -35,6 +35,7 @@ struct ContentView: View {
     @State private var importVM = ImportViewModel()
     @State private var segmentLibraryVM = SegmentLibraryViewModel()
     @State private var schemeVM = SchemeViewModel()
+    @State private var updateChecker = UpdateCheckerViewModel()
 
     @State private var selectedNavItem: NavigationItem? = .overview
 
@@ -44,6 +45,10 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
+        VStack(spacing: 0) {
+        // 新版本横幅（GitHub 优先，failover Gitee；hasUpdate==true 时才显示）
+        UpdateBanner(viewModel: updateChecker)
+
         HStack(spacing: 0) {
             // 侧边栏（可隐藏，⌘B）
             if sidebarVisible {
@@ -74,6 +79,7 @@ struct ContentView: View {
             importVM.setModelContext(modelContext)
             segmentLibraryVM.setModelContext(modelContext)
             schemeVM.setModelContext(modelContext)
+            updateChecker.checkSilently()
         }
         .onReceive(NotificationCenter.default.publisher(for: .mixCutNavigate)) { notification in
             if let item = notification.object as? NavigationItem {
@@ -104,6 +110,7 @@ struct ContentView: View {
         .sheet(isPresented: $showShortcuts) {
             KeyboardShortcutsSheet()
         }
+        }   // close VStack (UpdateBanner + HStack)
 
         ToastOverlay()
         }
