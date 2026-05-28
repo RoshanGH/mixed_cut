@@ -29,7 +29,8 @@ struct SegmentPickerDrawer: View {
         Set(scheme.schemeSegments.compactMap { $0.segment?.id })
     }
 
-    /// 项目使用的所有分镜：从 project.videos 反查
+    /// 项目里所有视频的所有分镜（按视频名 + 起始时间排序）
+    /// 注意：MixCut 视频全局共享，但这里只列「当前项目用到的视频」对应的分镜
     private var allSegments: [Segment] {
         let videos = project.projectVideos.compactMap { $0.video }
         let segments = videos.flatMap(\.segments)
@@ -40,18 +41,12 @@ struct SegmentPickerDrawer: View {
     private var filteredSegments: [Segment] {
         var result = allSegments
 
-        // 替换场景：默认按相同语义类型筛选
-        if case .replace(_, let originalTypes) = operation, !showAllTypes {
-            let typesSet = Set(originalTypes)
-            result = result.filter { seg in
-                !Set(seg.semanticTypes).isDisjoint(with: typesSet)
-            }
-        }
-
+        // 用户筛选（语义类型）
         if let f = filterType {
             result = result.filter { $0.semanticTypes.contains(f) }
         }
 
+        // 用户搜索（台词）
         if !searchText.isEmpty {
             result = result.filter {
                 $0.text.localizedCaseInsensitiveContains(searchText)
@@ -74,15 +69,15 @@ struct SegmentPickerDrawer: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(operationTitle)
                     .font(.system(size: 13, weight: .semibold))
-                if case .replace = operation, !showAllTypes {
-                    Text("默认筛选：同类型")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
+                let total = allSegments.count
+                let inScheme = existingSegmentIDs.count
+                Text("共 \(total) 个分镜 · 已在方案 \(inScheme) 个")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
             }
             Spacer()
             Button(action: onClose) {
@@ -97,26 +92,18 @@ struct SegmentPickerDrawer: View {
     }
 
     private var filterBar: some View {
-        VStack(spacing: 8) {
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
-                TextField("搜索台词", text: $searchText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.secondary.opacity(0.08))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-
-            if case .replace = operation {
-                Toggle("显示全部类型（非仅同类）", isOn: $showAllTypes)
-                    .font(.system(size: 11))
-                    .toggleStyle(.checkbox)
-            }
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+            TextField("搜索台词", text: $searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
     }
