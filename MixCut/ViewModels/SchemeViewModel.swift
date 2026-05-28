@@ -380,4 +380,52 @@ final class SchemeViewModel {
         context.safeSave()
         return true
     }
+
+    /// 在指定 position 处插入一个分镜（position 从 1 开始；position = N+1 表示追加到末尾）
+    /// 返回 false 表示 segment 已在方案中（重复阻止）
+    @discardableResult
+    func insertSegment(_ segment: Segment, at position: Int, in scheme: MixScheme) -> Bool {
+        guard let context = modelContext else { return false }
+
+        if contains(segment, in: scheme) {
+            ToastCenter.shared.show("该分镜已在方案中", icon: "exclamationmark.circle.fill")
+            return false
+        }
+
+        // 现有分镜在 position 及之后的全部后移一位
+        for seg in scheme.orderedSegments where seg.position >= position {
+            seg.position += 1
+        }
+
+        let newSchemeSeg = SchemeSegment(position: position)
+        newSchemeSeg.segment = segment
+        newSchemeSeg.scheme = scheme
+        scheme.schemeSegments.append(newSchemeSeg)
+        context.insert(newSchemeSeg)
+
+        renumberPositions(in: scheme)
+        markAsEdited(scheme)
+        context.safeSave()
+        return true
+    }
+
+    /// 替换某个 SchemeSegment 指向的具体 Segment
+    /// 返回 false 表示新 segment 已在方案中（重复阻止）
+    @discardableResult
+    func replaceSegment(_ schemeSeg: SchemeSegment, with newSegment: Segment, in scheme: MixScheme) -> Bool {
+        guard let context = modelContext else { return false }
+
+        // 如果替换的是同一个，无需处理
+        if schemeSeg.segment?.id == newSegment.id { return true }
+
+        if contains(newSegment, in: scheme) {
+            ToastCenter.shared.show("该分镜已在方案中", icon: "exclamationmark.circle.fill")
+            return false
+        }
+
+        schemeSeg.segment = newSegment
+        markAsEdited(scheme)
+        context.safeSave()
+        return true
+    }
 }
