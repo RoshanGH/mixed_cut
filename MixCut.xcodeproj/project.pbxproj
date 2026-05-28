@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		A6DD534415C30B08495B71EA /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9246F045973DCF2B4FFA949 /* ContentView.swift */; };
 		28714DDA70D781E972760142 /* MixCutApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F2DD206FAA1B22D281EADC8 /* MixCutApp.swift */; };
+		B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */; };
+		CB0B2974E157D629430CCA8B /* HardwareProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36131931CC8DA93B33B740F3 /* HardwareProfile.swift */; };
 		24D63DBCBE4432D272BA135F /* MixScheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6ACE8F180DF070B5BE8FCE3 /* MixScheme.swift */; };
 		A66CE2CC04E8F513B1DD6E13 /* MixStrategy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7695BFC5FDA4232D1CC13F8 /* MixStrategy.swift */; };
 		AA36EDE841B8DC99170EEC50 /* Project.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CC212CC8B46714F25F63E1D /* Project.swift */; };
@@ -35,6 +37,7 @@
 		42934F7D29D492CA10829B25 /* ProjectViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */; };
 		23944C9C060858AC2E094047 /* SchemeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9747A5EC55B7AB12BE78AA02 /* SchemeViewModel.swift */; };
 		7D5E9015AEE9E02EE8211DFF /* SegmentLibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 091FFFADF81C22E2358CF840 /* SegmentLibraryViewModel.swift */; };
+		BF61B1F09D7771C6EF580BA9 /* FlowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */; };
 		311C1EA134CAAC716A27A254 /* InlineVideoPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90F2AE8BC32F1C8343785BBE /* InlineVideoPlayer.swift */; };
 		B111386C5FD3E945A44D4584 /* ExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79C5325DA9D797B618DF1F22 /* ExportView.swift */; };
 		F79DA3913A7E11BF687E2C9E /* ImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7ACB561B3C5222BAF199821E /* ImportView.swift */; };
@@ -44,7 +47,6 @@
 		6D05594EE1D44A016E5E0ED4 /* SchemeDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 510B36E7476585C9BB4D0DC4 /* SchemeDetailView.swift */; };
 		81AF1ADB8AEFB3C76BB8DFD8 /* SchemeListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3AAD61DE3F8030CA28E687F /* SchemeListView.swift */; };
 		7E16666D9F86D2CC3556619F /* BatchExportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1986C779DBB5CC1CB2DA2E4E /* BatchExportSheet.swift */; };
-		96602A1460B0E3910729D279 /* SegmentDetailPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4D933076B0F1F9D803AB7FC /* SegmentDetailPanel.swift */; };
 		D1525DA154D48574BF5326EA /* SegmentLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055695DBC79101AF660DD82B /* SegmentLibraryView.swift */; };
 		3A4C06F557F58FA17AE5D986 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4730FBF87FD450D92F8D32A9 /* SettingsView.swift */; };
 		1BF0326E3E9F3C597920E4D0 /* InlineBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55AF6B2F5FEBD2593D995456 /* InlineBanner.swift */; };
@@ -65,6 +67,8 @@
 /* Begin PBXFileReference section */
 		A9246F045973DCF2B4FFA949 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ContentView.swift"; sourceTree = "<group>"; };
 		9F2DD206FAA1B22D281EADC8 /* MixCutApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MixCutApp.swift"; sourceTree = "<group>"; };
+		5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ConcurrencyPolicy.swift"; sourceTree = "<group>"; };
+		36131931CC8DA93B33B740F3 /* HardwareProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HardwareProfile.swift"; sourceTree = "<group>"; };
 		F6ACE8F180DF070B5BE8FCE3 /* MixScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MixScheme.swift"; sourceTree = "<group>"; };
 		A7695BFC5FDA4232D1CC13F8 /* MixStrategy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MixStrategy.swift"; sourceTree = "<group>"; };
 		1CC212CC8B46714F25F63E1D /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Project.swift"; sourceTree = "<group>"; };
@@ -91,6 +95,7 @@
 		FD09EFBAFD23D44FB86BE80C /* ProjectViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ProjectViewModel.swift"; sourceTree = "<group>"; };
 		9747A5EC55B7AB12BE78AA02 /* SchemeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SchemeViewModel.swift"; sourceTree = "<group>"; };
 		091FFFADF81C22E2358CF840 /* SegmentLibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SegmentLibraryViewModel.swift"; sourceTree = "<group>"; };
+		5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FlowLayout.swift"; sourceTree = "<group>"; };
 		90F2AE8BC32F1C8343785BBE /* InlineVideoPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "InlineVideoPlayer.swift"; sourceTree = "<group>"; };
 		79C5325DA9D797B618DF1F22 /* ExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ExportView.swift"; sourceTree = "<group>"; };
 		7ACB561B3C5222BAF199821E /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "ImportView.swift"; sourceTree = "<group>"; };
@@ -100,7 +105,6 @@
 		510B36E7476585C9BB4D0DC4 /* SchemeDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SchemeDetailView.swift"; sourceTree = "<group>"; };
 		E3AAD61DE3F8030CA28E687F /* SchemeListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SchemeListView.swift"; sourceTree = "<group>"; };
 		1986C779DBB5CC1CB2DA2E4E /* BatchExportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "BatchExportSheet.swift"; sourceTree = "<group>"; };
-		C4D933076B0F1F9D803AB7FC /* SegmentDetailPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SegmentDetailPanel.swift"; sourceTree = "<group>"; };
 		055695DBC79101AF660DD82B /* SegmentLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SegmentLibraryView.swift"; sourceTree = "<group>"; };
 		4730FBF87FD450D92F8D32A9 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SettingsView.swift"; sourceTree = "<group>"; };
 		55AF6B2F5FEBD2593D995456 /* InlineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "InlineBanner.swift"; sourceTree = "<group>"; };
@@ -152,6 +156,7 @@
 			isa = PBXGroup;
 			children = (
 				5DE074612FD94575ED48057B /* App */,
+				983B4B1820E9B72A4F4667DA /* Infrastructure */,
 				D448E6A59F96A9DA19B34E60 /* Models */,
 				5167F2B14476E2B5CF707725 /* Resources */,
 				AE073B968956A1CDE09CCF8E /* Services */,
@@ -170,6 +175,15 @@
 				9F2DD206FAA1B22D281EADC8 /* MixCutApp.swift */,
 			);
 			path = "App";
+			sourceTree = "<group>";
+		};
+		983B4B1820E9B72A4F4667DA /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */,
+				36131931CC8DA93B33B740F3 /* HardwareProfile.swift */,
+			);
+			path = "Infrastructure";
 			sourceTree = "<group>";
 		};
 		D448E6A59F96A9DA19B34E60 /* Models */ = {
@@ -322,6 +336,7 @@
 		4DDB01978CB2801A487BCCE1 /* Components */ = {
 			isa = PBXGroup;
 			children = (
+				5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */,
 				90F2AE8BC32F1C8343785BBE /* InlineVideoPlayer.swift */,
 			);
 			path = "Components";
@@ -366,7 +381,6 @@
 			isa = PBXGroup;
 			children = (
 				1986C779DBB5CC1CB2DA2E4E /* BatchExportSheet.swift */,
-				C4D933076B0F1F9D803AB7FC /* SegmentDetailPanel.swift */,
 				055695DBC79101AF660DD82B /* SegmentLibraryView.swift */,
 			);
 			path = "SegmentLibrary";
@@ -472,6 +486,8 @@
 			files = (
 				A6DD534415C30B08495B71EA /* ContentView.swift in Sources */,
 				28714DDA70D781E972760142 /* MixCutApp.swift in Sources */,
+				B6847040AD0E4C4E1CFC2D19 /* ConcurrencyPolicy.swift in Sources */,
+				CB0B2974E157D629430CCA8B /* HardwareProfile.swift in Sources */,
 				24D63DBCBE4432D272BA135F /* MixScheme.swift in Sources */,
 				A66CE2CC04E8F513B1DD6E13 /* MixStrategy.swift in Sources */,
 				AA36EDE841B8DC99170EEC50 /* Project.swift in Sources */,
@@ -498,6 +514,7 @@
 				42934F7D29D492CA10829B25 /* ProjectViewModel.swift in Sources */,
 				23944C9C060858AC2E094047 /* SchemeViewModel.swift in Sources */,
 				7D5E9015AEE9E02EE8211DFF /* SegmentLibraryViewModel.swift in Sources */,
+				BF61B1F09D7771C6EF580BA9 /* FlowLayout.swift in Sources */,
 				311C1EA134CAAC716A27A254 /* InlineVideoPlayer.swift in Sources */,
 				B111386C5FD3E945A44D4584 /* ExportView.swift in Sources */,
 				F79DA3913A7E11BF687E2C9E /* ImportView.swift in Sources */,
@@ -507,7 +524,6 @@
 				6D05594EE1D44A016E5E0ED4 /* SchemeDetailView.swift in Sources */,
 				81AF1ADB8AEFB3C76BB8DFD8 /* SchemeListView.swift in Sources */,
 				7E16666D9F86D2CC3556619F /* BatchExportSheet.swift in Sources */,
-				96602A1460B0E3910729D279 /* SegmentDetailPanel.swift in Sources */,
 				D1525DA154D48574BF5326EA /* SegmentLibraryView.swift in Sources */,
 				3A4C06F557F58FA17AE5D986 /* SettingsView.swift in Sources */,
 				1BF0326E3E9F3C597920E4D0 /* InlineBanner.swift in Sources */,
@@ -637,7 +653,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.5;
+				MARKETING_VERSION = 0.2.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -663,7 +679,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.2.5;
+				MARKETING_VERSION = 0.2.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

@@ -108,27 +108,6 @@ struct BoundaryOptimizerService {
         return (optimized, report)
     }
 
-    /// 兼容旧接口
-    func optimize(
-        boundaries: [Double],
-        asrSentences: [TranscriptionSentence],
-        keyframes: [SceneBoundary],
-        videoDuration: Double
-    ) -> (boundaries: [Double], report: BoundaryOptimizationReport) {
-        let analysis = VideoLocalAnalysis(
-            sceneBoundaries: keyframes,
-            silencePeriods: [],
-            iframePositions: [],
-            videoDuration: videoDuration,
-            fps: 30
-        )
-        return optimize(
-            boundaries: boundaries,
-            asrSentences: asrSentences,
-            localAnalysis: analysis
-        )
-    }
-
     // MARK: - 阶段1: ASR 句子结束吸附
 
     /// 将切点吸附到最近的句子结束时间

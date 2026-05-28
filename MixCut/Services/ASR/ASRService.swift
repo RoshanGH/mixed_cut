@@ -62,67 +62,6 @@ struct TranscriptionResult: Sendable {
         return []
     }
 
-    /// 降级方案：从 words 聚合句子
-    private func buildSentencesFromWords() -> [TranscriptionSentence] {
-        guard !words.isEmpty else { return [] }
-
-        var sentences: [TranscriptionSentence] = []
-        var currentWords: [ASRWord] = []
-        let pauseThreshold: Double = 0.5
-
-        for (index, word) in words.enumerated() {
-            currentWords.append(word)
-
-            let isSentenceEnd = word.word.hasSuffix("。") ||
-                                word.word.hasSuffix("！") ||
-                                word.word.hasSuffix("？") ||
-                                word.word.hasSuffix(".") ||
-                                word.word.hasSuffix("!") ||
-                                word.word.hasSuffix("?")
-
-            let hasLongPause: Bool
-            if index + 1 < words.count {
-                hasLongPause = words[index + 1].start - word.end >= pauseThreshold
-            } else {
-                hasLongPause = false
-            }
-
-            // 兜底：累积超过 30 字且遇到逗号或顿号时也断句
-            let currentText = currentWords.map(\.word).joined()
-            let isLongWithComma = currentText.count > 30 && (
-                word.word.hasSuffix("，") || word.word.hasSuffix("、") || word.word.hasSuffix(",")
-            )
-
-            if (isSentenceEnd || hasLongPause || isLongWithComma) && !currentWords.isEmpty {
-                let text = currentWords.map(\.word).joined()
-                guard let first = currentWords.first, let last = currentWords.last else { continue }
-                let start = first.start
-                let end = last.end
-                sentences.append(TranscriptionSentence(
-                    text: text,
-                    startTime: start,
-                    endTime: end,
-                    words: currentWords
-                ))
-                currentWords = []
-            }
-        }
-
-        if let first = currentWords.first, let last = currentWords.last {
-            let text = currentWords.map(\.word).joined()
-            let start = first.start
-            let end = last.end
-            sentences.append(TranscriptionSentence(
-                text: text,
-                startTime: start,
-                endTime: end,
-                words: currentWords
-            ))
-        }
-
-        return sentences
-    }
-
     /// 终极兜底：rawSentences 太粗 + 没有 words 时，用标点切分 + 按字符比例均分时间
     /// 用例：whisper.cpp 没启用 word timestamps，只有 1 个长 segment
     private func buildSentencesFromTextFallback() -> [TranscriptionSentence] {

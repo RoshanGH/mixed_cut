@@ -119,8 +119,8 @@ final class ImportViewModel {
 
             let totalVideos = videosToAnalyze.count
             var completedCount = 0
-            let cores = ProcessInfo.processInfo.activeProcessorCount
-            let maxConcurrency = min(max(1, cores / 2), min(6, totalVideos))
+            // 使用 ConcurrencyPolicy 而非硬编码，自动按 Apple Silicon Media Engine 数适配
+            let maxConcurrency = min(ConcurrencyPolicy.maxAnalyzeConcurrency(), totalVideos)
 
             progressDescription = "并行分析 \(totalVideos) 个视频（\(maxConcurrency) 路并发）..."
 

@@ -284,23 +284,63 @@ struct SettingsView: View {
             }
 
             Section("系统信息") {
-                LabeledContent("CPU 核心数") {
-                    Text("\(ProcessInfo.processInfo.activeProcessorCount) 核")
+                let hw = HardwareProfile.shared
+
+                LabeledContent("芯片型号") {
+                    Text(hw.chipDisplayName)
                         .font(.system(size: 12))
                 }
+                LabeledContent("CPU 核心数") {
+                    if hw.isAppleSilicon && hw.performanceCores > 0 && hw.performanceCores < hw.physicalCores {
+                        Text("\(hw.physicalCores) 核（\(hw.performanceCores) 性能 + \(hw.physicalCores - hw.performanceCores) 效率）")
+                            .font(.system(size: 12))
+                    } else {
+                        Text("\(hw.physicalCores) 核")
+                            .font(.system(size: 12))
+                    }
+                }
+                LabeledContent("内存") {
+                    Text("\(hw.memoryGB) GB")
+                        .font(.system(size: 12))
+                }
+                LabeledContent("Media Engine") {
+                    Text(hw.mediaEngineDescription)
+                        .font(.system(size: 12))
+                }
+                LabeledContent("GPU 编码加速") {
+                    HStack(spacing: 4) {
+                        Image(systemName: hw.videoToolboxAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(hw.videoToolboxAvailable ? .green : .red)
+                        Text(hw.videoToolboxAvailable ? "VideoToolbox" : "无")
+                            .font(.system(size: 12))
+                    }
+                }
+                LabeledContent("Whisper 后端") {
+                    Text(hw.whisperBackend)
+                        .font(.system(size: 12))
+                }
+            }
+
+            Section("并发策略") {
                 LabeledContent("同时分析视频数") {
-                    let cores = ProcessInfo.processInfo.activeProcessorCount
-                    Text("最多 \(max(1, cores / 2)) 个")
+                    Text(ConcurrencyPolicy.explainAnalyze())
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("同时导出视频数") {
-                    let cores = ProcessInfo.processInfo.activeProcessorCount
-                    Text("最多 \(max(1, min(8, (cores - 2) / 2))) 个")
+                    Text(ConcurrencyPolicy.explainExport())
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }
-                LabeledContent("版本") {
+                LabeledContent("同时 ASR 数") {
+                    Text(ConcurrencyPolicy.explainASR())
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("版本") {
+                LabeledContent("应用版本") {
                     Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)

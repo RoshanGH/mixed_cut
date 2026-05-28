@@ -298,12 +298,9 @@ struct ExportView: View {
 
     // MARK: - 并发数计算
 
-    /// 根据 CPU 核心数动态计算最优并发数
-    /// FFmpeg 编码每个任务约占 2 核，留 2 核给系统
+    /// 视频导出并发数 — 走 ConcurrencyPolicy（基于 Apple Silicon Media Engine 数）
     private var optimalConcurrency: Int {
-        let cores = ProcessInfo.processInfo.activeProcessorCount
-        // 至少 1 路，每 2 核 1 路，留 2 核给系统，上限 8 路
-        return max(1, min(8, (cores - 2) / 2))
+        ConcurrencyPolicy.maxExportConcurrency()
     }
 
     // MARK: - 批量导出（并发）
