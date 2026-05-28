@@ -428,4 +428,87 @@ final class SchemeViewModel {
         context.safeSave()
         return true
     }
+
+    // MARK: - 自定义方案创建
+
+    /// 从分镜数组创建自定义方案（异步：先建占位，AI 反推后填充元信息）
+    /// 失败兜底：name 保留默认「自定义 #N」，banner 提示用户
+    @discardableResult
+    func createCustomScheme(
+        from segments: [Segment],
+        in project: Project
+    ) async -> MixScheme? {
+        guard let context = modelContext else { return nil }
+        guard !segments.isEmpty else { return nil }
+
+        // 确保 customGroup 存在（理论上一定有，双保险）
+        let group: MixStrategy
+        if let existing = project.strategies.first(where: { $0.isCustomGroup }) {
+            group = existing
+        } else {
+            let g = MixStrategy(
+                name: "自定义组合",
+                style: "",
+                description: "手动挑选分镜组合的方案",
+                targetAudience: "",
+                narrativeStructure: "",
+                targetDuration: 0
+            )
+            g.isCustomGroup = true
+            g.project = project
+            project.strategies.append(g)
+            context.insert(g)
+            group = g
+        }
+
+        // 计算自定义方案序号
+        let existingCustomCount = group.schemes.count
+        let defaultName = "自定义 #\(existingCustomCount + 1)"
+
+        // 创建方案
+        let scheme = MixScheme(
+            variationIndex: existingCustomCount + 1,
+            schemeIndex: "custom_\(UUID().uuidString.prefix(8))",
+            name: defaultName,
+            style: "",
+            description: "",
+            targetAudience: "",
+            narrativeStructure: ""
+        )
+        scheme.strategy = group
+        scheme.project = project
+        group.schemes.append(scheme)
+        context.insert(scheme)
+
+        // 创建 SchemeSegment 链接
+        for (idx, seg) in segments.enumerated() {
+            let ss = SchemeSegment(position: idx + 1)
+            ss.segment = seg
+            ss.scheme = scheme
+            scheme.schemeSegments.append(ss)
+            context.insert(ss)
+        }
+
+        context.safeSave()
+
+        // AI 反推（失败不阻断）
+        if let metadata = await schemeService.inferMetadata(for: segments) {
+            scheme.name = metadata.name.isEmpty ? defaultName : metadata.name
+            scheme.narrativeStructure = metadata.narrativeStructure
+            scheme.targetAudience = metadata.targetAudience
+            scheme.schemeDescription = metadata.schemeDescription
+            scheme.style = metadata.style
+            context.safeSave()
+        } else {
+            ToastCenter.shared.show("元信息生成失败，方案已保存为「\(defaultName)」",
+                                    icon: "exclamationmark.triangle.fill")
+        }
+
+        // 重新加载策略以触发 UI 更新
+        loadSchemes(for: project)
+        selectedStrategy = group
+        selectedScheme = scheme
+
+        return scheme
+    }
 }
