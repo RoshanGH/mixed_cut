@@ -323,6 +323,26 @@ final class SchemeViewModel {
 
     // MARK: - 分镜编辑
 
+    /// 给 AI 方案打"已编辑"标记（自定义方案不打）
+    private func markAsEdited(_ scheme: MixScheme) {
+        let isCustom = scheme.strategy?.isCustomGroup == true
+        guard !isCustom, !scheme.isManuallyEdited else { return }
+        scheme.isManuallyEdited = true
+    }
+
+    /// 判断 segment 是否已在 scheme 中
+    private func contains(_ segment: Segment, in scheme: MixScheme) -> Bool {
+        let targetID = segment.id
+        return scheme.schemeSegments.contains { $0.segment?.id == targetID }
+    }
+
+    /// 按当前 orderedSegments 顺序重新编号 position（1-based）
+    private func renumberPositions(in scheme: MixScheme) {
+        for (i, seg) in scheme.orderedSegments.enumerated() {
+            seg.position = i + 1
+        }
+    }
+
     func moveSegment(in scheme: MixScheme, from source: Int, to destination: Int) {
         var ordered = scheme.orderedSegments
         guard source >= 0, source < ordered.count,
@@ -336,6 +356,7 @@ final class SchemeViewModel {
             seg.position = i + 1
         }
 
+        markAsEdited(scheme)
         modelContext?.safeSave()
     }
 
