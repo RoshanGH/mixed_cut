@@ -104,37 +104,54 @@ final class SegmentLibraryViewModel {
         numberByVideo = result
     }
 
+    /// 用户勾选先后顺序（与 selectedSegmentIDs 同步维护）
+    /// 注意：Set 本身无序，所以单独用一个 [UUID] 记录"第一次勾选 → 最后一次勾选"的顺序
+    /// 给「组合为方案」用：用户期望按勾选顺序拼接，不是按视频+时间排序
+    var selectionOrderedIDs: [UUID] = []
+
     func toggleSelection(_ segment: Segment) {
         if selectedSegmentIDs.contains(segment.id) {
             selectedSegmentIDs.remove(segment.id)
+            selectionOrderedIDs.removeAll { $0 == segment.id }
         } else {
             selectedSegmentIDs.insert(segment.id)
+            selectionOrderedIDs.append(segment.id)
         }
     }
 
-    /// 全选当前筛选后可见的所有分镜
+    /// 全选当前筛选后可见的所有分镜（顺序 = 当前 filteredSegments 渲染顺序）
     func selectAllVisible() {
-        selectedSegmentIDs = Set(filteredSegments.map(\.id))
+        let ids = filteredSegments.map(\.id)
+        selectedSegmentIDs = Set(ids)
+        selectionOrderedIDs = ids
     }
 
     /// 反选（针对当前筛选后可见的所有分镜）
+    /// 反选后的顺序按 filteredSegments 渲染顺序重建（无法保留"勾选先后"语义）
     func invertSelectionVisible() {
         let visible = Set(filteredSegments.map(\.id))
         let newSelection = visible.subtracting(selectedSegmentIDs)
         selectedSegmentIDs = newSelection
+        selectionOrderedIDs = filteredSegments.map(\.id).filter { newSelection.contains($0) }
     }
 
     func clearSelection() {
         selectedSegmentIDs.removeAll()
+        selectionOrderedIDs.removeAll()
     }
 
     /// 进入/退出多选模式（退出时自动清空已选）
     func setSelectionMode(_ enabled: Bool) {
         isSelectionMode = enabled
-        if !enabled { selectedSegmentIDs.removeAll() }
+        if !enabled {
+            selectedSegmentIDs.removeAll()
+            selectionOrderedIDs.removeAll()
+        }
     }
 
-    /// 当前已选的分镜列表（按视频 + startTime 排序，导出时用）
+    /// 当前已选的分镜列表（按视频 + startTime 排序）
+    /// **用途：批量导出**（同一视频按时间走拼接顺序合理）
+    /// 不要用于"组合为方案"，那个要用 orderedSelectedSegments
     var selectedSegments: [Segment] {
         let selected = segments.filter { selectedSegmentIDs.contains($0.id) }
         return selected.sorted { a, b in
@@ -143,6 +160,13 @@ final class SegmentLibraryViewModel {
             if aVid != bVid { return aVid < bVid }
             return a.startTime < b.startTime
         }
+    }
+
+    /// 当前已选的分镜列表（按"勾选先后顺序"）
+    /// **用途：组合为方案**（用户期望按勾选顺序拼接）
+    var orderedSelectedSegments: [Segment] {
+        let lookup = Dictionary(uniqueKeysWithValues: segments.map { ($0.id, $0) })
+        return selectionOrderedIDs.compactMap { lookup[$0] }
     }
 
     /// 每个语义类型对应的镜头数量（基于全部 segments，不随筛选变化）
@@ -330,6 +354,7 @@ final class SegmentLibraryViewModel {
         context.safeSave()
         segments.removeAll { $0.id == segment.id }
         selectedSegmentIDs.remove(segment.id)
+        selectionOrderedIDs.removeAll { $0 == segment.id }
         applyFilter()
     }
 
@@ -347,6 +372,7 @@ final class SegmentLibraryViewModel {
         context.safeSave()
         segments.removeAll { idsToDelete.contains($0.id) }
         selectedSegmentIDs.removeAll()
+        selectionOrderedIDs.removeAll()
         applyFilter()
     }
 

@@ -174,7 +174,8 @@ struct SegmentLibraryView: View {
         }
         .sheet(isPresented: $showArrangeSheet) {
             ArrangeOrderSheet(
-                initialSegments: viewModel.selectedSegments,
+                // 用"勾选先后顺序"而非"按时间排序"——尊重用户挑选先后
+                initialSegments: viewModel.orderedSelectedSegments,
                 onCancel: { showArrangeSheet = false },
                 onConfirm: { ordered in
                     showArrangeSheet = false
