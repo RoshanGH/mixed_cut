@@ -21,6 +21,9 @@ final class MixStrategy: Identifiable {
 
     var createdAt: Date
 
+    /// true = 系统级"自定义组合"容器策略，不会被 AI 生成流程触碰
+    var isCustomGroup: Bool = false
+
     init(
         name: String,
         style: String,
