@@ -287,30 +287,6 @@ struct StoryboardCard: View {
                             .padding(4)
                         }
                     }
-                    .overlay(alignment: .topLeading) {
-                        Text("#\(schemeSeg.position)")
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(.black.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
-                            .padding(4)
-                    }
-                    .overlay(alignment: .topTrailing) {
-                        if isHovering {
-                            HStack(spacing: 4) {
-                                cardActionButton(icon: "arrow.triangle.2.circlepath",
-                                                 help: "替换",
-                                                 action: onReplace)
-                                cardActionButton(icon: "trash.fill",
-                                                 help: canDelete ? "删除" : "方案至少保留 1 个分镜",
-                                                 action: canDelete ? onDelete : {},
-                                                 disabled: !canDelete)
-                            }
-                            .padding(4)
-                        }
-                    }
 
                 VStack(alignment: .leading, spacing: 5) {
                     // 类型标签

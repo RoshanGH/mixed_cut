@@ -430,6 +430,7 @@ actor ASRService {
                     try process.run()
                 } catch {
                     continuation.resume(throwing: error)
+                    return
                 }
 
                 // 超时保护：5 分钟后终止进程

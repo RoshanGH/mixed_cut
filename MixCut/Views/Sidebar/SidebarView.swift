@@ -25,6 +25,7 @@ struct SidebarView: View {
             // 标题栏（点击回 Welcome）
             Button {
                 projectVM.selectedProject = nil
+                selectedNavItem = nil
             } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "film.stack.fill")

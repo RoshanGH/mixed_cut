@@ -517,6 +517,8 @@ actor FFmpegRunner {
             }
             args += ["-c:v", codec, "-crf", "\(crf)", "-preset", preset]
         }
+        // 强制输出 yuv420p，保证 Safari/QuickTime/iOS 都能解码（防止 yuv420p10/yuv422 兼容性问题）
+        args += ["-pix_fmt", "yuv420p"]
         args += ["-c:a", "aac", "-b:a", "192k"]
         args += ["-movflags", "+faststart"]  // 支持网络流式播放（信息流广告必须）
         args += ["-y", outputPath]

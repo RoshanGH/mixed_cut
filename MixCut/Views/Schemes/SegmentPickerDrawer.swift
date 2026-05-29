@@ -34,8 +34,9 @@ struct SegmentPickerDrawer: View {
     private var allSegments: [Segment] {
         let videos = project.projectVideos.compactMap { $0.video }
         let segments = videos.flatMap(\.segments)
-        return segments.sorted { ($0.video?.name ?? "") + String($0.startTime) <
-                                ($1.video?.name ?? "") + String($1.startTime) }
+        return segments.sorted {
+            ($0.video?.name ?? "", $0.startTime) < ($1.video?.name ?? "", $1.startTime)
+        }
     }
 
     private var filteredSegments: [Segment] {
