@@ -237,7 +237,7 @@ struct ImportedVideoCard: View {
 
     private var isProcessing: Bool {
         switch video.status {
-        case .detectingScenes, .transcribing, .analyzing: return true
+        case .queued, .detectingScenes, .transcribing, .analyzing: return true
         default: return false
         }
     }
@@ -430,7 +430,13 @@ struct ImportedVideoCard: View {
                 VideoStatusBadge(status: video.status)
                 Spacer()
 
-                if video.segments.isEmpty && !isRetrying && !isProcessing {
+                // 白名单：只在「孤立 imported（未排队也未在跑）」或「明确 failed」时显示重试按钮
+                // 防御性约束 — 即使未来 isProcessing 实现被改坏，queued/processing 状态也绝不会出按钮
+                let canShowRetry = (video.status == .imported || video.status == .failed)
+                                   && video.segments.isEmpty
+                                   && !isRetrying
+                                   && !isProcessing
+                if canShowRetry {
                     Button {
                         isRetrying = true
                         onRetryAI?()
@@ -594,6 +600,7 @@ struct ImportedVideoCard: View {
 
     private var processingLabel: String {
         switch video.status {
+        case .queued: return "等待中…"
         case .detectingScenes: return "1/3 视频分析中..."
         case .transcribing: return "2/3 语音识别中..."
         case .analyzing: return "3/3 AI 分析中..."
@@ -606,7 +613,7 @@ struct ImportedVideoCard: View {
         HStack(spacing: 2) {
             pipelineChip(
                 label: "视频",
-                isDone: video.status != .imported && video.status != .detectingScenes,
+                isDone: video.status != .imported && video.status != .queued && video.status != .detectingScenes,
                 isActive: video.status == .detectingScenes
             )
             Image(systemName: "chevron.right")
@@ -883,6 +890,7 @@ struct VideoStatusBadge: View {
         case .completed: return "checkmark.circle.fill"
         case .failed: return "xmark.circle.fill"
         case .imported: return "arrow.down.circle.fill"
+        case .queued: return "hourglass"
         default: return "gearshape.2.fill"
         }
     }
@@ -890,6 +898,7 @@ struct VideoStatusBadge: View {
     private var statusText: String {
         switch status {
         case .imported: return "已导入"
+        case .queued: return "等待中"
         case .detectingScenes: return "检测镜头"
         case .transcribing: return "语音识别"
         case .analyzing: return "分析中"
@@ -901,6 +910,7 @@ struct VideoStatusBadge: View {
     private var statusColor: Color {
         switch status {
         case .imported: return .gray
+        case .queued: return .blue
         case .detectingScenes, .transcribing, .analyzing: return .orange
         case .completed: return .green
         case .failed: return .red

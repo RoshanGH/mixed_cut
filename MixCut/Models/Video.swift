@@ -4,6 +4,7 @@ import SwiftData
 /// 视频处理状态
 enum VideoStatus: String, Codable, CaseIterable {
     case imported = "imported"                  // 已导入
+    case queued = "queued"                      // 等待分析槽位（已排队但未轮到）
     case detectingScenes = "detecting_scenes"   // 镜头检测中
     case transcribing = "transcribing"          // ASR 识别中
     case analyzing = "analyzing"                // AI 语义分析中

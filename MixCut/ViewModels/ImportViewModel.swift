@@ -115,6 +115,12 @@ final class ImportViewModel {
         // ========== 阶段 2：并行执行视频分析 ==========
         if !videosToAnalyze.isEmpty {
             project.status = .analyzing
+            // 先把所有待分析视频标为「等待中」，否则排在 maxConcurrency 之后的视频
+            // status 仍是 .imported，UI 会显示成「孤立未分析」并出现错误的「AI 分析」按钮
+            // analyzeVideo 入口第一步会把 status 覆盖为 .detectingScenes
+            for v in videosToAnalyze {
+                v.status = .queued
+            }
             context.safeSave()
 
             let totalVideos = videosToAnalyze.count
@@ -189,7 +195,9 @@ final class ImportViewModel {
         video.asrSentences = []
 
         // 清空旧分镜（避免 UI 卡在中间态）
-        for oldSeg in video.segments {
+        // ⚠️ 必须先 Array(...) 快照再迭代 delete，直接迭代 to-many 关系会行为未定义
+        // Segment.schemeSegments 已设 @Relationship(.cascade)，删 Segment 时 SchemeSegment 自动级联删
+        for oldSeg in Array(video.segments) {
             context.delete(oldSeg)
         }
         video.status = .transcribing
@@ -545,7 +553,7 @@ final class ImportViewModel {
         cancelledVideoIDs.insert(videoID)
 
         // 立刻把中间态状态标为 failed，让 UI 立即反馈（后台 ASR/AI 任务即使继续跑也会被 checkCancelled 跳过）
-        if video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
+        if video.status == .queued || video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
             video.status = .failed
             video.errorMessage = "已删除"
         }
@@ -732,7 +740,7 @@ final class ImportViewModel {
 
     /// 任务组里发生未捕获异常时的兜底：避免视频卡在中间态
     private func handleAnalyzeFailure(video: Video, error: Error) {
-        if video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
+        if video.status == .queued || video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
             let detail = error.localizedDescription
             video.errorMessage = (video.errorMessage ?? "") + "\n分析失败: \(detail)"
             video.status = .failed
@@ -775,29 +783,37 @@ final class ImportViewModel {
     ) async {
         let thumbDir = FileHelper.globalThumbnailDirectory
 
-        await withTaskGroup(of: (Int, String?).self) { group in
-            for (i, segment) in segments.enumerated() {
+        // IV-13：返回 segment.id 而非数组 index，避免 SwiftData fault 导致 segments 顺序变动时
+        // 把缩略图写到错误的 Segment 上（A 的缩略图变成 B 的画面 → 用户感知最强 bug 之一）
+        let segmentByID: [UUID: Segment] = Dictionary(
+            segments.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        await withTaskGroup(of: (UUID, String?).self) { group in
+            for segment in segments {
                 // 已有缩略图则跳过
                 if let existing = segment.thumbnailPath,
                    FileManager.default.fileExists(atPath: existing) {
                     continue
                 }
+                let segID = segment.id
                 // 用「分镜首帧」(startTime + 100ms 偏移避免转场/黑帧) 作为缩略图
                 let firstFrameTime = max(0, segment.startTime + 0.1)
-                let thumbPath = thumbDir.appendingPathComponent("seg_\(segment.id.uuidString).jpg").path
+                let thumbPath = thumbDir.appendingPathComponent("seg_\(segID.uuidString).jpg").path
                 group.addTask { [ffmpeg] in
                     do {
                         try await ffmpeg.generateThumbnail(from: videoPath, at: firstFrameTime, to: thumbPath)
-                        return (i, thumbPath)
+                        return (segID, thumbPath)
                     } catch {
-                        return (i, nil)
+                        return (segID, nil)
                     }
                 }
             }
 
-            for await (index, path) in group {
-                if let path, index < segments.count {
-                    segments[index].thumbnailPath = path
+            for await (segID, path) in group {
+                if let path, let segment = segmentByID[segID] {
+                    segment.thumbnailPath = path
                 }
             }
         }

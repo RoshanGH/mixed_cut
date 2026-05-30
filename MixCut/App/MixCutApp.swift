@@ -357,7 +357,7 @@ struct MixCutApp: App {
         var fixedCount = 0
         for v in videos {
             switch v.status {
-            case .detectingScenes, .transcribing, .analyzing:
+            case .queued, .detectingScenes, .transcribing, .analyzing:
                 if v.segments.isEmpty {
                     v.status = .failed
                     v.errorMessage = (v.errorMessage ?? "") + "\n[启动重置] 上次未完成的分析任务被中断，请点击重试"
