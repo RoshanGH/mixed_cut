@@ -60,13 +60,20 @@ struct AnnotatedSegment: Codable {
         keywords = (try? c.decode([String].self, forKey: .keywords)) ?? []
 
         // 优先解 types 数组，降级解 type 单字符串
-        if let arr = try? c.decode([String].self, forKey: .types) {
-            types = arr.isEmpty ? ["过渡"] : arr
-        } else if let single = try? c.decode(String.self, forKey: .type) {
-            types = single.isEmpty ? ["过渡"] : [single]
+        let rawTypes: [String]
+        if let arr = try? c.decode([String].self, forKey: .types), !arr.isEmpty {
+            rawTypes = arr
+        } else if let single = try? c.decode(String.self, forKey: .type), !single.isEmpty {
+            rawTypes = [single]
         } else {
-            types = ["过渡"]
+            rawTypes = []
         }
+        // AI-A-05：白名单过滤 —— AI 偶尔输出 11 种之外的字符串（如"片头"/"卖点"等），
+        // 这些值进 Segment.semanticTypes 后 SemanticType(rawValue:) 解码丢失，导致 UI 显示空标签
+        // TODO（下一期）：加近义词映射字典；本期严格丢弃未知值
+        let validRawValues = Set(SemanticType.allCases.map(\.rawValue))
+        let filtered = rawTypes.filter { validRawValues.contains($0) }
+        types = filtered.isEmpty ? ["过渡"] : filtered
     }
 
     func encode(to encoder: Encoder) throws {

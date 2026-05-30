@@ -83,6 +83,9 @@ final class Segment: Identifiable {
     }
 
     /// 主语义类型（第一个，兼容旧代码）
+    /// ⚠️ Deprecated：旧版单字段，set 时会悄悄丢弃其他类型（多类型已迁移到 `semanticTypes`）
+    /// 新代码请用 `segment.semanticTypes` 读写完整多类型；只读首项请用 `semanticTypes.first ?? .transition`
+    @available(*, deprecated, message: "use semanticTypes (set 会丢失非首项)")
     var semanticType: SemanticType {
         get { semanticTypes.first ?? .transition }
         set {

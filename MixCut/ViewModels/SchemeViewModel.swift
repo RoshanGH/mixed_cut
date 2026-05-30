@@ -278,13 +278,21 @@ final class SchemeViewModel {
         context: ModelContext
     ) {
         var matchedCount = 0
+        var skipped: [String] = []
+        var position = 0   // 独立编号：跳过的不占位，方案显示为 1..N 连续
 
-        for (pos, segID) in segmentIDs.enumerated() {
-            let matched = idMap[segID]
-            if matched != nil { matchedCount += 1 }
+        for segID in segmentIDs {
+            // SV-09：AI 幻觉可能给出 idMap 里没有的 ID；不能创建 segment=nil 的 SchemeSegment
+            // 否则导出时该位置无源文件，整个方案黑屏
+            guard let matched = idMap[segID] else {
+                skipped.append(segID)
+                continue
+            }
 
+            position += 1
+            matchedCount += 1
             let schemeSeg = SchemeSegment(
-                position: pos + 1,
+                position: position,
                 reasoning: "",
                 positionReasoning: ""
             )
@@ -293,6 +301,9 @@ final class SchemeViewModel {
             context.insert(schemeSeg)
         }
 
+        if !skipped.isEmpty {
+            MixLog.info("[SV-09] 变体「\(scheme.name)」AI 未匹配分镜已跳过: \(skipped.joined(separator: ", "))")
+        }
         MixLog.info(" 变体「\(scheme.name)」: \(matchedCount)/\(segmentIDs.count) 分镜匹配")
     }
 

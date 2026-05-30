@@ -143,7 +143,7 @@ struct SchemeDetailView: View {
                                 geo.size.width * (segment.duration / max(scheme.totalDuration, 1))
                             )
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(SemanticTypeTag.color(for: segment.semanticType))
+                                .fill(SemanticTypeTag.color(for: segment.semanticTypes.first ?? .transition))
                                 .frame(width: width)
                                 .overlay {
                                     Text(segment.semanticTypes.map(\.rawValue).joined(separator: "/"))
