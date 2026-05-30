@@ -103,6 +103,11 @@ struct ExportView: View {
             selectAll()
         }
         .onChange(of: project.id) {
+            // 切项目铁律：reset 上一个项目的导出状态，避免进度条 / 完成提示残留
+            isExporting = false
+            exportProgress = nil
+            exportedFolder = nil
+            errorMessage = nil
             schemeVM.loadSchemes(for: project)
             selectAll()
         }

@@ -28,6 +28,8 @@ struct ImportView: View {
         .task(id: project.id) {
             let t0 = Date()
             isLoading = true
+            // 切项目铁律：清空上一个项目的错误提示，避免红色 banner 跨项目残留
+            importVM.errorMessage = nil
             let thumbPaths = project.videos.compactMap(\.thumbnailPath)
             ThumbnailCache.shared.prewarm(paths: thumbPaths)
             MixLog.info("[Perf] Import: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(project.videos.count)")

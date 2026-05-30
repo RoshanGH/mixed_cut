@@ -21,9 +21,13 @@ final class SchemeViewModel {
 
     /// 加载项目的所有策略和方案
     func loadSchemes(for project: Project) {
+        // 切项目铁律：先清空跨项目残留的选中（避免显示上一个项目的方案）
+        selectedStrategy = nil
+        selectedScheme = nil
+
         strategies = project.strategies.sorted { $0.createdAt < $1.createdAt }
-        // 如果有策略但未选中，默认选第一个
-        if selectedStrategy == nil, let first = strategies.first {
+        // 默认选第一个策略 + 它的第一个方案
+        if let first = strategies.first {
             selectedStrategy = first
             selectedScheme = first.orderedSchemes.first
         }

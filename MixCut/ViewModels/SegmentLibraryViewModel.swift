@@ -59,6 +59,14 @@ final class SegmentLibraryViewModel {
 
     /// 加载项目的所有分镜
     func loadSegments(for project: Project) {
+        // 切项目铁律：清空多选 / 预览 / 选中状态（避免 A 项目状态残留到 B）
+        selectedSegment = nil
+        isSelectionMode = false
+        selectedSegmentIDs.removeAll()
+        selectionOrderedIDs.removeAll()
+        previewRequest = nil
+        playingSegmentID = nil
+
         var allSegments: [Segment] = []
         for video in project.videos {
             allSegments.append(contentsOf: video.segments)
