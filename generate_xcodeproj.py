@@ -3,6 +3,7 @@
 
 import hashlib
 import os
+import subprocess
 
 # 生成确定性的 24 位十六进制 ID
 def make_id(name: str) -> str:
@@ -11,6 +12,29 @@ def make_id(name: str) -> str:
 # ── 项目根目录（自动检测脚本所在目录）──
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "MixCut")
+
+# ── 读取应用版本号（K7）──
+# 优先级：VERSION 文件 → 最新 git tag (去掉 v 前缀) → 0.0.0
+# 这样每次发版只需更新 VERSION 文件，generate_xcodeproj.py 自动取到，不会回退
+def _detect_marketing_version() -> str:
+    version_file = os.path.join(ROOT, "VERSION")
+    try:
+        with open(version_file) as f:
+            v = f.read().strip()
+            if v:
+                return v
+    except FileNotFoundError:
+        pass
+    try:
+        tag = subprocess.check_output(
+            ["git", "describe", "--tags", "--abbrev=0"],
+            cwd=ROOT, stderr=subprocess.DEVNULL, text=True
+        ).strip()
+        return tag.lstrip("v") or "0.0.0"
+    except Exception:
+        return "0.0.0"
+
+MARKETING_VERSION = _detect_marketing_version()
 
 # ── 收集源文件 ──
 swift_files = []
@@ -457,7 +481,7 @@ pbxproj += f"""\t\t{DEBUG_CONFIG_TARGET} /* Debug */ = {{
 \t\t\t\t\t"$(inherited)",
 \t\t\t\t\t"@executable_path/../Frameworks",
 \t\t\t\t);
-\t\t\t\tMARKETING_VERSION = 0.2.6;
+\t\t\t\tMARKETING_VERSION = {MARKETING_VERSION};
 \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 \t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
 \t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;
@@ -486,7 +510,7 @@ pbxproj += f"""\t\t{RELEASE_CONFIG_TARGET} /* Release */ = {{
 \t\t\t\t\t"$(inherited)",
 \t\t\t\t\t"@executable_path/../Frameworks",
 \t\t\t\t);
-\t\t\t\tMARKETING_VERSION = 0.2.6;
+\t\t\t\tMARKETING_VERSION = {MARKETING_VERSION};
 \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 \t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
 \t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;

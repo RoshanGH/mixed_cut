@@ -14,37 +14,49 @@ enum ConcurrencyPolicy {
     /// 视频导出 / 分镜导出并发数（按 Media Engine 限制）
     static func maxExportConcurrency() -> Int {
         let profile = HardwareProfile.shared
-        guard profile.videoToolboxAvailable else {
-            // 软件 libx264：按 CPU 核数粗算
-            return max(1, min(4, profile.physicalCores / 4))
-        }
-        guard profile.isAppleSilicon else {
-            // Intel + Quick Sync：保守 2 路
-            return 2
-        }
-        // Apple Silicon：基于 Media Engine 数
-        switch profile.mediaEngineCount {
-        case 4:  return 6   // Ultra：4 ME 但单 ME 已快，留缓冲
-        case 2:  return 4   // Max
-        case 1:  return 3   // base / Pro
-        default: return 2
-        }
+        let raw: Int = {
+            guard profile.videoToolboxAvailable else {
+                // 软件 libx264：按 CPU 核数粗算
+                return max(1, min(4, profile.physicalCores / 4))
+            }
+            guard profile.isAppleSilicon else {
+                // Intel + Quick Sync：保守 2 路
+                return 2
+            }
+            // Apple Silicon：基于 Media Engine 数
+            switch profile.mediaEngineCount {
+            case 4:  return 6   // Ultra：4 ME 但单 ME 已快，留缓冲
+            case 2:  return 4   // Max
+            case 1:  return 3   // base / Pro
+            default: return 2
+            }
+        }()
+        return Self.memoryGate(raw, memoryGB: profile.memoryGB)
     }
 
     /// 视频分析（场景检测 + 解码 + AI 文本调用）并发数
     /// 主要受 CPU 滤镜和 SwiftData 写入限制，不全是硬件
     static func maxAnalyzeConcurrency() -> Int {
         let profile = HardwareProfile.shared
-        guard profile.isAppleSilicon else {
-            return max(2, min(3, profile.physicalCores / 4))
-        }
-        // Apple Silicon
-        switch profile.mediaEngineCount {
-        case 4:  return 4   // Ultra
-        case 2:  return 3   // Max
-        case 1:  return 2   // base / Pro
-        default: return 2
-        }
+        let raw: Int = {
+            guard profile.isAppleSilicon else {
+                return max(2, min(3, profile.physicalCores / 4))
+            }
+            // Apple Silicon
+            switch profile.mediaEngineCount {
+            case 4:  return 4   // Ultra
+            case 2:  return 3   // Max
+            case 1:  return 2   // base / Pro
+            default: return 2
+            }
+        }()
+        return Self.memoryGate(raw, memoryGB: profile.memoryGB)
+    }
+
+    /// D2: 8GB 内存机器并发跑多路 export + ASR + 解码会触发 swap 反而更慢
+    /// 强制把基础并发降到 ≤2，给系统留出缓冲；> 8GB 的机器透传原值
+    private static func memoryGate(_ n: Int, memoryGB: Int) -> Int {
+        memoryGB <= 8 ? min(n, 2) : n
     }
 
     /// ASR 并发数（受 Metal GPU 抢占限制）

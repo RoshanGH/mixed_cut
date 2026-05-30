@@ -6,5 +6,9 @@
 	<false/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<!-- K2/M1: Hardened Runtime 默认会阻止 ad-hoc 签名的 inferior code (内置 ffmpeg/whisper),
+	     必须显式关闭 Library Validation 否则用户在干净 Mac 上启动会失败 -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
 </dict>
 </plist>

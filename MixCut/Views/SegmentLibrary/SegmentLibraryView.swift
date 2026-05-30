@@ -755,7 +755,7 @@ struct SegmentInlinePlayer: View {
         ZStack {
             if isPlaying, let player {
                 PlayerRepresentable(player: player)
-                    .aspectRatio(videoAspectRatio, contentMode: .fill)
+                    .aspectRatio(videoAspectRatio, contentMode: .fit)   // F11/F12: 横屏视频在 9:16 容器内留黑边，不裁切
             } else {
                 thumbnailView
             }
@@ -836,7 +836,7 @@ struct SegmentInlinePlayer: View {
                let image = ThumbnailCache.shared.image(for: thumbPath) {
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(contentMode: .fit)   // F11/F12: 横屏视频在 9:16 容器内留黑边，不裁切
             } else {
                 Rectangle()
                     .fill(Color(.windowBackgroundColor).opacity(0.3))

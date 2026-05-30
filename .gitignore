@@ -25,3 +25,7 @@ MixCut/Resources/bin/
 # Secrets
 .env
 *.key
+
+# Python bytecode cache (来自 generate_xcodeproj.py)
+__pycache__/
+*.pyc
