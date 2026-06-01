@@ -13,6 +13,12 @@ struct SidebarView: View {
     @State private var hasWhisperModel: Bool = true
     @State private var renamingProjectID: UUID?
     @State private var renameText: String = ""
+    @State private var showWeChatPopover = false
+    @State private var isWeChatHovered = false
+    @State private var didCopyWeChat = false
+
+    /// 客服微信号（与手机号一致）
+    private let weChatID = "13462890087"
 
     private var hasMissingDependency: Bool { !hasAPIKey || !hasWhisperModel }
 
@@ -73,6 +79,41 @@ struct SidebarView: View {
             }
 
             Divider()
+
+            // 微信入口（点击弹出微信号卡片）
+            Button {
+                showWeChatPopover = true
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "message.fill")
+                        .font(.system(size: 12))
+                        .frame(width: 20)
+                    Text("微信")
+                        .font(.system(size: 12))
+                    Spacer()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isWeChatHovered ? Color.secondary.opacity(0.08) : Color.clear)
+                )
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.tertiary)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    isWeChatHovered = hovering
+                }
+            }
+            .popover(isPresented: $showWeChatPopover, arrowEdge: .trailing) {
+                weChatCard
+            }
+            .onChange(of: showWeChatPopover) { _, isShown in
+                if !isShown { didCopyWeChat = false }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
 
             // 底部设置按钮
             Button {
@@ -292,6 +333,43 @@ struct SidebarView: View {
         case .segmentLibrary: return "⌘3"
         case .schemes:        return "⌘4"
         case .export:         return "⌘5"
+        }
+    }
+
+    /// 微信号卡片（点击侧边栏「微信」弹出）
+    private var weChatCard: some View {
+        VStack(spacing: 12) {
+            Text("添加我的微信")
+                .font(.system(size: 13, weight: .semibold))
+
+            VStack(spacing: 4) {
+                Text("微信号")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text(weChatID)
+                    .font(.system(size: 16, weight: .medium))
+                    .textSelection(.enabled)
+            }
+
+            Button {
+                copyWeChatID()
+            } label: {
+                Text(didCopyWeChat ? "已复制 ✓" : "复制微信号")
+                    .font(.system(size: 12))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(20)
+        .frame(width: 200)
+    }
+
+    private func copyWeChatID() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(weChatID, forType: .string)
+        withAnimation(.easeOut(duration: 0.15)) {
+            didCopyWeChat = true
         }
     }
 

@@ -385,7 +385,7 @@ struct SettingsView: View {
                     Text("MengGang")
                         .font(.system(size: 12))
                 }
-                LabeledContent("联系方式") {
+                LabeledContent("微信") {
                     Text("13462890087")
                         .font(.system(size: 12))
                         .textSelection(.enabled)
