@@ -24,6 +24,23 @@ enum FileHelper {
         return url
     }
 
+    // MARK: - SwiftData 数据库
+
+    /// MixCut 专属数据库文件路径。
+    ///
+    /// ⚠️ 必须用专属库名，**绝不能**用 SwiftData 默认库：非沙盒 App 的默认库固定落在
+    /// `~/Library/Application Support/default.store`，会与本机其它非沙盒 SwiftData App
+    /// 共用同一文件，schema 不符时双方互相清库，导致项目数据丢失。
+    static var mixCutStoreURL: URL {
+        appSupportDirectory.appendingPathComponent("MixCut.store")
+    }
+
+    /// 旧版共享数据库（SwiftData 默认库）路径
+    static var legacyDefaultStoreURL: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("default.store")
+    }
+
     // MARK: - 全局视频存储（按 hash 去重）
 
     /// 全局视频存储目录

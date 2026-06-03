@@ -28,7 +28,12 @@ struct MixCutApp: App {
                 SchemeSegment.self,
                 ProjectVideo.self,
             ])
-            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+            // 一次性迁移：旧版用共享的 default.store（会被其它非沙盒 App 清库），
+            // 现改用专属库 MixCut.store。仅当旧库确实是 MixCut 的数据时才搬迁。
+            Self.migrateDefaultStoreToDedicated()
+
+            // 用专属库路径，彻底隔离，避免与其它 App 共用 default.store 互相清库
+            let config = ModelConfiguration(schema: schema, url: FileHelper.mixCutStoreURL)
             modelContainer = try ModelContainer(for: schema, configurations: [config])
             initError = nil
 
@@ -68,7 +73,7 @@ struct MixCutApp: App {
                 // 内存模式也失败，使用最简配置
                 modelContainer = try! ModelContainer(for: schema)
             }
-            initError = "数据库初始化失败：\(error.localizedDescription)\n\n数据库文件可能损坏，当前使用临时模式运行（数据不会保存）。\n请删除 ~/Library/Application Support/default.store 后重启应用。"
+            initError = "数据库初始化失败：\(error.localizedDescription)\n\n数据库文件可能损坏，当前使用临时模式运行（数据不会保存）。\n请删除 ~/Library/Application Support/MixCut/MixCut.store 后重启应用。"
         }
     }
 
@@ -500,6 +505,75 @@ struct MixCutApp: App {
 
         MixLog.info(" 完成重生 \(successCount)/\(jobs.count) 个分镜缩略图")
         UserDefaults.standard.set(true, forKey: fixKey)
+    }
+
+    /// 一次性迁移：把旧版共享的 default.store 搬到 MixCut 专属库。
+    ///
+    /// 背景：非沙盒 App 不指定库名时，SwiftData 默认库都落在共享路径
+    /// `~/Library/Application Support/default.store`，会被本机其它非沙盒 SwiftData App
+    /// 共用，schema 不符时互相清库导致数据丢失。改用专属库后需把老用户数据搬过去。
+    ///
+    /// 安全保证：仅当专属库尚不存在、且旧库确实含 MixCut 的 ZPROJECT 表时才搬迁，
+    /// 避免把其它 App 的库误搬进来。连 -wal/-shm 一起复制，防止 WAL 中未合并数据丢失。
+    private static func migrateDefaultStoreToDedicated() {
+        let fm = FileManager.default
+        let dest = FileHelper.mixCutStoreURL
+
+        // 专属库已存在 → 已迁移过（或全新安装直接用新库），跳过
+        if fm.fileExists(atPath: dest.path) { return }
+        guard let legacy = FileHelper.legacyDefaultStoreURL,
+              fm.fileExists(atPath: legacy.path) else { return }
+
+        // 旧库必须确实是 MixCut 的库（含 ZPROJECT 表）才迁移
+        guard sqliteHasTable(at: legacy.path, table: "ZPROJECT") else {
+            MixLog.info("default.store 不含 MixCut 数据（可能被其它 App 占用），跳过迁移，使用全新专属库")
+            return
+        }
+
+        // 先复制主库；失败则清理残留并 return，下次启动干净重试。
+        // 关键：绝不能留下截断的主库文件——否则下次启动 fileExists 为 true 被误判
+        // "已迁移"，SwiftData 打开损坏库进入内存模式，用户数据看似全丢。
+        do {
+            try fm.copyItem(at: legacy, to: dest)
+        } catch {
+            MixLog.error("迁移主数据库失败，已回滚残留，下次启动重试: \(error.localizedDescription)")
+            for suffix in ["", "-wal", "-shm"] {
+                try? fm.removeItem(atPath: dest.path + suffix)
+            }
+            return
+        }
+
+        // 主库已就位，再复制 WAL/SHM 保留未合并数据。这两个失败可容忍（SwiftData 会重建），
+        // 此时主库已是完整状态，不影响数据安全。
+        for suffix in ["-wal", "-shm"] {
+            let src = URL(fileURLWithPath: legacy.path + suffix)
+            guard fm.fileExists(atPath: src.path) else { continue }
+            do {
+                try fm.copyItem(at: src, to: URL(fileURLWithPath: dest.path + suffix))
+            } catch {
+                MixLog.error("迁移数据库 \(suffix) 失败（可容忍）: \(error.localizedDescription)")
+            }
+        }
+        MixLog.info("已把 default.store 迁移到专属库 MixCut.store")
+    }
+
+    /// 用 SQLite C API 只读检查某 sqlite 文件是否含指定表。
+    /// 不经 SwiftData 打开，避免 schema 不符时被清库。
+    private static func sqliteHasTable(at path: String, table: String) -> Bool {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return false
+        }
+        defer { sqlite3_close(db) }
+
+        // table 为代码内常量（"ZPROJECT"）；额外做标识符白名单校验，杜绝任何注入可能
+        guard table.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return false }
+        let sql = "SELECT 1 FROM sqlite_master WHERE type='table' AND name='\(table)' LIMIT 1"
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(stmt) }
+        return sqlite3_step(stmt) == SQLITE_ROW
     }
 
     /// 清除 bundle 内 FFmpeg/whisper 二进制及 dylib 的 quarantine 属性
