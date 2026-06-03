@@ -35,6 +35,10 @@ struct MixCutApp: App {
             // 清除 bundle 内二进制的 quarantine 属性（DMG 分发后 macOS 会阻止执行）
             Self.removeQuarantineFromBundleBinaries()
 
+            // 一次性迁移：把 Whisper 模型从旧 Caches 目录移到 Application Support
+            // （Caches 会被系统清理，曾导致用户重启后模型丢失）
+            FileHelper.migrateWhisperModelsToAppSupport()
+
             // 修复空的 semanticTypesData（旧数据迁移丢失）
             Self.fixMissingSemanticTypes(container: modelContainer)
             // 清洗已有台词中的乱码和多余空格

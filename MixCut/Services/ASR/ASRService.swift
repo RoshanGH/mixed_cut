@@ -651,11 +651,19 @@ actor ASRService {
             }
         }
 
-        // 应用缓存目录
-        if let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
-            let appModelDir = cacheDir.appendingPathComponent("com.mixcut.app/whisper-models").path
+        // 应用数据目录（Application Support，持久不被系统清理）
+        let appModelDir = FileHelper.whisperModelsDirectory.path
+        for name in modelNames {
+            let path = "\(appModelDir)/\(name).bin"
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+
+        // 旧版缓存目录（兼容尚未迁移的情况）
+        if let legacyDir = FileHelper.legacyCacheWhisperModelsDirectory {
             for name in modelNames {
-                let path = "\(appModelDir)/\(name).bin"
+                let path = legacyDir.appendingPathComponent("\(name).bin").path
                 if FileManager.default.fileExists(atPath: path) {
                     return path
                 }
@@ -713,11 +721,8 @@ actor ASRService {
             throw ASRError.modelNotFound
         }
 
-        guard let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
-            throw ASRError.modelNotFound
-        }
-        let modelDir = cacheDir.appendingPathComponent("com.mixcut.app/whisper-models")
-        try FileManager.default.createDirectory(at: modelDir, withIntermediateDirectories: true)
+        // 下载到 Application Support（持久，不会被系统当缓存清理）
+        let modelDir = FileHelper.whisperModelsDirectory
         let destPath = modelDir.appendingPathComponent("\(modelName).bin").path
         let partialPath = destPath + ".partial"
 
