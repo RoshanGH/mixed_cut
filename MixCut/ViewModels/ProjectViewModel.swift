@@ -91,24 +91,17 @@ final class ProjectViewModel {
         // 检查每个视频是否还被其他项目引用
         for video in referencedVideos {
             if video.projectVideos.isEmpty {
-                // 无引用，真正删除视频 + 分镜 + 磁盘文件
-                let localPath = video.localPath
-                let thumbnailPath = video.thumbnailPath
+                // 无引用，删除视频 + 分镜「记录」；磁盘文件交给启动时孤儿 GC 回收（为撤销可恢复铺路）
                 // PV-02：必须先 Array(...) 快照再迭代 delete，否则迭代中改集合行为未定义
                 // 内层 SchemeSegment 不需手动删 —— Segment.schemeSegments 已设 @Relationship(.cascade)
                 let segmentSnapshot = Array(video.segments)
-                let segThumbPaths = segmentSnapshot.compactMap(\.thumbnailPath)
 
                 for segment in segmentSnapshot {
                     context.delete(segment)
                 }
                 context.delete(video)
 
-                FileHelper.deleteGlobalVideoFiles(localPath: localPath, thumbnailPath: thumbnailPath)
-                for path in segThumbPaths {
-                    try? FileManager.default.removeItem(atPath: path)
-                }
-                MixLog.info(" 视频无引用，已删除: \(video.name)")
+                MixLog.info(" 视频无引用，已删除记录: \(video.name)")
             }
         }
 

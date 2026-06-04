@@ -577,10 +577,7 @@ final class ImportViewModel {
         // 检查视频是否还被其他项目引用
         let remainingRefs = video.projectVideos.count
         if remainingRefs == 0 {
-            // 无任何项目引用，真正删除
-            let localPath = video.localPath
-            let thumbnailPath = video.thumbnailPath
-
+            // 无任何项目引用，删除「记录」；磁盘文件交给启动时孤儿 GC 回收（为撤销可恢复铺路）
             // 删除所有 Segment 及其 SchemeSegment 引用（同样先收集再删除）
             let segmentsToDelete = Array(video.segments)
             for segment in segmentsToDelete {
@@ -594,15 +591,7 @@ final class ImportViewModel {
             context.delete(video)
             context.safeSave()
 
-            // 清理磁盘文件
-            FileHelper.deleteGlobalVideoFiles(localPath: localPath, thumbnailPath: thumbnailPath)
-            // 清理分镜缩略图
-            for segment in video.segments {
-                if let thumbPath = segment.thumbnailPath {
-                    try? FileManager.default.removeItem(atPath: thumbPath)
-                }
-            }
-            MixLog.info(" 视频无引用，已彻底删除: \(video.name)")
+            MixLog.info(" 视频无引用，已删除记录: \(video.name)")
         } else {
             MixLog.info(" 视频仍被 \(remainingRefs) 个项目引用，仅解除关联: \(video.name)")
         }
