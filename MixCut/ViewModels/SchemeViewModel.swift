@@ -217,6 +217,13 @@ final class SchemeViewModel {
             }
 
             // 在主线程创建数据模型
+            // 整批方案落库包成一组撤销：一次 ⌘Z 撤掉全部生成结果。
+            // 此区段全程同步（AI 网络请求已在上方 await 完成），不跨 await，grouping 边界干净。
+            // 用 defer 兜底 endUndoGrouping，避免中途 save 抛错导致 group 未闭合。
+            let um = context.undoManager
+            um?.beginUndoGrouping()
+            um?.setActionName("生成方案")
+            defer { um?.endUndoGrouping() }
             for (i, strategyResult, compositions) in allResults {
                 let strategy = MixStrategy(
                     name: strategyResult.name,
@@ -329,6 +336,7 @@ final class SchemeViewModel {
             selectedStrategy = nil
             selectedScheme = nil
         }
+        context.undoManager?.setActionName("删除策略")
         context.delete(strategy)
         context.safeSave()
         strategies.removeAll { $0.id == strategy.id }
@@ -340,6 +348,7 @@ final class SchemeViewModel {
         if selectedScheme?.id == scheme.id {
             selectedScheme = nil
         }
+        context.undoManager?.setActionName("删除方案")
         context.delete(scheme)
         context.safeSave()
         // 刷新策略数据
@@ -376,6 +385,7 @@ final class SchemeViewModel {
         guard source >= 0, source < ordered.count,
               destination >= 0, destination <= ordered.count else { return }
 
+        modelContext?.undoManager?.setActionName("调整顺序")
         let moved = ordered.remove(at: source)
         let adjustedDest = destination > source ? destination - 1 : destination
         ordered.insert(moved, at: adjustedDest)
@@ -396,6 +406,7 @@ final class SchemeViewModel {
             return false
         }
 
+        context.undoManager?.setActionName("移除分镜")
         let deletedID = schemeSeg.id
         context.delete(schemeSeg)
 
@@ -420,6 +431,7 @@ final class SchemeViewModel {
             return false
         }
 
+        context.undoManager?.setActionName("插入分镜")
         // 现有分镜在 position 及之后的全部后移一位
         for seg in scheme.orderedSegments where seg.position >= position {
             seg.position += 1
@@ -592,6 +604,10 @@ final class SchemeViewModel {
         }
 
         // 4. 把通过的变体逐个落成 MixScheme（复用现有 SchemeSegment 建法）
+        // 整批变体落库包成一组撤销：一次 ⌘Z 撤掉全部生成结果。此区段全程同步、不跨 await。
+        let um = context.undoManager
+        um?.beginUndoGrouping()
+        um?.setActionName("生成方案")
         let existingCount = strategy.schemes.count
         for (vi, aliasSeq) in variants.enumerated() {
             let index = existingCount + vi + 1
@@ -620,6 +636,7 @@ final class SchemeViewModel {
             )
         }
 
+        um?.endUndoGrouping()
         context.safeSave()
         loadSchemes(for: project)
         selectedStrategy = strategy

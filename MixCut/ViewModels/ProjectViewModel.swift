@@ -84,6 +84,9 @@ final class ProjectViewModel {
         // 收集该项目引用的视频（在删除关联前）
         let referencedVideos = project.videos
 
+        // 撤销命名：⌘Z 菜单显示「撤销 删除项目」
+        context.undoManager?.setActionName("删除项目")
+
         // 删除项目（级联删除 ProjectVideo、MixStrategy、MixScheme、SchemeSegment）
         context.delete(project)
         context.safeSave()
@@ -121,6 +124,7 @@ final class ProjectViewModel {
 
     /// 重命名项目
     func renameProject(_ project: Project, to newName: String) {
+        modelContext?.undoManager?.setActionName("重命名项目")
         project.name = newName
         project.updatedAt = Date()
         modelContext?.safeSave()

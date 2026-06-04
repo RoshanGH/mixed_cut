@@ -552,6 +552,9 @@ final class ImportViewModel {
         let videoID = video.id
         cancelledVideoIDs.insert(videoID)
 
+        // 撤销命名：⌘Z 菜单显示「撤销 删除视频」
+        context.undoManager?.setActionName("删除视频")
+
         // 立刻把中间态状态标为 failed，让 UI 立即反馈（后台 ASR/AI 任务即使继续跑也会被 checkCancelled 跳过）
         if video.status == .queued || video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
             video.status = .failed

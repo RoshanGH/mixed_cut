@@ -263,6 +263,7 @@ final class SegmentLibraryViewModel {
 
     /// 切换分镜的语义类型（多选：添加或移除）
     func toggleSemanticType(for segment: Segment, type: SemanticType) {
+        modelContext?.undoManager?.setActionName("修改类型")
         var types = segment.semanticTypes
         if let idx = types.firstIndex(of: type) {
             // 移除，但至少保留一个类型
@@ -279,6 +280,7 @@ final class SegmentLibraryViewModel {
 
     /// 更新分镜的位置类型
     func updatePositionType(for segment: Segment, to newType: PositionType) {
+        modelContext?.undoManager?.setActionName("修改位置")
         segment.positionType = newType
         modelContext?.safeSave()
         applyFilter()
@@ -296,6 +298,7 @@ final class SegmentLibraryViewModel {
     func adjustStartTime(for segment: Segment, by step: Double) {
         let newStart = max(0, segment.startTime + step)
         guard newStart < segment.endTime - 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.startTime = newStart
         reExtractText(for: segment)
         modelContext?.safeSave()
@@ -309,6 +312,7 @@ final class SegmentLibraryViewModel {
         let videoDuration = segment.video?.duration ?? Double.greatestFiniteMagnitude
         let newEnd = min(videoDuration, segment.endTime + step)
         guard newEnd > segment.startTime + 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.endTime = newEnd
         reExtractText(for: segment)
         modelContext?.safeSave()
@@ -335,6 +339,7 @@ final class SegmentLibraryViewModel {
     func setStartTime(for segment: Segment, to newStart: Double) {
         let clamped = max(0, newStart)
         guard clamped < segment.endTime - 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.startTime = clamped
         reExtractText(for: segment)
         modelContext?.safeSave()
@@ -346,6 +351,7 @@ final class SegmentLibraryViewModel {
         let videoDuration = segment.video?.duration ?? Double.greatestFiniteMagnitude
         let clamped = min(videoDuration, newEnd)
         guard clamped > segment.startTime + 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.endTime = clamped
         reExtractText(for: segment)
         modelContext?.safeSave()
@@ -358,6 +364,7 @@ final class SegmentLibraryViewModel {
         if selectedSegment?.id == segment.id {
             selectedSegment = nil
         }
+        context.undoManager?.setActionName("删除分镜")
         context.delete(segment)
         context.safeSave()
         segments.removeAll { $0.id == segment.id }
@@ -371,12 +378,17 @@ final class SegmentLibraryViewModel {
         guard let context = modelContext else { return }
         let idsToDelete = selectedSegmentIDs
         let segs = segments.filter { idsToDelete.contains($0.id) }
+        // 批量删除作为一组撤销：一次 ⌘Z 恢复全部
+        let um = context.undoManager
+        um?.beginUndoGrouping()
+        um?.setActionName("删除分镜")
         for seg in segs {
             if selectedSegment?.id == seg.id {
                 selectedSegment = nil
             }
             context.delete(seg)
         }
+        um?.endUndoGrouping()
         context.safeSave()
         segments.removeAll { idsToDelete.contains($0.id) }
         selectedSegmentIDs.removeAll()
