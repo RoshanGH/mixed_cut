@@ -21,3 +21,26 @@ import Foundation
     ]
     #expect(NarrativeStructureEngine.structureName(for: slots) == "A · B · C")
 }
+
+private func seg(_ id: String, _ tags: [String] = [], q: Double = 1, d: Double = 1) -> SegmentDescriptor {
+    SegmentDescriptor(id: UUID(uuidString: "00000000-0000-0000-0000-0000000000\(id)")!,
+                      tags: tags, text: "t\(id)", duration: d, quality: q)
+}
+
+@Test func candidatePool_matchesUnionOfTags() {
+    let segs = [
+        seg("01", ["痛点"]),
+        seg("02", ["产品方案"]),
+        seg("03", ["痛点", "过渡"]),
+        seg("04", ["行动号召"]),
+    ]
+    let slot = NarrativeSlot(order: 0, tags: ["痛点", "产品方案"])
+    let pool = NarrativeStructureEngine.candidatePool(for: slot, in: segs)
+    #expect(Set(pool.map(\.id)) == Set([seg("01").id, seg("02").id, seg("03").id]))
+}
+
+@Test func candidatePool_emptyWhenNoTagOverlap() {
+    let segs = [seg("01", ["痛点"])]
+    let slot = NarrativeSlot(order: 0, tags: ["行动号召"])
+    #expect(NarrativeStructureEngine.candidatePool(for: slot, in: segs).isEmpty)
+}

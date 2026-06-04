@@ -7,4 +7,10 @@ public enum NarrativeStructureEngine {
             .map { $0.tags.joined(separator: "/") }
             .joined(separator: " · ")
     }
+
+    /// 候选池：分镜标签与该段标签有交集（并集匹配）即入选
+    public static func candidatePool(for slot: NarrativeSlot, in segments: [SegmentDescriptor]) -> [SegmentDescriptor] {
+        let slotTags = Set(slot.tags)
+        return segments.filter { !slotTags.isDisjoint(with: Set($0.tags)) }
+    }
 }
