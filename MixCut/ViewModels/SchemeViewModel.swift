@@ -60,6 +60,12 @@ final class SchemeViewModel {
         aiStrategies + (customGroup.map { [$0] } ?? [])
     }
 
+    /// 导出页用：所有含方案的策略（AI 策略 + 自定义组合 + 自定义结构）。
+    /// 导出列表必须含 narrativeTemplates，否则自定义结构生成的方案在导出页看不到、勾不到。
+    var exportableStrategies: [MixStrategy] {
+        orderedStrategiesForDisplay + narrativeTemplates
+    }
+
     // MARK: - 构建分镜目录（全局唯一 ID）
 
     /// 在 MainActor 上构建分镜目录和 ID 映射

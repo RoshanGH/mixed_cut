@@ -25,7 +25,7 @@ struct ExportView: View {
     /// 全选所有方案
     private func selectAll() {
         selectedSchemeIDs = Set(schemeVM.schemes.map(\.id))
-        expandedStrategyIDs = Set(schemeVM.orderedStrategiesForDisplay.map(\.id))
+        expandedStrategyIDs = Set(schemeVM.exportableStrategies.map(\.id))
     }
 
     /// 切换某个方案的选中
@@ -159,7 +159,7 @@ struct ExportView: View {
 
             // 策略 + 方案树
             VStack(spacing: 0) {
-                ForEach(schemeVM.orderedStrategiesForDisplay) { strategy in
+                ForEach(schemeVM.exportableStrategies) { strategy in
                     strategyRow(strategy: strategy)
                     if expandedStrategyIDs.contains(strategy.id) {
                         ForEach(strategy.orderedSchemes) { scheme in
