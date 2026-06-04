@@ -59,6 +59,9 @@ struct MixCutApp: App {
             // 重生所有 segment thumbnail 从中间帧→首帧（一次性后台迁移）
             let containerForMigration = modelContainer
             Task { await Self.regenerateSegmentThumbnailsToFirstFrame(container: containerForMigration) }
+            // 孤儿文件 GC：回收已删除（只删记录、未删磁盘）且无任何记录引用的视频/缩略图文件。
+            // 必须放在所有迁移/恢复之后，确保 recoverFromDisk 重建的视频已被记录引用，不会误删。
+            Self.runOrphanGC(container: modelContainer)
         } catch {
             // 数据库损坏时尝试内存模式启动，避免 fatalError 崩溃
             let schema = Schema([
@@ -679,5 +682,29 @@ struct MixCutApp: App {
         MixLog.info(" 已恢复 \(uniqueVideos.count) 个视频到「恢复的项目」，请重新执行 AI 分析")
 
         UserDefaults.standard.set(true, forKey: fixKey)
+    }
+
+    /// 启动时孤儿文件 GC：收集所有 Video/Segment 记录引用到的文件路径，
+    /// 删除全局视频/缩略图目录里「已无任何记录引用」的孤儿文件。
+    ///
+    /// 配合「删除只删记录」：删除操作不再 inline 删磁盘文件，下次启动由本方法统一回收，
+    /// 从而保证删除可被撤销恢复（撤销期间磁盘文件仍在）。
+    ///
+    /// ⚠️ 数据安全：referenced 必须收全（Video.localPath/thumbnailPath + Segment.thumbnailPath），
+    /// 否则会误删在用文件。
+    @MainActor
+    private static func runOrphanGC(container: ModelContainer) {
+        let ctx = container.mainContext
+        var referenced = Set<String>()
+        if let videos = try? ctx.fetch(FetchDescriptor<Video>()) {
+            for v in videos {
+                referenced.insert(v.localPath)
+                if let t = v.thumbnailPath { referenced.insert(t) }
+            }
+        }
+        if let segs = try? ctx.fetch(FetchDescriptor<Segment>()) {
+            for s in segs { if let t = s.thumbnailPath { referenced.insert(t) } }
+        }
+        FileHelper.collectOrphanFiles(referencedPaths: referenced)
     }
 }
