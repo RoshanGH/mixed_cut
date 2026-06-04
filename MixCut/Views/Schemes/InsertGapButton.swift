@@ -1,32 +1,22 @@
 import SwiftUI
 
-/// Storyboard 行间「+」插入按钮：默认透明，hover 时显示
+/// Storyboard 行间「+」插入按钮：常驻一个小蓝「+」，可见可点；hover 仅轻微提亮，无背景
 struct InsertGapButton: View {
     let onTap: () -> Void
     @State private var isHovering = false
 
     var body: some View {
         Button(action: onTap) {
-            ZStack {
-                Rectangle()
-                    .fill(isHovering ? Color.accentColor.opacity(0.12) : Color.clear)
-                    .frame(width: isHovering ? 28 : 12)
-                    .frame(maxHeight: .infinity)
-
-                if isHovering {
-                    Image(systemName: "plus.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
+            Image(systemName: "plus.circle.fill")
+                .font(.system(size: 15))
+                .foregroundStyle(Color.accentColor.opacity(isHovering ? 1.0 : 0.65))
+                .frame(width: 22)            // 22pt 宽热区，易命中
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())   // 整列都可点
         }
         .buttonStyle(.plain)
-        .frame(width: isHovering ? 28 : 12)
-        .frame(maxHeight: .infinity)
-        .animation(.easeOut(duration: 0.15), value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .animation(.easeOut(duration: 0.12), value: isHovering)
+        .onHover { isHovering = $0 }
         .help("在此处插入分镜")
     }
 }
