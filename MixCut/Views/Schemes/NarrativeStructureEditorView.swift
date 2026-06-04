@@ -8,14 +8,20 @@ struct NarrativeStructureEditorView: View {
     @Bindable var viewModel: SchemeViewModel
     @Environment(\.dismiss) private var dismiss
 
+    /// 本地编辑态行模型（带稳定 UUID，拖拽/删除全程 id 不变；落库时再映射为 NarrativeSlot）
+    private struct SlotRow: Identifiable {
+        let id = UUID()
+        var tags: [String]
+    }
+
     /// 本地编辑态段位（值类型，编辑期间不直接写库；点保存/生成时落库）
-    @State private var slots: [NarrativeSlot] = []
+    @State private var slots: [SlotRow] = []
     /// 当前项目库内真实有分镜的可选标签（body 顶层 .task 加载，遵守切项目铁律）
     @State private var availableTags: [SemanticType] = []
     /// 生成变体数
     @State private var requestedCount = 5
-    /// 正在弹出加标签面板的段位索引
-    @State private var tagPickerSlotIndex: Int?
+    /// 正在弹出加标签面板的段位行 id（用稳定 id 而非 index，删除/拖拽后不错位）
+    @State private var tagPickerSlotID: SlotRow.ID?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,10 +44,13 @@ struct NarrativeStructureEditorView: View {
         // 切项目铁律：可选标签随项目刷新；同时把库内段位载入本地编辑态
         .task(id: project.id) {
             availableTags = viewModel.availableTags(in: project)
-            slots = strategy.narrativeSlots.sorted { $0.order < $1.order }
+            // 库里的 NarrativeSlot 映射回 SlotRow（各生成新 UUID，order 按当前顺序丢弃）
+            slots = strategy.narrativeSlots
+                .sorted { $0.order < $1.order }
+                .map { SlotRow(tags: $0.tags) }
         }
         .sheet(item: tagPickerBinding) { boxed in
-            tagPickerSheet(for: boxed.value)
+            tagPickerSheet(for: boxed.id)
         }
     }
 
@@ -110,8 +119,8 @@ struct NarrativeStructureEditorView: View {
                     .padding(.vertical, 8)
             } else {
                 List {
-                    ForEach(Array(slots.enumerated()), id: \.element.id) { index, _ in
-                        slotRow(index: index)
+                    ForEach(Array(slots.enumerated()), id: \.element.id) { index, row in
+                        slotRow(index: index, row: row)
                             .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
@@ -125,10 +134,11 @@ struct NarrativeStructureEditorView: View {
         }
     }
 
-    private func slotRow(index: Int) -> some View {
-        let slot = slots[index]
-        let candidateCount = candidateCount(for: slot)
-        let isInvalid = slot.tags.isEmpty || candidateCount == 0
+    private func slotRow(index: Int, row: SlotRow) -> some View {
+        let candidateCount = candidateCount(forTags: row.tags)
+        // 送 AI 的候选会截断到 30，这里据此展示，避免"候选很多但变体少"的困惑
+        let sentToAI = min(candidateCount, narrativeCandidateLimit)
+        let isInvalid = row.tags.isEmpty || candidateCount == 0
 
         return HStack(alignment: .top, spacing: 10) {
             // 段序号
@@ -141,11 +151,11 @@ struct NarrativeStructureEditorView: View {
             VStack(alignment: .leading, spacing: 8) {
                 // 已选标签 chips + ＋加标签
                 FlowChips {
-                    ForEach(slot.tags, id: \.self) { tag in
+                    ForEach(row.tags, id: \.self) { tag in
                         tagChip(tag, slotIndex: index)
                     }
                     Button {
-                        tagPickerSlotIndex = index
+                        tagPickerSlotID = row.id
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "plus")
@@ -165,7 +175,7 @@ struct NarrativeStructureEditorView: View {
 
                 // 候选数 / 标红提示
                 HStack(spacing: 6) {
-                    if slot.tags.isEmpty {
+                    if row.tags.isEmpty {
                         Label("未选标签", systemImage: "exclamationmark.triangle.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(.red)
@@ -173,6 +183,11 @@ struct NarrativeStructureEditorView: View {
                         Label("无候选分镜", systemImage: "exclamationmark.triangle.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(.red)
+                    } else if candidateCount > narrativeCandidateLimit {
+                        // 超过上限：只取前 30 送 AI，明确告知避免误以为变体会更多
+                        Text("候选 \(sentToAI)（共 \(candidateCount)，按质量取前 \(narrativeCandidateLimit) 送 AI）")
+                            .font(.system(size: 10, design: .rounded))
+                            .foregroundStyle(.secondary)
                     } else {
                         Text("候选 \(candidateCount)")
                             .font(.system(size: 10, design: .rounded))
@@ -262,7 +277,7 @@ struct NarrativeStructureEditorView: View {
 
             Spacer()
 
-            if viewModel.isGenerating {
+            if viewModel.isNarrativeGenerating {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text(viewModel.generationProgress.isEmpty ? "生成中…" : viewModel.generationProgress)
@@ -294,34 +309,34 @@ struct NarrativeStructureEditorView: View {
 
     /// 至少一段；每段都有标签且候选 > 0
     private var canGenerate: Bool {
-        guard !viewModel.isGenerating else { return false }
+        guard !viewModel.isNarrativeGenerating else { return false }
         guard !normalizedSlots.isEmpty else { return false }
-        return normalizedSlots.allSatisfy { !$0.tags.isEmpty && candidateCount(for: $0) > 0 }
+        return normalizedSlots.allSatisfy { !$0.tags.isEmpty && candidateCount(forTags: $0.tags) > 0 }
     }
 
     // MARK: - 加标签面板
 
-    /// Picker 用的包装：把可选 Int 索引转为 Identifiable item 以驱动 .sheet(item:)
-    private struct IndexBox: Identifiable {
-        let value: Int
-        var id: Int { value }
+    /// Picker 用的包装：把可选行 id 转为 Identifiable item 以驱动 .sheet(item:)
+    private struct IDBox: Identifiable {
+        let id: SlotRow.ID
     }
 
-    private var tagPickerBinding: Binding<IndexBox?> {
+    private var tagPickerBinding: Binding<IDBox?> {
         Binding(
-            get: { tagPickerSlotIndex.map(IndexBox.init) },
-            set: { tagPickerSlotIndex = $0?.value }
+            get: { tagPickerSlotID.map(IDBox.init) },
+            set: { tagPickerSlotID = $0?.id }
         )
     }
 
-    private func tagPickerSheet(for slotIndex: Int) -> some View {
-        let selected = Set(slotIndex < slots.count ? slots[slotIndex].tags : [])
+    private func tagPickerSheet(for slotID: SlotRow.ID) -> some View {
+        // 用稳定 id 定位行，删除/拖拽后不会错位；失效 id 退化为空选
+        let selected = Set(slots.first(where: { $0.id == slotID })?.tags ?? [])
         return VStack(spacing: 0) {
             HStack {
                 Text("选择标签")
                     .font(.system(size: 13, weight: .semibold))
                 Spacer()
-                Button("完成") { tagPickerSlotIndex = nil }
+                Button("完成") { tagPickerSlotID = nil }
                     .controlSize(.small)
             }
             .padding(16)
@@ -339,7 +354,7 @@ struct NarrativeStructureEditorView: View {
                         ForEach(availableTags) { type in
                             let isOn = selected.contains(type.rawValue)
                             Button {
-                                toggleTag(type.rawValue, forSlotAt: slotIndex)
+                                toggleTag(type.rawValue, forSlotID: slotID)
                             } label: {
                                 HStack(spacing: 4) {
                                     if isOn {
@@ -368,15 +383,18 @@ struct NarrativeStructureEditorView: View {
 
     // MARK: - 段位本地编辑（值类型，立即写回 strategy 库）
 
-    /// 已规整 order 的段位（按当前数组顺序重排 order）
+    /// 送 AI 的每段候选上限（与 generateNarrativeVariants 里的 topCandidates(limit:) 保持一致）
+    private let narrativeCandidateLimit = 30
+
+    /// 已规整 order 的段位（按当前数组下标重排 order，tags 照搬）
     private var normalizedSlots: [NarrativeSlot] {
-        slots.enumerated().map { i, slot in
-            NarrativeSlot(order: i, tags: slot.tags)
+        slots.enumerated().map { i, row in
+            NarrativeSlot(order: i, tags: row.tags)
         }
     }
 
-    private func candidateCount(for slot: NarrativeSlot) -> Int {
-        NarrativeStructureEngine.candidatePool(for: slot, in: descriptors).count
+    private func candidateCount(forTags tags: [String]) -> Int {
+        NarrativeStructureEngine.candidatePool(for: NarrativeSlot(order: 0, tags: tags), in: descriptors).count
     }
 
     /// 项目库分镜的轻量描述（用于候选数计算）
@@ -393,13 +411,18 @@ struct NarrativeStructureEditorView: View {
     }
 
     private func addSlot() {
-        slots.append(NarrativeSlot(order: slots.count, tags: []))
+        slots.append(SlotRow(tags: []))
         persist()
     }
 
     private func deleteSlot(at index: Int) {
         guard index < slots.count else { return }
+        let removedID = slots[index].id
         slots.remove(at: index)
+        // 删除的正是当前打开标签面板的行 → 关闭面板，避免 sheet 读取失效 id
+        if tagPickerSlotID == removedID {
+            tagPickerSlotID = nil
+        }
         persist()
     }
 
@@ -408,8 +431,8 @@ struct NarrativeStructureEditorView: View {
         persist()
     }
 
-    private func toggleTag(_ tag: String, forSlotAt index: Int) {
-        guard index < slots.count else { return }
+    private func toggleTag(_ tag: String, forSlotID id: SlotRow.ID) {
+        guard let index = slots.firstIndex(where: { $0.id == id }) else { return }
         if let pos = slots[index].tags.firstIndex(of: tag) {
             slots[index].tags.remove(at: pos)
         } else {
@@ -447,12 +470,6 @@ struct NarrativeStructureEditorView: View {
         guard let type = SemanticType(rawValue: tag) else { return .gray }
         return Color(named: type.colorName)
     }
-}
-
-// MARK: - NarrativeSlot Identifiable（仅本视图本地编辑用，按 order+tags 派生稳定 id）
-
-extension NarrativeSlot: Identifiable {
-    public var id: String { "\(order)#\(tags.joined(separator: ","))" }
 }
 
 // MARK: - 简易自动换行 chip 容器

@@ -9,6 +9,8 @@ final class SchemeViewModel {
     var selectedStrategy: MixStrategy?
     var selectedScheme: MixScheme?
     var isGenerating = false
+    /// 叙事结构变体生成中（独立于 AI 方案生成的 isGenerating，避免误禁用工具栏「生成」按钮）
+    var isNarrativeGenerating = false
     var generationProgress: String = ""
     var errorMessage: String?
 
@@ -509,10 +511,10 @@ final class SchemeViewModel {
             return
         }
 
-        isGenerating = true
+        isNarrativeGenerating = true
         errorMessage = nil
 
-        defer { isGenerating = false }
+        defer { isNarrativeGenerating = false }
 
         // 1. 把项目下所有 Segment 映射为 SegmentDescriptor + 别名映射（沿用 V{n}_{nn} 规则）
         let allSegments = project.videos.flatMap(\.segments)
@@ -524,10 +526,8 @@ final class SchemeViewModel {
         let catalog = buildSegmentCatalog(allSegments)
         // alias → Segment（来自 catalog.idMap），反推 Segment.id → alias
         var idToAlias: [UUID: String] = [:]
-        var segByID: [UUID: Segment] = [:]
         for (alias, seg) in catalog.idMap {
             idToAlias[seg.id] = alias
-            segByID[seg.id] = seg
         }
 
         let descriptors: [SegmentDescriptor] = allSegments.map { seg in

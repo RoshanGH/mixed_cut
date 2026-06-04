@@ -83,7 +83,9 @@ struct SchemeListView: View {
                 .font(.system(size: 13, weight: .semibold))
 
             if !viewModel.aiStrategies.isEmpty {
-                let totalSchemes = viewModel.aiStrategies.flatMap(\.schemes).count
+                // 视频数统计所有非容器策略（AI 策略 + 叙事结构模板）的 schemes 总数，避免漏算叙事结构变体
+                let countedStrategies = viewModel.aiStrategies + viewModel.narrativeTemplates
+                let totalSchemes = countedStrategies.flatMap(\.schemes).count
                 Text("\(viewModel.aiStrategies.count) 策略 · \(totalSchemes) 视频")
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
