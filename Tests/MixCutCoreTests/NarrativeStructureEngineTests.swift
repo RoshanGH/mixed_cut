@@ -61,3 +61,26 @@ private func seg(_ id: String, _ tags: [String] = [], q: Double = 1, d: Double =
     let segs = [seg("01", ["x"]), seg("02", ["x"])]
     #expect(NarrativeStructureEngine.topCandidates(segs, limit: 10).count == 2)
 }
+
+@Test func feasibleVariantLimit_isProductCappedByRequested() {
+    let pools = [[seg("01",["x"]), seg("02",["x"])], [seg("03",["y"])]] // 2 * 1 = 2
+    #expect(NarrativeStructureEngine.feasibleVariantLimit(pools: pools, requested: 5) == 2)
+    #expect(NarrativeStructureEngine.feasibleVariantLimit(pools: pools, requested: 1) == 1)
+}
+
+@Test func feasibleVariantLimit_zeroIfAnyPoolEmpty() {
+    let pools = [[seg("01",["x"])], [SegmentDescriptor]()]
+    #expect(NarrativeStructureEngine.feasibleVariantLimit(pools: pools, requested: 3) == 0)
+}
+
+@Test func isValidVariant_rejectsWrongCountDupOrOutOfPool() {
+    let pools = [[seg("01",["x"]), seg("02",["x"])], [seg("03",["y"])]]
+    // 合法：每段选 1 个、在各自池内、无重复
+    #expect(NarrativeStructureEngine.isValidVariant([seg("01").id, seg("03").id], pools: pools))
+    // 段数不符
+    #expect(!NarrativeStructureEngine.isValidVariant([seg("01").id], pools: pools))
+    // 第 2 段选了不在池里的 id
+    #expect(!NarrativeStructureEngine.isValidVariant([seg("01").id, seg("99",["z"]).id], pools: pools))
+    // 重复 id
+    #expect(!NarrativeStructureEngine.isValidVariant([seg("01").id, seg("01").id], pools: pools))
+}

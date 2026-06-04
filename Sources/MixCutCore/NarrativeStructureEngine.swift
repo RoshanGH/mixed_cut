@@ -23,4 +23,27 @@ public enum NarrativeStructureEngine {
         }
         return Array(sorted.prefix(max(0, limit)))
     }
+
+    /// 可行变体上限 = 各段候选数乘积，封顶到请求数；任一段为空则为 0（溢出安全）
+    public static func feasibleVariantLimit(pools: [[SegmentDescriptor]], requested: Int) -> Int {
+        guard !pools.isEmpty, pools.allSatisfy({ !$0.isEmpty }) else { return 0 }
+        var product = 1
+        for p in pools {
+            let (r, overflow) = product.multipliedReportingOverflow(by: p.count)
+            if overflow { return requested }
+            product = r
+            if product >= requested { return requested }
+        }
+        return min(product, requested)
+    }
+
+    /// 校验一个变体合法：段数==池数、每段 id 在对应池内、无重复 id
+    public static func isValidVariant(_ segmentIDs: [UUID], pools: [[SegmentDescriptor]]) -> Bool {
+        guard segmentIDs.count == pools.count else { return false }
+        guard Set(segmentIDs).count == segmentIDs.count else { return false }
+        for (i, id) in segmentIDs.enumerated() where !pools[i].contains(where: { $0.id == id }) {
+            return false
+        }
+        return true
+    }
 }
