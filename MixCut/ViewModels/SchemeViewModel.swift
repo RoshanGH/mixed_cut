@@ -38,14 +38,19 @@ final class SchemeViewModel {
         strategies.flatMap(\.orderedSchemes)
     }
 
-    /// AI 生成的策略（排除"自定义组合"容器）
+    /// AI 生成的策略（排除"自定义组合"容器 + 用户自定义叙事结构）
     var aiStrategies: [MixStrategy] {
-        strategies.filter { !$0.isCustomGroup }
+        strategies.filter { !$0.isCustomGroup && !$0.isNarrativeTemplate }
     }
 
     /// 当前项目的"自定义组合"策略容器
     var customGroup: MixStrategy? {
         strategies.first { $0.isCustomGroup }
+    }
+
+    /// 用户自定义叙事结构（侧边栏"自定义结构"分组下展示）
+    var narrativeTemplates: [MixStrategy] {
+        strategies.filter { $0.isNarrativeTemplate }
     }
 
     /// 列表渲染用的有序策略：AI 策略在前，自定义组合在后

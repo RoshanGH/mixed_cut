@@ -7,6 +7,8 @@ struct SchemeListView: View {
     @State private var showGenerateSheet = false
     @State private var targetVideoCount = 50
     @State private var customPrompt = ""
+    /// 当前正在编辑的叙事结构（驱动编辑器 sheet）
+    @State private var editingNarrativeStrategy: MixStrategy?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -19,10 +21,18 @@ struct SchemeListView: View {
                     errorBanner(error)
                 }
 
-                if viewModel.strategies.isEmpty && !viewModel.isGenerating {
-                    emptyState
-                } else if viewModel.strategies.isEmpty && viewModel.isGenerating {
+                if viewModel.strategies.isEmpty && viewModel.isGenerating {
                     generatingState
+                } else if viewModel.strategies.isEmpty {
+                    // 无任何策略：展示空态 + 顶层「自定义结构」入口（否则无法创建第一条结构）
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            emptyState
+                                .frame(minHeight: 280)
+                            Divider()
+                            narrativeStructureGroup
+                        }
+                    }
                 } else {
                     strategyList
                 }
@@ -55,6 +65,13 @@ struct SchemeListView: View {
         }
         .sheet(isPresented: $showGenerateSheet) {
             generateSheet
+        }
+        .sheet(item: $editingNarrativeStrategy) { strategy in
+            NarrativeStructureEditorView(
+                project: project,
+                strategy: strategy,
+                viewModel: viewModel
+            )
         }
     }
 
@@ -114,7 +131,58 @@ struct SchemeListView: View {
                         isExpanded: viewModel.selectedStrategy?.id == strategy.id
                     )
                 }
+
+                narrativeStructureGroup
             }
+        }
+    }
+
+    // MARK: - 自定义结构分组（三级：模块 → 各结构 → 变体）
+
+    private var narrativeStructureGroup: some View {
+        VStack(spacing: 0) {
+            // 模块标题
+            HStack(spacing: 6) {
+                Image(systemName: "list.bullet.indent")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.purple)
+                Text("自定义结构")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 6)
+
+            // 各结构（二级）+ 其变体（三级），复用 StrategySection
+            ForEach(viewModel.narrativeTemplates) { strategy in
+                StrategySection(
+                    strategy: strategy,
+                    viewModel: viewModel,
+                    isExpanded: viewModel.selectedStrategy?.id == strategy.id,
+                    onEdit: { editingNarrativeStrategy = strategy }
+                )
+            }
+
+            // ＋ 添加结构
+            Button {
+                let strategy = viewModel.createNarrativeStructure(in: project)
+                editingNarrativeStrategy = strategy
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 11))
+                    Text("添加结构")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.purple)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+            }
+            .buttonStyle(.plain)
+            .disabled(project.segmentCount == 0)
         }
     }
 
@@ -347,6 +415,8 @@ struct StrategySection: View {
     let strategy: MixStrategy
     @Bindable var viewModel: SchemeViewModel
     var isExpanded: Bool
+    /// 叙事结构专用：点击"编辑"打开编辑器（非叙事结构传 nil 即不显示编辑入口）
+    var onEdit: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -372,17 +442,25 @@ struct StrategySection: View {
                                 Image(systemName: "sparkles")
                                     .font(.system(size: 10))
                                     .foregroundStyle(.purple)
+                            } else if strategy.isNarrativeTemplate {
+                                Image(systemName: "list.bullet.indent")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.purple)
                             }
                             Text(strategy.name)
                                 .font(.system(size: 12, weight: .semibold))
                                 .lineLimit(1)
                             Spacer()
-                            Text("\(strategy.schemeCount) 个视频")
+                            Text("\(strategy.schemeCount) 个变体")
                                 .font(.system(size: 10, design: .rounded))
                                 .foregroundStyle(.secondary)
                         }
 
-                        if !strategy.isCustomGroup {
+                        if strategy.isNarrativeTemplate {
+                            Text("自定义叙事结构")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        } else if !strategy.isCustomGroup {
                             HStack(spacing: 6) {
                                 HStack(spacing: 3) {
                                     Image(systemName: "paintpalette")
@@ -413,7 +491,15 @@ struct StrategySection: View {
             }
             .buttonStyle(.plain)
             .contextMenu {
-                Button("删除策略", role: .destructive) {
+                if strategy.isNarrativeTemplate, let onEdit {
+                    Button {
+                        onEdit()
+                    } label: {
+                        Label("编辑结构", systemImage: "slider.horizontal.3")
+                    }
+                    Divider()
+                }
+                Button(strategy.isNarrativeTemplate ? "删除结构" : "删除策略", role: .destructive) {
                     viewModel.deleteStrategy(strategy)
                 }
                 .disabled(strategy.isCustomGroup)
@@ -424,6 +510,9 @@ struct StrategySection: View {
                 if strategy.isCustomGroup && strategy.schemes.isEmpty {
                     // 自定义组合空状态引导
                     customGroupEmptyState
+                } else if strategy.isNarrativeTemplate && strategy.schemes.isEmpty {
+                    // 叙事结构空状态引导：去编辑器配置段位并生成
+                    narrativeEmptyState
                 } else {
                     LazyVStack(spacing: 0) {
                         ForEach(strategy.orderedSchemes) { scheme in
@@ -456,6 +545,32 @@ struct StrategySection: View {
             Divider()
                 .padding(.leading, 14)
         }
+    }
+
+    private var narrativeEmptyState: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("还没有生成变体")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Button {
+                onEdit?()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 11))
+                    Text("配置段位并生成方案")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundStyle(.purple)
+            }
+            .buttonStyle(.plain)
+            .disabled(onEdit == nil)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .padding(.leading, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.purple.opacity(0.04))
     }
 
     private var customGroupEmptyState: some View {
