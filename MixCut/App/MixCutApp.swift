@@ -9,6 +9,10 @@ struct MixCutApp: App {
     let modelContainer: ModelContainer
     private let initError: String?
 
+    /// 全局撤销管理器：挂到 mainContext 后，SwiftData 自动登记增删改。
+    /// 单一全局撤销栈（全 App 共享），levelsOfUndo = 0 不限层数。
+    let appUndoManager = UndoManager()
+
     init() {
         // 强制浅色外观（AppKit + SwiftUI 同时生效）
         // 用 NSAppearance 设置而非 SwiftUI 的 .preferredColorScheme，
@@ -36,6 +40,10 @@ struct MixCutApp: App {
             let config = ModelConfiguration(schema: schema, url: FileHelper.mixCutStoreURL)
             modelContainer = try ModelContainer(for: schema, configurations: [config])
             initError = nil
+
+            // 挂全局 UndoManager：SwiftData 自动登记 insert/delete/属性变更，无需逐操作手写 registerUndo
+            appUndoManager.levelsOfUndo = 0   // 0 = 不限层数
+            modelContainer.mainContext.undoManager = appUndoManager
 
             // 清除 bundle 内二进制的 quarantine 属性（DMG 分发后 macOS 会阻止执行）
             Self.removeQuarantineFromBundleBinaries()
@@ -107,6 +115,14 @@ struct MixCutApp: App {
         }
         .modelContainer(modelContainer)
         .commands {
+            CommandGroup(replacing: .undoRedo) {
+                Button(undoTitle) { performUndo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                    .disabled(!appUndoManager.canUndo)
+                Button(redoTitle) { performRedo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(!appUndoManager.canRedo)
+            }
             CommandGroup(replacing: .newItem) {
                 Button("新建项目") {
                     NotificationCenter.default.post(name: .mixCutNewProject, object: nil)
@@ -140,6 +156,36 @@ struct MixCutApp: App {
         Settings {
             SettingsView()
         }
+    }
+
+    // MARK: - 撤销 / 重做
+
+    /// 编辑菜单动态标题："撤销" / "撤销 删除分镜"
+    private var undoTitle: String {
+        let name = appUndoManager.undoActionName
+        return name.isEmpty ? "撤销" : "撤销 " + name
+    }
+
+    /// 编辑菜单动态标题："重做" / "重做 删除分镜"
+    private var redoTitle: String {
+        let name = appUndoManager.redoActionName
+        return name.isEmpty ? "重做" : "重做 " + name
+    }
+
+    /// 执行撤销：回滚 → 落盘 → 通知当前视图重载
+    private func performUndo() {
+        guard appUndoManager.canUndo else { return }
+        appUndoManager.undo()
+        try? modelContainer.mainContext.save()
+        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+    }
+
+    /// 执行重做：重放 → 落盘 → 通知当前视图重载
+    private func performRedo() {
+        guard appUndoManager.canRedo else { return }
+        appUndoManager.redo()
+        try? modelContainer.mainContext.save()
+        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
     }
 
     // MARK: - 数据修复
