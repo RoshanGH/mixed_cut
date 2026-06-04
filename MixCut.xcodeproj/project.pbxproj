@@ -39,6 +39,7 @@
 		7E16666D9F86D2CC3556619F /* BatchExportSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1986C779DBB5CC1CB2DA2E4E /* BatchExportSheet.swift */; };
 		81112CB6139D3423C3E2661A /* AIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A500B64AE226C6FD193ACCA /* AIProvider.swift */; };
 		81AF1ADB8AEFB3C76BB8DFD8 /* SchemeListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3AAD61DE3F8030CA28E687F /* SchemeListView.swift */; };
+		6DE2AC0DF55C79268DA15AA5 /* NarrativeStructureEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D268ED8CFC95CC4998F21CA3 /* NarrativeStructureEditorView.swift */; };
 		82E095A3E4F3C142310F12D0 /* AIAnalysisService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FC87F15412D30AE4E82B08F /* AIAnalysisService.swift */; };
 		84D13408434CF8CD59AF65E6 /* BatchSegmentExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BFE7DC5D64922CCD47A8936 /* BatchSegmentExportService.swift */; };
 		8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */; };
@@ -131,6 +132,7 @@
 		DCC2B67D64CE6EB9CF9C1E6E /* Video.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Video.swift; sourceTree = "<group>"; };
 		DD012F47D617AF470003A855 /* DesignTokens.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignTokens.swift; sourceTree = "<group>"; };
 		E3AAD61DE3F8030CA28E687F /* SchemeListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeListView.swift; sourceTree = "<group>"; };
+		D268ED8CFC95CC4998F21CA3 /* NarrativeStructureEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NarrativeStructureEditorView.swift; sourceTree = "<group>"; };
 		E57FE62ED6EB761E16B527C6 /* KeychainHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainHelper.swift; sourceTree = "<group>"; };
 		F6760400393A474358D56B7E /* SegmentCardCompact.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentCardCompact.swift; sourceTree = "<group>"; };
 		F6ACE8F180DF070B5BE8FCE3 /* MixScheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MixScheme.swift; sourceTree = "<group>"; };
@@ -220,6 +222,7 @@
 			children = (
 				510B36E7476585C9BB4D0DC4 /* SchemeDetailView.swift */,
 				E3AAD61DE3F8030CA28E687F /* SchemeListView.swift */,
+				D268ED8CFC95CC4998F21CA3 /* NarrativeStructureEditorView.swift */,
 				C16DFD07ED592109D034C02B /* InsertGapButton.swift */,
 				55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */,
 			);
@@ -560,6 +563,7 @@
 				55D680392E127983C43366C3 /* WelcomeView.swift in Sources */,
 				6D05594EE1D44A016E5E0ED4 /* SchemeDetailView.swift in Sources */,
 				81AF1ADB8AEFB3C76BB8DFD8 /* SchemeListView.swift in Sources */,
+				6DE2AC0DF55C79268DA15AA5 /* NarrativeStructureEditorView.swift in Sources */,
 				7E16666D9F86D2CC3556619F /* BatchExportSheet.swift in Sources */,
 				D1525DA154D48574BF5326EA /* SegmentLibraryView.swift in Sources */,
 				3A4C06F557F58FA17AE5D986 /* SettingsView.swift in Sources */,
