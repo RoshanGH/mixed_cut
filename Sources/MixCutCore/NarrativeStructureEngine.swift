@@ -13,4 +13,14 @@ public enum NarrativeStructureEngine {
         let slotTags = Set(slot.tags)
         return segments.filter { !slotTags.isDisjoint(with: Set($0.tags)) }
     }
+
+    /// 喂 prompt 前每段取 Top-N：质量降序，质量相同按时长降序，再按 id 稳定排序
+    public static func topCandidates(_ pool: [SegmentDescriptor], limit: Int) -> [SegmentDescriptor] {
+        let sorted = pool.sorted {
+            if $0.quality != $1.quality { return $0.quality > $1.quality }
+            if $0.duration != $1.duration { return $0.duration > $1.duration }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+        return Array(sorted.prefix(max(0, limit)))
+    }
 }

@@ -44,3 +44,20 @@ private func seg(_ id: String, _ tags: [String] = [], q: Double = 1, d: Double =
     let slot = NarrativeSlot(order: 0, tags: ["行动号召"])
     #expect(NarrativeStructureEngine.candidatePool(for: slot, in: segs).isEmpty)
 }
+
+@Test func topCandidates_sortsByQualityThenDurationAndCaps() {
+    let segs = [
+        seg("01", ["x"], q: 0.5, d: 2),
+        seg("02", ["x"], q: 0.9, d: 1),
+        seg("03", ["x"], q: 0.9, d: 3),
+        seg("04", ["x"], q: 0.7, d: 1),
+    ]
+    let top = NarrativeStructureEngine.topCandidates(segs, limit: 2)
+    // 质量降序，质量相同按时长降序：03(0.9,3) > 02(0.9,1)
+    #expect(top.map(\.id) == [seg("03").id, seg("02").id])
+}
+
+@Test func topCandidates_limitLargerThanCountReturnsAll() {
+    let segs = [seg("01", ["x"]), seg("02", ["x"])]
+    #expect(NarrativeStructureEngine.topCandidates(segs, limit: 10).count == 2)
+}
