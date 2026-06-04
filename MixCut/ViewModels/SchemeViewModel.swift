@@ -444,6 +444,178 @@ final class SchemeViewModel {
         return true
     }
 
+    // MARK: - 自定义叙事结构
+
+    /// 当前项目库内"真实有分镜"的标签集合（供编辑器只列可选标签）
+    func availableTags(in project: Project) -> [SemanticType] {
+        let present = Set(project.videos.flatMap { $0.segments }.flatMap { $0.semanticTypes })
+        return SemanticType.allCases.filter { present.contains($0) }
+    }
+
+    /// 新建一个空的叙事结构（isNarrativeTemplate strategy），返回它供编辑器编辑
+    @discardableResult
+    func createNarrativeStructure(in project: Project) -> MixStrategy {
+        let strategy = MixStrategy(
+            name: "新建叙事结构",
+            style: "",
+            description: "用户自定义叙事结构",
+            targetAudience: "",
+            narrativeStructure: "",
+            targetDuration: 0
+        )
+        strategy.isNarrativeTemplate = true
+        strategy.project = project
+        project.strategies.append(strategy)
+        modelContext?.insert(strategy)
+        modelContext?.safeSave()
+        loadSchemes(for: project)
+        return strategy
+    }
+
+    /// 保存段位 + 重算 name
+    func updateSlots(_ slots: [NarrativeSlot], for strategy: MixStrategy) {
+        strategy.narrativeSlots = slots
+        let name = NarrativeStructureEngine.structureName(for: slots)
+        strategy.name = name.isEmpty ? "新建叙事结构" : name
+        modelContext?.safeSave()
+    }
+
+    /// 中文序号（变体一/二/三…）
+    private func chineseOrdinal(_ n: Int) -> String {
+        let digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+        if n <= 0 { return "零" }
+        if n < 10 { return digits[n] }
+        if n < 20 { return n == 10 ? "十" : "十" + digits[n % 10] }
+        if n < 100 {
+            let tens = n / 10
+            let ones = n % 10
+            return digits[tens] + "十" + (ones == 0 ? "" : digits[ones])
+        }
+        return "\(n)"
+    }
+
+    /// 生成：组织 SegmentDescriptor/池/目录 → 调 service → 把通过的变体落成 MixScheme（命名"变体一/二…"）
+    func generateNarrativeVariants(for strategy: MixStrategy, in project: Project, requested: Int) async {
+        guard let context = modelContext else { return }
+
+        let slots = strategy.narrativeSlots.sorted { $0.order < $1.order }
+        guard !slots.isEmpty else {
+            ToastCenter.shared.show("请先为叙事结构配置段位标签", icon: "exclamationmark.circle.fill")
+            return
+        }
+
+        isGenerating = true
+        errorMessage = nil
+
+        defer { isGenerating = false }
+
+        // 1. 把项目下所有 Segment 映射为 SegmentDescriptor + 别名映射（沿用 V{n}_{nn} 规则）
+        let allSegments = project.videos.flatMap(\.segments)
+        guard !allSegments.isEmpty else {
+            ToastCenter.shared.show("没有可用的分镜素材，请先导入并分析视频", icon: "exclamationmark.circle.fill")
+            return
+        }
+
+        let catalog = buildSegmentCatalog(allSegments)
+        // alias → Segment（来自 catalog.idMap），反推 Segment.id → alias
+        var idToAlias: [UUID: String] = [:]
+        var segByID: [UUID: Segment] = [:]
+        for (alias, seg) in catalog.idMap {
+            idToAlias[seg.id] = alias
+            segByID[seg.id] = seg
+        }
+
+        let descriptors: [SegmentDescriptor] = allSegments.map { seg in
+            SegmentDescriptor(
+                id: seg.id,
+                tags: seg.semanticTypes.map(\.rawValue),
+                text: seg.text,
+                duration: seg.endTime - seg.startTime,
+                quality: seg.qualityScore
+            )
+        }
+
+        // 2. 每段 candidatePool → topCandidates(30)，渲染每段目录文本
+        var pools: [[SegmentDescriptor]] = []
+        var catalogBySlot: [String] = []
+        for slot in slots {
+            let pool = NarrativeStructureEngine.topCandidates(
+                NarrativeStructureEngine.candidatePool(for: slot, in: descriptors),
+                limit: 30
+            )
+            pools.append(pool)
+            let lines = pool.map { d -> String in
+                let alias = idToAlias[d.id] ?? d.id.uuidString
+                return "\(alias)|\(String(format: "%.1f", d.duration))s|\(d.text)"
+            }.joined(separator: "\n")
+            catalogBySlot.append(lines.isEmpty ? "（无候选）" : lines)
+        }
+
+        // 任一段候选为 0 → 中止
+        if let emptyIdx = pools.firstIndex(where: { $0.isEmpty }) {
+            ToastCenter.shared.show("第 \(emptyIdx + 1) 段没有匹配的分镜，请调整该段标签或补充素材",
+                                    icon: "exclamationmark.triangle.fill")
+            return
+        }
+
+        // 3. 调 service 生成合法变体
+        let variants: [[String]]
+        do {
+            variants = try await schemeService.generateNarrativeVariants(
+                slots: slots,
+                pools: pools,
+                idAliasMap: idToAlias,
+                catalogBySlot: catalogBySlot,
+                requested: requested
+            )
+        } catch {
+            errorMessage = "叙事结构变体生成失败: \(error.localizedDescription)"
+            ToastCenter.shared.show("生成失败：\(error.localizedDescription)", icon: "exclamationmark.triangle.fill")
+            return
+        }
+
+        guard !variants.isEmpty else {
+            ToastCenter.shared.show("未生成连贯变体，建议调整段位标签或增加素材",
+                                    icon: "exclamationmark.triangle.fill")
+            return
+        }
+
+        // 4. 把通过的变体逐个落成 MixScheme（复用现有 SchemeSegment 建法）
+        let existingCount = strategy.schemes.count
+        for (vi, aliasSeq) in variants.enumerated() {
+            let index = existingCount + vi + 1
+            let scheme = MixScheme(
+                variationIndex: index,
+                schemeIndex: "narrative_\(UUID().uuidString.prefix(8))",
+                name: "变体" + chineseOrdinal(index),
+                style: strategy.style,
+                description: strategy.strategyDescription,
+                targetAudience: strategy.targetAudience,
+                narrativeStructure: strategy.name
+            )
+            // 估算时长
+            let matched = aliasSeq.compactMap { catalog.idMap[$0] }
+            scheme.estimatedDuration = matched.reduce(0.0) { $0 + $1.duration }
+            scheme.strategy = strategy
+            scheme.project = project
+            strategy.schemes.append(scheme)
+            context.insert(scheme)
+
+            createSchemeSegments(
+                segmentIDs: aliasSeq,
+                scheme: scheme,
+                idMap: catalog.idMap,
+                context: context
+            )
+        }
+
+        context.safeSave()
+        loadSchemes(for: project)
+        selectedStrategy = strategy
+        selectedScheme = strategy.orderedSchemes.first
+        ToastCenter.shared.show("已生成 \(variants.count) 个变体", icon: "sparkles", style: .success)
+    }
+
     // MARK: - 自定义方案创建
 
     /// 从分镜数组创建自定义方案（异步：先建占位，AI 反推后填充元信息）
