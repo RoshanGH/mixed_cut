@@ -535,8 +535,8 @@ struct StrategySection: View {
                                 }
                                 Divider()
                                 Button("删除变体", role: .destructive) {
+                                    // Toast（含「撤销」按钮）由 deleteScheme 内部弹出
                                     viewModel.deleteScheme(scheme)
-                                    ToastCenter.shared.show("已删除变体", icon: "trash.fill", style: .warning)
                                 }
                             }
                         }

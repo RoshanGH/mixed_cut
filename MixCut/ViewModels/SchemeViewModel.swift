@@ -340,6 +340,15 @@ final class SchemeViewModel {
         context.delete(strategy)
         context.safeSave()
         strategies.removeAll { $0.id == strategy.id }
+        ToastCenter.shared.show("已删除策略", icon: "trash.fill", style: .warning,
+                                actionTitle: "撤销", action: { [weak self] in self?.undoLastDeletion() })
+    }
+
+    /// 撤销最近一次删除：执行 UndoManager.undo 并通知各视图重载
+    private func undoLastDeletion() {
+        modelContext?.undoManager?.undo()
+        modelContext?.safeSave()
+        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
     }
 
     /// 删除单个方案变体
@@ -356,6 +365,8 @@ final class SchemeViewModel {
             strategies = strategies // 触发刷新
             _ = strategy.schemeCount
         }
+        ToastCenter.shared.show("已删除方案", icon: "trash.fill", style: .warning,
+                                actionTitle: "撤销", action: { [weak self] in self?.undoLastDeletion() })
     }
 
     // MARK: - 分镜编辑

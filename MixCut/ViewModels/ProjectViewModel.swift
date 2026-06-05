@@ -112,6 +112,13 @@ final class ProjectViewModel {
         FileHelper.deleteProjectDirectory(for: projectID)
         context.safeSave()
         fetchProjects()
+        ToastCenter.shared.show("已删除项目", icon: "trash.fill", style: .warning,
+                                actionTitle: "撤销", action: { [weak self] in
+            self?.modelContext?.undoManager?.undo()
+            self?.modelContext?.safeSave()
+            self?.fetchProjects()
+            NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+        })
     }
 
     /// 归档项目

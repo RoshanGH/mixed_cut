@@ -193,9 +193,8 @@ struct SegmentLibraryView: View {
         .alert("确认批量删除", isPresented: $showBatchDeleteConfirm) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) {
-                let count = viewModel.selectedSegmentIDs.count
+                // Toast（含「撤销」按钮）由 deleteSelectedSegments 内部弹出
                 viewModel.deleteSelectedSegments()
-                ToastCenter.shared.show("已删除 \(count) 个分镜", icon: "trash.fill", style: .warning)
             }
         } message: {
             Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜，此操作不可恢复。")
@@ -575,8 +574,8 @@ struct SegmentCard: View, Equatable {
         .alert("确认删除", isPresented: $showDeleteConfirm) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) {
+                // Toast（含「撤销」按钮）由 deleteSegment 内部弹出
                 viewModel.deleteSegment(segment)
-                ToastCenter.shared.show("已删除分镜", icon: "trash.fill", style: .warning)
             }
         } message: {
             Text("确定要删除这个分镜吗？此操作不可恢复。")

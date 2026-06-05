@@ -598,6 +598,16 @@ final class ImportViewModel {
         } else {
             MixLog.info(" 视频仍被 \(remainingRefs) 个项目引用，仅解除关联: \(video.name)")
         }
+
+        ToastCenter.shared.show("已删除视频", icon: "trash.fill", style: .warning,
+                                actionTitle: "撤销", action: { [weak self] in
+            guard let self else { return }
+            // 撤销时把先前标记为「已取消」的视频从集合移除，恢复其正常处理资格
+            self.cancelledVideoIDs.remove(videoID)
+            self.modelContext?.undoManager?.undo()
+            self.modelContext?.safeSave()
+            NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+        })
     }
 
     // MARK: - 全局视频查找
