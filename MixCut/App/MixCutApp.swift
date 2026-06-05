@@ -101,6 +101,10 @@ struct MixCutApp: App {
 
             // 挂全局 UndoManager：SwiftData 自动登记 insert/delete/属性变更，无需逐操作手写 registerUndo
             modelContainer.mainContext.undoManager = appUndoManager
+            // ⚠️ 必须关闭 autosave：SwiftData 在挂了 undoManager 时，autosave 的内部账务会与
+            // 删除/撤销登记冲突，导致 context.delete(...) 同步触发 _assertionFailure 崩溃
+            // （EXC_BREAKPOINT，删 SchemeSegment 时实测崩溃）。App 各处已用 safeSave() 手动落盘。
+            modelContainer.mainContext.autosaveEnabled = false
 
             // 清除 bundle 内二进制的 quarantine 属性（DMG 分发后 macOS 会阻止执行）
             Self.removeQuarantineFromBundleBinaries()
