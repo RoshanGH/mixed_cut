@@ -346,17 +346,17 @@ final class SchemeViewModel {
     /// 删除单个方案变体
     func deleteScheme(_ scheme: MixScheme) {
         guard let context = modelContext else { return }
-        if selectedScheme?.id == scheme.id {
+        let schemeID = scheme.id
+        let strategy = scheme.strategy   // 删除前捕获，删后不能再访问 scheme.strategy
+        if selectedScheme?.id == schemeID {
             selectedScheme = nil
         }
-        context.undoManager?.setActionName("删除方案")
+        // 先从内存关系里摘除，让 strategy.orderedSchemes 立即不含它
+        strategy?.schemes.removeAll { $0.id == schemeID }
         context.delete(scheme)
         context.safeSave()
-        // 刷新策略数据
-        if let strategy = scheme.strategy {
-            strategies = strategies // 触发刷新
-            _ = strategy.schemeCount
-        }
+        // 触发 @Observable 刷新：必须重建数组实例（把同一数组赋值给自己不会触发刷新）
+        strategies = strategies.map { $0 }
         ToastCenter.shared.show("已删除方案", icon: "trash.fill", style: .warning)
     }
 
