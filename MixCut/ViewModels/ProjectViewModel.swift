@@ -112,13 +112,7 @@ final class ProjectViewModel {
         // 否则删除无法被 ⌘Z 完整撤销。磁盘回收统一交给启动时孤儿 GC。
         context.safeSave()
         fetchProjects()
-        ToastCenter.shared.show("已删除项目", icon: "trash.fill", style: .warning,
-                                actionTitle: "撤销", action: { [weak self] in
-            self?.modelContext?.undoManager?.undo()
-            self?.modelContext?.safeSave()
-            self?.fetchProjects()
-            NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
-        })
+        ToastCenter.shared.show("已删除项目", icon: "trash.fill", style: .warning)
     }
 
     /// 归档项目

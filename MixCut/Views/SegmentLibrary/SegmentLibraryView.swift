@@ -197,7 +197,7 @@ struct SegmentLibraryView: View {
                 viewModel.deleteSelectedSegments()
             }
         } message: {
-            Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜，删除后可按 ⌘Z 一次性撤销。")
+            Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜，此操作不可恢复。")
         }
     }
 
@@ -578,7 +578,7 @@ struct SegmentCard: View, Equatable {
                 viewModel.deleteSegment(segment)
             }
         } message: {
-            Text("确定要删除这个分镜吗？删除后可按 ⌘Z 或点提示里的「撤销」恢复。")
+            Text("确定要删除这个分镜吗？此操作不可恢复。")
         }
     }
 

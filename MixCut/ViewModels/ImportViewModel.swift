@@ -599,26 +599,7 @@ final class ImportViewModel {
             MixLog.info(" 视频仍被 \(remainingRefs) 个项目引用，仅解除关联: \(video.name)")
         }
 
-        ToastCenter.shared.show("已删除视频", icon: "trash.fill", style: .warning,
-                                actionTitle: "撤销", action: { [weak self] in
-            guard let self, let context = self.modelContext else { return }
-            // 撤销时把先前标记为「已取消」的视频从集合移除，恢复其正常处理资格
-            self.cancelledVideoIDs.remove(videoID)
-            context.undoManager?.undo()
-            context.safeSave()
-            // 撤销后：删除时若视频正在处理，其后台流水线已被取消、不会再完成。
-            // undo 会把状态回滚成「处理中」，这里改标为 failed，避免视频永久卡在「处理中」，
-            // 让用户可重新导入分析。
-            let desc = FetchDescriptor<Video>(predicate: #Predicate<Video> { $0.id == videoID })
-            if let restored = try? context.fetch(desc).first,
-               restored.status == .queued || restored.status == .detectingScenes
-                || restored.status == .transcribing || restored.status == .analyzing {
-                restored.status = .failed
-                restored.errorMessage = "处理已中断，请重新导入分析"
-                context.safeSave()
-            }
-            NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
-        })
+        ToastCenter.shared.show("已删除视频", icon: "trash.fill", style: .warning)
     }
 
     // MARK: - 全局视频查找

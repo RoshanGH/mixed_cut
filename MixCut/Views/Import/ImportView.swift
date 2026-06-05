@@ -361,7 +361,7 @@ struct ImportedVideoCard: View {
                 onDelete?()
             }
         } message: {
-            Text("确定要删除「\(video.name)」吗？删除后可按 ⌘Z 或点提示里的「撤销」恢复。")
+            Text("确定要删除「\(video.name)」吗？视频和相关分镜数据都将被删除，此操作不可恢复。")
         }
     }
 

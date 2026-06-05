@@ -181,7 +181,7 @@ struct SidebarView: View {
             }
         } message: {
             if let project = projectToDelete {
-                Text("确定要删除项目「\(project.name)」吗？删除后可按 ⌘Z 或点提示里的「撤销」恢复。")
+                Text("确定要删除项目「\(project.name)」吗？所有视频、分镜和方案数据都将被删除，此操作不可恢复。")
             }
         }
     }

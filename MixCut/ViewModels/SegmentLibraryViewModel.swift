@@ -377,15 +377,7 @@ final class SegmentLibraryViewModel {
         selectedSegmentIDs.remove(segment.id)
         selectionOrderedIDs.removeAll { $0 == segment.id }
         applyFilter()
-        ToastCenter.shared.show("已删除分镜", icon: "trash.fill", style: .warning,
-                                actionTitle: "撤销", action: { [weak self] in self?.undoLastDeletion() })
-    }
-
-    /// 撤销最近一次删除：执行 UndoManager.undo 并通知各视图重载
-    private func undoLastDeletion() {
-        modelContext?.undoManager?.undo()
-        modelContext?.safeSave()
-        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+        ToastCenter.shared.show("已删除分镜", icon: "trash.fill", style: .warning)
     }
 
     /// 批量删除当前选中的分镜
@@ -413,8 +405,7 @@ final class SegmentLibraryViewModel {
         selectedSegmentIDs.removeAll()
         selectionOrderedIDs.removeAll()
         applyFilter()
-        ToastCenter.shared.show("已删除 \(segs.count) 个分镜", icon: "trash.fill", style: .warning,
-                                actionTitle: "撤销", action: { [weak self] in self?.undoLastDeletion() })
+        ToastCenter.shared.show("已删除 \(segs.count) 个分镜", icon: "trash.fill", style: .warning)
     }
 
     /// 统计信息
