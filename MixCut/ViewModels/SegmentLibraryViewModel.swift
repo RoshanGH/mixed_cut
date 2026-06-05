@@ -365,6 +365,12 @@ final class SegmentLibraryViewModel {
             selectedSegment = nil
         }
         context.undoManager?.setActionName("删除分镜")
+        // 手动先删级联子项（SchemeSegment）再删 Segment：
+        // 直接 context.delete(segment) 靠 SwiftData 自动级联，在挂了 UndoManager 时会在
+        // 级联遍历中断言崩溃（EXC_BREAKPOINT）。与 deleteVideo 同款手动删法规避。
+        for ss in Array(segment.schemeSegments) {
+            context.delete(ss)
+        }
         context.delete(segment)
         context.safeSave()
         segments.removeAll { $0.id == segment.id }
@@ -394,6 +400,10 @@ final class SegmentLibraryViewModel {
         for seg in segs {
             if selectedSegment?.id == seg.id {
                 selectedSegment = nil
+            }
+            // 手动先删级联子项再删 Segment（避免自动级联在挂 UndoManager 时断言崩溃）
+            for ss in Array(seg.schemeSegments) {
+                context.delete(ss)
             }
             context.delete(seg)
         }

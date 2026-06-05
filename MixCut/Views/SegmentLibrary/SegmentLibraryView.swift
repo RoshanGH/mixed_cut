@@ -197,7 +197,7 @@ struct SegmentLibraryView: View {
                 viewModel.deleteSelectedSegments()
             }
         } message: {
-            Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜，此操作不可恢复。")
+            Text("将删除 \(viewModel.selectedSegmentIDs.count) 个分镜，删除后可按 ⌘Z 一次性撤销。")
         }
     }
 
@@ -578,7 +578,7 @@ struct SegmentCard: View, Equatable {
                 viewModel.deleteSegment(segment)
             }
         } message: {
-            Text("确定要删除这个分镜吗？此操作不可恢复。")
+            Text("确定要删除这个分镜吗？删除后可按 ⌘Z 或点提示里的「撤销」恢复。")
         }
     }
 
@@ -717,35 +717,51 @@ struct SegmentInlinePlayer: View {
 
     var body: some View {
         // 性能关键：默认只渲染缩略图 + 时长（最轻量），hover/播放才组装完整 ZStack
-        if !isHovering && !isPlaying {
-            // 静态轻量态：只有缩略图 + 时长角标
-            thumbnailView
-                .overlay(alignment: .bottomTrailing) {
-                    Text(String(format: "%.1fs", segmentDuration))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.black.opacity(0.55))
-                        .clipShape(Capsule())
-                        .padding(5)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .onHover { hovering in
-                    isHovering = hovering
-                    if hovering {
-                        hoverTimer?.invalidate()
-                        hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
-                            Task { @MainActor in
-                                guard isHovering else { return }
-                                viewModel.requestPlay(segment: segment)
+        Group {
+            if !isHovering && !isPlaying {
+                // 静态轻量态：只有缩略图 + 时长角标
+                thumbnailView
+                    .overlay(alignment: .bottomTrailing) {
+                        Text(String(format: "%.1fs", segmentDuration))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.55))
+                            .clipShape(Capsule())
+                            .padding(5)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .onHover { hovering in
+                        isHovering = hovering
+                        if hovering {
+                            hoverTimer?.invalidate()
+                            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
+                                Task { @MainActor in
+                                    guard isHovering else { return }
+                                    viewModel.requestPlay(segment: segment)
+                                }
                             }
                         }
                     }
-                }
-        } else {
-            // hover 或播放态：完整 player UI
-            playerUI
+            } else {
+                // hover 或播放态：完整 player UI
+                playerUI
+            }
+        }
+        // ⚠️ 播放请求监听必须挂在 body 顶层（而非 playerUI 内）：空闲态只渲染缩略图时
+        // 也要能响应微调（adjustStartTime/adjustEndTime）触发的 requestPlay，否则点加减不播放。
+        // play() 会把 isPlaying 置 true，body 随即切到 playerUI。
+        .onChange(of: viewModel.playingSegmentID) { _, newID in
+            if newID != segment.id && isPlaying {
+                stopPlayback()
+            }
+        }
+        .onChange(of: viewModel.previewRequest) { _, newRequest in
+            guard let request = newRequest,
+                  request.segmentID == segment.id else { return }
+            play(from: request.from, to: request.to)
+            viewModel.previewRequest = nil
         }
     }
 
@@ -804,17 +820,6 @@ struct SegmentInlinePlayer: View {
                     viewModel.stopCurrentPlayback()
                 }
             }
-        }
-        .onChange(of: viewModel.playingSegmentID) { _, newID in
-            if newID != segment.id && isPlaying {
-                stopPlayback()
-            }
-        }
-        .onChange(of: viewModel.previewRequest) { _, newRequest in
-            guard let request = newRequest,
-                  request.segmentID == segment.id else { return }
-            play(from: request.from, to: request.to)
-            viewModel.previewRequest = nil
         }
         .onDisappear {
             hoverTimer?.invalidate()

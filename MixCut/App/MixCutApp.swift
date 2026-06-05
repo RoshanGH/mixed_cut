@@ -3,6 +3,53 @@ import SwiftData
 import SQLite3
 import AppKit
 
+/// 观察 NSUndoManager 状态变化，把 canUndo/canRedo/标题暴露为 @Observable 属性，
+/// 让 SwiftUI 编辑菜单能实时刷新（SwiftUI 本身不观察 NSUndoManager）。
+@Observable
+final class UndoUIState {
+    private(set) var canUndo = false
+    private(set) var canRedo = false
+    private(set) var undoTitle = "撤销"
+    private(set) var redoTitle = "重做"
+
+    @ObservationIgnored private let undoManager: UndoManager
+    @ObservationIgnored private var tokens: [NSObjectProtocol] = []
+
+    init(_ undoManager: UndoManager) {
+        self.undoManager = undoManager
+        refresh()
+        // .NSUndoManagerCheckpoint 在每次注册/撤销/重做后都会发，覆盖最广；其余几个补足分组与撤销/重做时机
+        let names: [Notification.Name] = [
+            .NSUndoManagerCheckpoint,
+            .NSUndoManagerDidUndoChange,
+            .NSUndoManagerDidRedoChange,
+            .NSUndoManagerDidCloseUndoGroup,
+            .NSUndoManagerWillCloseUndoGroup,
+        ]
+        for name in names {
+            let token = NotificationCenter.default.addObserver(
+                forName: name, object: undoManager, queue: .main
+            ) { [weak self] _ in
+                self?.refresh()
+            }
+            tokens.append(token)
+        }
+    }
+
+    deinit {
+        tokens.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    private func refresh() {
+        canUndo = undoManager.canUndo
+        canRedo = undoManager.canRedo
+        let u = undoManager.undoActionName
+        let r = undoManager.redoActionName
+        undoTitle = u.isEmpty ? "撤销" : "撤销 " + u
+        redoTitle = r.isEmpty ? "重做" : "重做 " + r
+    }
+}
+
 @main
 struct MixCutApp: App {
 
@@ -11,9 +58,20 @@ struct MixCutApp: App {
 
     /// 全局撤销管理器：挂到 mainContext 后，SwiftData 自动登记增删改。
     /// 单一全局撤销栈（全 App 共享），levelsOfUndo = 0 不限层数。
-    let appUndoManager = UndoManager()
+    let appUndoManager: UndoManager
+
+    /// 观察 NSUndoManager 通知，驱动编辑菜单撤销/重做的启用态与标题实时刷新。
+    /// SwiftUI 不观察 NSUndoManager，若直接读 appUndoManager.canUndo，菜单是陈旧值 →
+    /// 刚操作完按 ⌘Z 会因菜单项仍处禁用态而无效。用 @Observable 中转即可实时刷新。
+    @State private var undoState: UndoUIState
 
     init() {
+        // 撤销管理器 + 其 UI 观察状态（必须最先初始化所有存储属性）
+        let undoMgr = UndoManager()
+        undoMgr.levelsOfUndo = 0
+        appUndoManager = undoMgr
+        _undoState = State(initialValue: UndoUIState(undoMgr))
+
         // 强制浅色外观（AppKit + SwiftUI 同时生效）
         // 用 NSAppearance 设置而非 SwiftUI 的 .preferredColorScheme，
         // 后者只影响 SwiftUI 颜色环境，AppKit 嵌入的 NSTextField 仍读 system effectiveAppearance
@@ -42,7 +100,6 @@ struct MixCutApp: App {
             initError = nil
 
             // 挂全局 UndoManager：SwiftData 自动登记 insert/delete/属性变更，无需逐操作手写 registerUndo
-            appUndoManager.levelsOfUndo = 0   // 0 = 不限层数
             modelContainer.mainContext.undoManager = appUndoManager
 
             // 清除 bundle 内二进制的 quarantine 属性（DMG 分发后 macOS 会阻止执行）
@@ -116,12 +173,12 @@ struct MixCutApp: App {
         .modelContainer(modelContainer)
         .commands {
             CommandGroup(replacing: .undoRedo) {
-                Button(undoTitle) { performUndo() }
+                Button(undoState.undoTitle) { performUndo() }
                     .keyboardShortcut("z", modifiers: .command)
-                    .disabled(!appUndoManager.canUndo)
-                Button(redoTitle) { performRedo() }
+                    .disabled(!undoState.canUndo)
+                Button(undoState.redoTitle) { performRedo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
-                    .disabled(!appUndoManager.canRedo)
+                    .disabled(!undoState.canRedo)
             }
             CommandGroup(replacing: .newItem) {
                 Button("新建项目") {
@@ -159,18 +216,6 @@ struct MixCutApp: App {
     }
 
     // MARK: - 撤销 / 重做
-
-    /// 编辑菜单动态标题："撤销" / "撤销 删除分镜"
-    private var undoTitle: String {
-        let name = appUndoManager.undoActionName
-        return name.isEmpty ? "撤销" : "撤销 " + name
-    }
-
-    /// 编辑菜单动态标题："重做" / "重做 删除分镜"
-    private var redoTitle: String {
-        let name = appUndoManager.redoActionName
-        return name.isEmpty ? "重做" : "重做 " + name
-    }
 
     /// 执行撤销：回滚 → 落盘 → 通知当前视图重载
     private func performUndo() {
