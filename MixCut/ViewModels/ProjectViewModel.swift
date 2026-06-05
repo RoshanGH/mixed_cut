@@ -9,6 +9,10 @@ final class ProjectViewModel {
     var projects: [Project] = []
     var selectedProject: Project? {
         didSet {
+            // 切换项目时，先把待删除项真正删除（兜底，尤其 ImportView 无 VM load 方法）
+            if oldValue?.id != selectedProject?.id {
+                PendingDeletionCenter.shared.flushNow()
+            }
             // 记忆最后访问的项目，下次启动自动选中
             if let id = selectedProject?.id {
                 UserDefaults.standard.set(id.uuidString, forKey: "lastSelectedProjectID")
@@ -36,6 +40,8 @@ final class ProjectViewModel {
     /// 获取所有项目
     func fetchProjects() {
         guard let context = modelContext else { return }
+        // 重新从库读取前，先把待删除项目真正删除，避免隐藏项又被读出来
+        PendingDeletionCenter.shared.flushNow()
         let descriptor = FetchDescriptor<Project>(
             sortBy: [SortDescriptor(\Project.updatedAt, order: .reverse)]
         )
@@ -75,44 +81,36 @@ final class ProjectViewModel {
     /// 删除项目
     /// ProjectVideo 会级联删除，但 Video 仅在无其他引用时才删除
     func deleteProject(_ project: Project) {
-        guard let context = modelContext else { return }
+        guard modelContext != nil else { return }
         let projectID = project.id
-        if selectedProject?.id == projectID {
-            selectedProject = nil
-        }
-
-        // 收集该项目引用的视频（在删除关联前）
-        let referencedVideos = project.videos
-
-        // 撤销命名：⌘Z 菜单显示「撤销 删除项目」
-        context.undoManager?.setActionName("删除项目")
-
-        // 删除项目（级联删除 ProjectVideo、MixStrategy、MixScheme、SchemeSegment）
-        context.delete(project)
-        context.safeSave()
-
-        // 检查每个视频是否还被其他项目引用
-        for video in referencedVideos {
-            if video.projectVideos.isEmpty {
-                // 无引用，删除视频 + 分镜「记录」；磁盘文件交给启动时孤儿 GC 回收（为撤销可恢复铺路）
-                // PV-02：必须先 Array(...) 快照再迭代 delete，否则迭代中改集合行为未定义
-                // 内层 SchemeSegment 不需手动删 —— Segment.schemeSegments 已设 @Relationship(.cascade)
-                let segmentSnapshot = Array(video.segments)
-
-                for segment in segmentSnapshot {
-                    context.delete(segment)
+        if selectedProject?.id == projectID { selectedProject = nil }
+        let idx = projects.firstIndex { $0.id == projectID }
+        projects.removeAll { $0.id == projectID }   // 界面隐藏（不真删）
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除项目",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                // 收集该项目引用的视频（在删除关联前）
+                let referencedVideos = project.videos
+                // 删除项目（级联删除 ProjectVideo、MixStrategy、MixScheme、SchemeSegment）
+                context.delete(project)
+                context.safeSave()
+                // 检查每个视频是否还被其他项目引用，无引用则删除视频+分镜「记录」
+                // （磁盘文件交给启动时孤儿 GC）
+                for video in referencedVideos where video.projectVideos.isEmpty {
+                    let segmentSnapshot = Array(video.segments)
+                    for segment in segmentSnapshot { context.delete(segment) }
+                    context.delete(video)
+                    MixLog.info(" 视频无引用，已删除记录: \(video.name)")
                 }
-                context.delete(video)
-
-                MixLog.info(" 视频无引用，已删除记录: \(video.name)")
+                context.safeSave()
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                if let idx, idx <= self.projects.count { self.projects.insert(project, at: idx) }
+                else { self.projects.append(project) }
             }
-        }
-
-        // 注意：不在此 inline 删除任何磁盘文件/目录（含旧版 Projects/{UUID}/），
-        // 否则删除无法被 ⌘Z 完整撤销。磁盘回收统一交给启动时孤儿 GC。
-        context.safeSave()
-        fetchProjects()
-        ToastCenter.shared.show("已删除项目", icon: "trash.fill", style: .warning)
+        )
     }
 
     /// 归档项目

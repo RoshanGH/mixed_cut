@@ -23,6 +23,8 @@ final class SchemeViewModel {
 
     /// 加载项目的所有策略和方案
     func loadSchemes(for project: Project) {
+        // 重载前先把待删除项真正删除，避免隐藏项在重载后又冒出来
+        PendingDeletionCenter.shared.flushNow()
         // 切项目铁律：先清空跨项目残留的选中（避免显示上一个项目的方案）
         selectedStrategy = nil
         selectedScheme = nil
@@ -329,35 +331,53 @@ final class SchemeViewModel {
 
     // MARK: - 删除
 
-    /// 删除整个策略及其所有变体
+    /// 删除整个策略及其所有变体（延迟删除 + 撤销浮条）
     func deleteStrategy(_ strategy: MixStrategy) {
-        guard let context = modelContext else { return }
-        if selectedStrategy?.id == strategy.id {
+        guard modelContext != nil else { return }
+        let id = strategy.id
+        if selectedStrategy?.id == id {
             selectedStrategy = nil
             selectedScheme = nil
         }
-        context.undoManager?.setActionName("删除策略")
-        context.delete(strategy)
-        context.safeSave()
-        strategies.removeAll { $0.id == strategy.id }
-        ToastCenter.shared.show("已删除策略", icon: "trash.fill", style: .warning)
+        let idx = strategies.firstIndex { $0.id == id }
+        strategies.removeAll { $0.id == id }   // 界面隐藏
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除策略",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                context.delete(strategy)
+                context.safeSave()
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                if let idx, idx <= self.strategies.count { self.strategies.insert(strategy, at: idx) }
+                else { self.strategies.append(strategy) }
+            }
+        )
     }
 
-    /// 删除单个方案变体
+    /// 删除单个方案变体（延迟删除 + 撤销浮条）
     func deleteScheme(_ scheme: MixScheme) {
-        guard let context = modelContext else { return }
+        guard modelContext != nil else { return }
         let schemeID = scheme.id
-        let strategy = scheme.strategy   // 删除前捕获，删后不能再访问 scheme.strategy
-        if selectedScheme?.id == schemeID {
-            selectedScheme = nil
-        }
-        // 先从内存关系里摘除，让 strategy.orderedSchemes 立即不含它
+        let strategy = scheme.strategy
+        if selectedScheme?.id == schemeID { selectedScheme = nil }
+        // 界面隐藏：从内存关系摘除 + 重建数组触发刷新
         strategy?.schemes.removeAll { $0.id == schemeID }
-        context.delete(scheme)
-        context.safeSave()
-        // 触发 @Observable 刷新：必须重建数组实例（把同一数组赋值给自己不会触发刷新）
         strategies = strategies.map { $0 }
-        ToastCenter.shared.show("已删除方案", icon: "trash.fill", style: .warning)
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除方案",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                context.delete(scheme)
+                context.safeSave()
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                strategy?.schemes.append(scheme)   // 放回关系
+                self.strategies = self.strategies.map { $0 }
+            }
+        )
     }
 
     // MARK: - 分镜编辑
