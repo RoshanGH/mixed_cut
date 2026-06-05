@@ -160,6 +160,39 @@ enum FileHelper {
         }
     }
 
+    // MARK: - 孤儿文件 GC
+
+    /// 回收孤儿文件：扫描全局视频/缩略图目录，删除"数据库已无任何记录引用"的文件。
+    /// referencedPaths 由调用方从所有 Video/Segment 记录收集（localPath/thumbnailPath/segment.thumbnailPath）。
+    static func collectOrphanFiles(referencedPaths: Set<String>) {
+        let fm = FileManager.default
+        var onDisk: [String] = []
+        // 视频：Videos/{hash}/xxx.mp4（两级）
+        if let hashDirs = try? fm.contentsOfDirectory(at: globalVideoDirectory, includingPropertiesForKeys: nil) {
+            for hashDir in hashDirs {
+                if let files = try? fm.contentsOfDirectory(at: hashDir, includingPropertiesForKeys: nil) {
+                    onDisk.append(contentsOf: files.map(\.path))
+                }
+            }
+        }
+        // 缩略图：Thumbnails/xxx
+        if let thumbs = try? fm.contentsOfDirectory(at: globalThumbnailDirectory, includingPropertiesForKeys: nil) {
+            onDisk.append(contentsOf: thumbs.map(\.path))
+        }
+
+        let orphans = OrphanFileFinder.orphanFiles(onDisk: onDisk, referenced: referencedPaths)
+        for path in orphans {
+            try? fm.removeItem(atPath: path)
+        }
+        // 清理空的 hash 子目录
+        if let hashDirs = try? fm.contentsOfDirectory(at: globalVideoDirectory, includingPropertiesForKeys: nil) {
+            for hashDir in hashDirs where (try? fm.contentsOfDirectory(atPath: hashDir.path))?.isEmpty == true {
+                try? fm.removeItem(at: hashDir)
+            }
+        }
+        if !orphans.isEmpty { MixLog.info("GC 回收孤儿文件 \(orphans.count) 个") }
+    }
+
     /// 临时文件目录
     static var tempDirectory: URL {
         let url = FileManager.default.temporaryDirectory

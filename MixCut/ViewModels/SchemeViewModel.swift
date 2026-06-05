@@ -9,6 +9,8 @@ final class SchemeViewModel {
     var selectedStrategy: MixStrategy?
     var selectedScheme: MixScheme?
     var isGenerating = false
+    /// 叙事结构变体生成中（独立于 AI 方案生成的 isGenerating，避免误禁用工具栏「生成」按钮）
+    var isNarrativeGenerating = false
     var generationProgress: String = ""
     var errorMessage: String?
 
@@ -21,6 +23,8 @@ final class SchemeViewModel {
 
     /// 加载项目的所有策略和方案
     func loadSchemes(for project: Project) {
+        // 重载前先把待删除项真正删除，避免隐藏项在重载后又冒出来
+        PendingDeletionCenter.shared.flushNow()
         // 切项目铁律：先清空跨项目残留的选中（避免显示上一个项目的方案）
         selectedStrategy = nil
         selectedScheme = nil
@@ -38,9 +42,9 @@ final class SchemeViewModel {
         strategies.flatMap(\.orderedSchemes)
     }
 
-    /// AI 生成的策略（排除"自定义组合"容器）
+    /// AI 生成的策略（排除"自定义组合"容器 + 用户自定义叙事结构）
     var aiStrategies: [MixStrategy] {
-        strategies.filter { !$0.isCustomGroup }
+        strategies.filter { !$0.isCustomGroup && !$0.isNarrativeTemplate }
     }
 
     /// 当前项目的"自定义组合"策略容器
@@ -48,9 +52,20 @@ final class SchemeViewModel {
         strategies.first { $0.isCustomGroup }
     }
 
+    /// 用户自定义叙事结构（侧边栏"自定义结构"分组下展示）
+    var narrativeTemplates: [MixStrategy] {
+        strategies.filter { $0.isNarrativeTemplate }
+    }
+
     /// 列表渲染用的有序策略：AI 策略在前，自定义组合在后
     var orderedStrategiesForDisplay: [MixStrategy] {
         aiStrategies + (customGroup.map { [$0] } ?? [])
+    }
+
+    /// 导出页用：所有含方案的策略（AI 策略 + 自定义组合 + 自定义结构）。
+    /// 导出列表必须含 narrativeTemplates，否则自定义结构生成的方案在导出页看不到、勾不到。
+    var exportableStrategies: [MixStrategy] {
+        orderedStrategiesForDisplay + narrativeTemplates
     }
 
     // MARK: - 构建分镜目录（全局唯一 ID）
@@ -204,6 +219,13 @@ final class SchemeViewModel {
             }
 
             // 在主线程创建数据模型
+            // 整批方案落库包成一组撤销：一次 ⌘Z 撤掉全部生成结果。
+            // 此区段全程同步（AI 网络请求已在上方 await 完成），不跨 await，grouping 边界干净。
+            // 用 defer 兜底 endUndoGrouping，避免中途 save 抛错导致 group 未闭合。
+            let um = context.undoManager
+            um?.beginUndoGrouping()
+            um?.setActionName("生成方案")
+            defer { um?.endUndoGrouping() }
             for (i, strategyResult, compositions) in allResults {
                 let strategy = MixStrategy(
                     name: strategyResult.name,
@@ -309,31 +331,53 @@ final class SchemeViewModel {
 
     // MARK: - 删除
 
-    /// 删除整个策略及其所有变体
+    /// 删除整个策略及其所有变体（延迟删除 + 撤销浮条）
     func deleteStrategy(_ strategy: MixStrategy) {
-        guard let context = modelContext else { return }
-        if selectedStrategy?.id == strategy.id {
+        guard modelContext != nil else { return }
+        let id = strategy.id
+        if selectedStrategy?.id == id {
             selectedStrategy = nil
             selectedScheme = nil
         }
-        context.delete(strategy)
-        context.safeSave()
-        strategies.removeAll { $0.id == strategy.id }
+        let idx = strategies.firstIndex { $0.id == id }
+        strategies.removeAll { $0.id == id }   // 界面隐藏
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除策略",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                context.delete(strategy)
+                context.safeSave()
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                if let idx, idx <= self.strategies.count { self.strategies.insert(strategy, at: idx) }
+                else { self.strategies.append(strategy) }
+            }
+        )
     }
 
-    /// 删除单个方案变体
+    /// 删除单个方案变体（延迟删除 + 撤销浮条）
     func deleteScheme(_ scheme: MixScheme) {
-        guard let context = modelContext else { return }
-        if selectedScheme?.id == scheme.id {
-            selectedScheme = nil
-        }
-        context.delete(scheme)
-        context.safeSave()
-        // 刷新策略数据
-        if let strategy = scheme.strategy {
-            strategies = strategies // 触发刷新
-            _ = strategy.schemeCount
-        }
+        guard modelContext != nil else { return }
+        let schemeID = scheme.id
+        let strategy = scheme.strategy
+        if selectedScheme?.id == schemeID { selectedScheme = nil }
+        // 界面隐藏：从内存关系摘除 + 重建数组触发刷新
+        strategy?.schemes.removeAll { $0.id == schemeID }
+        strategies = strategies.map { $0 }
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除方案",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                context.delete(scheme)
+                context.safeSave()
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                strategy?.schemes.append(scheme)   // 放回关系
+                self.strategies = self.strategies.map { $0 }
+            }
+        )
     }
 
     // MARK: - 分镜编辑
@@ -363,6 +407,7 @@ final class SchemeViewModel {
         guard source >= 0, source < ordered.count,
               destination >= 0, destination <= ordered.count else { return }
 
+        modelContext?.undoManager?.setActionName("调整顺序")
         let moved = ordered.remove(at: source)
         let adjustedDest = destination > source ? destination - 1 : destination
         ordered.insert(moved, at: adjustedDest)
@@ -383,6 +428,7 @@ final class SchemeViewModel {
             return false
         }
 
+        context.undoManager?.setActionName("移除分镜")
         let deletedID = schemeSeg.id
         context.delete(schemeSeg)
 
@@ -407,6 +453,7 @@ final class SchemeViewModel {
             return false
         }
 
+        context.undoManager?.setActionName("插入分镜")
         // 现有分镜在 position 及之后的全部后移一位
         for seg in scheme.orderedSegments where seg.position >= position {
             seg.position += 1
@@ -442,6 +489,181 @@ final class SchemeViewModel {
         markAsEdited(scheme)
         context.safeSave()
         return true
+    }
+
+    // MARK: - 自定义叙事结构
+
+    /// 当前项目库内"真实有分镜"的标签集合（供编辑器只列可选标签）
+    func availableTags(in project: Project) -> [SemanticType] {
+        let present = Set(project.videos.flatMap { $0.segments }.flatMap { $0.semanticTypes })
+        return SemanticType.allCases.filter { present.contains($0) }
+    }
+
+    /// 新建一个空的叙事结构（isNarrativeTemplate strategy），返回它供编辑器编辑
+    @discardableResult
+    func createNarrativeStructure(in project: Project) -> MixStrategy {
+        let strategy = MixStrategy(
+            name: "新建叙事结构",
+            style: "",
+            description: "用户自定义叙事结构",
+            targetAudience: "",
+            narrativeStructure: "",
+            targetDuration: 0
+        )
+        strategy.isNarrativeTemplate = true
+        strategy.project = project
+        project.strategies.append(strategy)
+        modelContext?.insert(strategy)
+        modelContext?.safeSave()
+        loadSchemes(for: project)
+        return strategy
+    }
+
+    /// 保存段位 + 重算 name
+    func updateSlots(_ slots: [NarrativeSlot], for strategy: MixStrategy) {
+        strategy.narrativeSlots = slots
+        let name = NarrativeStructureEngine.structureName(for: slots)
+        strategy.name = name.isEmpty ? "新建叙事结构" : name
+        modelContext?.safeSave()
+    }
+
+    /// 中文序号（变体一/二/三…）
+    private func chineseOrdinal(_ n: Int) -> String {
+        let digits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+        if n <= 0 { return "零" }
+        if n < 10 { return digits[n] }
+        if n < 20 { return n == 10 ? "十" : "十" + digits[n % 10] }
+        if n < 100 {
+            let tens = n / 10
+            let ones = n % 10
+            return digits[tens] + "十" + (ones == 0 ? "" : digits[ones])
+        }
+        return "\(n)"
+    }
+
+    /// 生成：组织 SegmentDescriptor/池/目录 → 调 service → 把通过的变体落成 MixScheme（命名"变体一/二…"）
+    func generateNarrativeVariants(for strategy: MixStrategy, in project: Project, requested: Int) async {
+        guard let context = modelContext else { return }
+
+        let slots = strategy.narrativeSlots.sorted { $0.order < $1.order }
+        guard !slots.isEmpty else {
+            ToastCenter.shared.show("请先为叙事结构配置段位标签", icon: "exclamationmark.circle.fill")
+            return
+        }
+
+        isNarrativeGenerating = true
+        errorMessage = nil
+
+        defer { isNarrativeGenerating = false }
+
+        // 1. 把项目下所有 Segment 映射为 SegmentDescriptor + 别名映射（沿用 V{n}_{nn} 规则）
+        let allSegments = project.videos.flatMap(\.segments)
+        guard !allSegments.isEmpty else {
+            ToastCenter.shared.show("没有可用的分镜素材，请先导入并分析视频", icon: "exclamationmark.circle.fill")
+            return
+        }
+
+        let catalog = buildSegmentCatalog(allSegments)
+        // alias → Segment（来自 catalog.idMap），反推 Segment.id → alias
+        var idToAlias: [UUID: String] = [:]
+        for (alias, seg) in catalog.idMap {
+            idToAlias[seg.id] = alias
+        }
+
+        let descriptors: [SegmentDescriptor] = allSegments.map { seg in
+            SegmentDescriptor(
+                id: seg.id,
+                tags: seg.semanticTypes.map(\.rawValue),
+                text: seg.text,
+                duration: seg.endTime - seg.startTime,
+                quality: seg.qualityScore
+            )
+        }
+
+        // 2. 每段 candidatePool → topCandidates(30)，渲染每段目录文本
+        var pools: [[SegmentDescriptor]] = []
+        var catalogBySlot: [String] = []
+        for slot in slots {
+            let pool = NarrativeStructureEngine.topCandidates(
+                NarrativeStructureEngine.candidatePool(for: slot, in: descriptors),
+                limit: 30
+            )
+            pools.append(pool)
+            let lines = pool.map { d -> String in
+                let alias = idToAlias[d.id] ?? d.id.uuidString
+                return "\(alias)|\(String(format: "%.1f", d.duration))s|\(d.text)"
+            }.joined(separator: "\n")
+            catalogBySlot.append(lines.isEmpty ? "（无候选）" : lines)
+        }
+
+        // 任一段候选为 0 → 中止
+        if let emptyIdx = pools.firstIndex(where: { $0.isEmpty }) {
+            ToastCenter.shared.show("第 \(emptyIdx + 1) 段没有匹配的分镜，请调整该段标签或补充素材",
+                                    icon: "exclamationmark.triangle.fill")
+            return
+        }
+
+        // 3. 调 service 生成合法变体
+        let variants: [[String]]
+        do {
+            variants = try await schemeService.generateNarrativeVariants(
+                slots: slots,
+                pools: pools,
+                idAliasMap: idToAlias,
+                catalogBySlot: catalogBySlot,
+                requested: requested
+            )
+        } catch {
+            errorMessage = "叙事结构变体生成失败: \(error.localizedDescription)"
+            ToastCenter.shared.show("生成失败：\(error.localizedDescription)", icon: "exclamationmark.triangle.fill")
+            return
+        }
+
+        guard !variants.isEmpty else {
+            ToastCenter.shared.show("未生成连贯变体，建议调整段位标签或增加素材",
+                                    icon: "exclamationmark.triangle.fill")
+            return
+        }
+
+        // 4. 把通过的变体逐个落成 MixScheme（复用现有 SchemeSegment 建法）
+        // 整批变体落库包成一组撤销：一次 ⌘Z 撤掉全部生成结果。此区段全程同步、不跨 await。
+        let um = context.undoManager
+        um?.beginUndoGrouping()
+        um?.setActionName("生成方案")
+        let existingCount = strategy.schemes.count
+        for (vi, aliasSeq) in variants.enumerated() {
+            let index = existingCount + vi + 1
+            let scheme = MixScheme(
+                variationIndex: index,
+                schemeIndex: "narrative_\(UUID().uuidString.prefix(8))",
+                name: "变体" + chineseOrdinal(index),
+                style: strategy.style,
+                description: strategy.strategyDescription,
+                targetAudience: strategy.targetAudience,
+                narrativeStructure: strategy.name
+            )
+            // 估算时长
+            let matched = aliasSeq.compactMap { catalog.idMap[$0] }
+            scheme.estimatedDuration = matched.reduce(0.0) { $0 + $1.duration }
+            scheme.strategy = strategy
+            scheme.project = project
+            strategy.schemes.append(scheme)
+            context.insert(scheme)
+
+            createSchemeSegments(
+                segmentIDs: aliasSeq,
+                scheme: scheme,
+                idMap: catalog.idMap,
+                context: context
+            )
+        }
+
+        um?.endUndoGrouping()
+        context.safeSave()
+        loadSchemes(for: project)
+        selectedStrategy = strategy
+        selectedScheme = strategy.orderedSchemes.first
+        ToastCenter.shared.show("已生成 \(variants.count) 个变体", icon: "sparkles", style: .success)
     }
 
     // MARK: - 自定义方案创建

@@ -201,7 +201,6 @@ struct SchemeDetailView: View {
                                 drawerOperation = .replace(schemeSegmentID: schemeSeg.id, originalSemantic: originalTypes)
                             }
                         )
-                        .padding(.horizontal, 5)
 
                         InsertGapButton { drawerOperation = .insert(position: idx + 2) }
                     }

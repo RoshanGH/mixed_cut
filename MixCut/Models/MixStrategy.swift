@@ -24,6 +24,23 @@ final class MixStrategy: Identifiable {
     /// true = 系统级"自定义组合"容器策略，不会被 AI 生成流程触碰
     var isCustomGroup: Bool = false
 
+    /// true = 用户自定义叙事结构（区别于 AI 策略 / 自定义组合）
+    var isNarrativeTemplate: Bool = false
+
+    /// 叙事段位序列（JSON 存储，元素见 NarrativeSlot）
+    var narrativeSlotsData: Data?
+
+    /// 叙事段位序列（计算属性，参照 Segment.semanticTypes 的 JSON 编解码写法）
+    var narrativeSlots: [NarrativeSlot] {
+        get {
+            guard let data = narrativeSlotsData else { return [] }
+            return (try? JSONDecoder().decode([NarrativeSlot].self, from: data)) ?? []
+        }
+        set {
+            narrativeSlotsData = try? JSONEncoder().encode(newValue)
+        }
+    }
+
     init(
         name: String,
         style: String,

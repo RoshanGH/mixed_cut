@@ -59,6 +59,8 @@ final class SegmentLibraryViewModel {
 
     /// 加载项目的所有分镜
     func loadSegments(for project: Project) {
+        // 重载前先把待删除项真正删除，避免「界面已隐藏但数据库未删」在重载后又冒出来
+        PendingDeletionCenter.shared.flushNow()
         // 切项目铁律：清空多选 / 预览 / 选中状态（避免 A 项目状态残留到 B）
         selectedSegment = nil
         isSelectionMode = false
@@ -263,6 +265,7 @@ final class SegmentLibraryViewModel {
 
     /// 切换分镜的语义类型（多选：添加或移除）
     func toggleSemanticType(for segment: Segment, type: SemanticType) {
+        modelContext?.undoManager?.setActionName("修改类型")
         var types = segment.semanticTypes
         if let idx = types.firstIndex(of: type) {
             // 移除，但至少保留一个类型
@@ -279,6 +282,7 @@ final class SegmentLibraryViewModel {
 
     /// 更新分镜的位置类型
     func updatePositionType(for segment: Segment, to newType: PositionType) {
+        modelContext?.undoManager?.setActionName("修改位置")
         segment.positionType = newType
         modelContext?.safeSave()
         applyFilter()
@@ -296,6 +300,7 @@ final class SegmentLibraryViewModel {
     func adjustStartTime(for segment: Segment, by step: Double) {
         let newStart = max(0, segment.startTime + step)
         guard newStart < segment.endTime - 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.startTime = newStart
         reExtractText(for: segment)
         modelContext?.safeSave()
@@ -309,6 +314,7 @@ final class SegmentLibraryViewModel {
         let videoDuration = segment.video?.duration ?? Double.greatestFiniteMagnitude
         let newEnd = min(videoDuration, segment.endTime + step)
         guard newEnd > segment.startTime + 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.endTime = newEnd
         reExtractText(for: segment)
         modelContext?.safeSave()
@@ -335,6 +341,7 @@ final class SegmentLibraryViewModel {
     func setStartTime(for segment: Segment, to newStart: Double) {
         let clamped = max(0, newStart)
         guard clamped < segment.endTime - 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.startTime = clamped
         reExtractText(for: segment)
         modelContext?.safeSave()
@@ -346,42 +353,68 @@ final class SegmentLibraryViewModel {
         let videoDuration = segment.video?.duration ?? Double.greatestFiniteMagnitude
         let clamped = min(videoDuration, newEnd)
         guard clamped > segment.startTime + 0.2 else { return }
+        modelContext?.undoManager?.setActionName("修改时间")
         segment.endTime = clamped
         reExtractText(for: segment)
         modelContext?.safeSave()
         requestPlay(segment: segment, from: max(segment.startTime, clamped - 1), to: clamped)
     }
 
-    /// 删除分镜
+    /// 删除分镜（延迟删除 + 撤销浮条：先隐藏，5 秒内可撤销，不撤才真删）
     func deleteSegment(_ segment: Segment) {
-        guard let context = modelContext else { return }
-        if selectedSegment?.id == segment.id {
-            selectedSegment = nil
-        }
-        context.delete(segment)
-        context.safeSave()
-        segments.removeAll { $0.id == segment.id }
-        selectedSegmentIDs.remove(segment.id)
-        selectionOrderedIDs.removeAll { $0 == segment.id }
+        guard modelContext != nil else { return }
+        let id = segment.id
+        if selectedSegment?.id == id { selectedSegment = nil }
+        // 界面隐藏（不真删）
+        segments.removeAll { $0.id == id }
+        selectedSegmentIDs.remove(id)
+        selectionOrderedIDs.removeAll { $0 == id }
         applyFilter()
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除分镜",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                // 手动先删级联子项再删 Segment（避免自动级联的边角问题，与 deleteVideo 同款）
+                for ss in Array(segment.schemeSegments) { context.delete(ss) }
+                context.delete(segment)
+                context.safeSave()
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                self.segments.append(segment)   // 放回（applyFilter 会按质量/时间重新排序，与顺序无关）
+                self.applyFilter()
+            }
+        )
     }
 
-    /// 批量删除当前选中的分镜
+    /// 批量删除当前选中的分镜（延迟删除 + 撤销浮条）
     func deleteSelectedSegments() {
-        guard let context = modelContext else { return }
+        guard modelContext != nil else { return }
         let idsToDelete = selectedSegmentIDs
         let segs = segments.filter { idsToDelete.contains($0.id) }
-        for seg in segs {
-            if selectedSegment?.id == seg.id {
-                selectedSegment = nil
-            }
-            context.delete(seg)
-        }
-        context.safeSave()
+        guard !segs.isEmpty else { return }
+        // 界面隐藏（不真删）
+        if let sel = selectedSegment?.id, idsToDelete.contains(sel) { selectedSegment = nil }
         segments.removeAll { idsToDelete.contains($0.id) }
         selectedSegmentIDs.removeAll()
         selectionOrderedIDs.removeAll()
         applyFilter()
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除 \(segs.count) 个分镜",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                for seg in segs {
+                    for ss in Array(seg.schemeSegments) { context.delete(ss) }
+                    context.delete(seg)
+                }
+                context.safeSave()
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                self.segments.append(contentsOf: segs)
+                self.applyFilter()
+            }
+        )
     }
 
     /// 统计信息

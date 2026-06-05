@@ -6,6 +6,8 @@ extension Notification.Name {
     static let mixCutNavigate = Notification.Name("mixCutNavigate")
     static let mixCutNewProject = Notification.Name("mixCutNewProject")
     static let mixCutShowShortcuts = Notification.Name("mixCutShowShortcuts")
+    /// 撤销 / 重做后广播：当前视图据此重载，避免显示已回滚 / 恢复前的陈旧数据
+    static let mixCutDataDidUndo = Notification.Name("mixCutDataDidUndo")
 }
 
 enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
@@ -94,6 +96,9 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .mixCutShowShortcuts)) { _ in
             showShortcuts = true
         }
+        .onReceive(NotificationCenter.default.publisher(for: .mixCutDataDidUndo)) { _ in
+            reloadAfterUndo()
+        }
         .background(
             VStack(spacing: 0) {
                 Button("") {
@@ -125,6 +130,26 @@ struct ContentView: View {
                 hasCompletedOnboarding = true
             }
         }
+    }
+
+    /// 撤销 / 重做后重载当前数据。
+    /// 全局单一撤销栈：⌘Z 可能回滚任意项目的改动，所以统一重建项目列表 +
+    /// 重载持有自身快照数组（不随 SwiftData Observation 自动刷新）的各 VM。
+    /// 复用「切换项目」同款 loadXXX(for:) 路径，遵守切换项目铁律。
+    private func reloadAfterUndo() {
+        // 1) 项目列表可能因删除/恢复项目而变化
+        projectVM.fetchProjects()
+
+        // 2) 当前选中项目若已被撤销删除（恢复了"删除项目"操作），从最新列表里取消选中
+        if let selected = projectVM.selectedProject,
+           !projectVM.projects.contains(where: { $0.id == selected.id }) {
+            projectVM.selectedProject = nil
+        }
+
+        // 3) 重载当前项目下持有快照的 VM（ImportView 直接读 project.videos，靠 Observation 自动刷新，无需手动）
+        guard let project = projectVM.selectedProject else { return }
+        segmentLibraryVM.loadSegments(for: project)
+        schemeVM.loadSchemes(for: project)
     }
 
     @ViewBuilder

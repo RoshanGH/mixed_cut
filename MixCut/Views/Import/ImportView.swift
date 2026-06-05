@@ -357,11 +357,11 @@ struct ImportedVideoCard: View {
         .alert("确认删除", isPresented: $showDeleteConfirm) {
             Button("取消", role: .cancel) {}
             Button("删除", role: .destructive) {
+                // Toast（含「撤销」按钮）由 deleteVideo 内部弹出，这里不要再弹一个把它覆盖掉
                 onDelete?()
-                ToastCenter.shared.show("已删除「\(video.name)」", icon: "trash.fill", style: .warning)
             }
         } message: {
-            Text("确定要删除「\(video.name)」吗？视频文件和相关分镜数据都将被删除，此操作不可恢复。")
+            Text("确定要删除「\(video.name)」吗？视频和相关分镜数据都将被删除，此操作不可恢复。")
         }
     }
 

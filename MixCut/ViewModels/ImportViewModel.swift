@@ -547,65 +547,46 @@ final class ImportViewModel {
 
     /// 从项目中移除视频（解除关联）
     /// 仅当视频不被任何项目引用时，才真正删除 Video + Segment + 磁盘文件
+    /// 删除视频（延迟删除 + 撤销浮条）
     func deleteVideo(_ video: Video, from project: Project) {
-        guard let context = modelContext else { return }
+        guard modelContext != nil else { return }
         let videoID = video.id
+        // 立即取消该视频的后台处理（删除意图）
         cancelledVideoIDs.insert(videoID)
 
-        // 立刻把中间态状态标为 failed，让 UI 立即反馈（后台 ASR/AI 任务即使继续跑也会被 checkCancelled 跳过）
-        if video.status == .queued || video.status == .detectingScenes || video.status == .transcribing || video.status == .analyzing {
-            video.status = .failed
-            video.errorMessage = "已删除"
-        }
+        // 界面隐藏：从 project.projectVideos 摘除该视频的关联（ImportView 读 project.videos）。
+        // pv 对象此刻不删，到 commit 时再真删。
+        let pvsToHide = project.projectVideos.filter { $0.video?.id == videoID }
+        let pvIDs = Set(pvsToHide.map(\.id))
+        project.projectVideos.removeAll { pvIDs.contains($0.id) }
 
-        // 删除当前项目与该视频的关联。
-        // 关键：必须先从 project.projectVideos 数组里显式 remove，再 context.delete()。
-        // 单靠 context.delete() 不会触发 SwiftUI Observation —— 因为关系数组里仍指向被标记删除的实体，
-        // ForEach(project.videos) 不会感知变化，会导致当前页 UI 不刷新（要切到其他页再回来才正常）。
-        let pvIDsToDelete = Set(
-            project.projectVideos
-                .filter { $0.video?.id == videoID }
-                .map(\.id)
+        PendingDeletionCenter.shared.schedule(
+            message: "已删除视频",
+            commit: { [weak self] in
+                guard let context = self?.modelContext else { return }
+                // 先真删关联 pv，再判断该视频是否还被其它项目引用
+                for pv in pvsToHide { context.delete(pv) }
+                context.safeSave()
+                if video.projectVideos.isEmpty {
+                    // 无任何项目引用，删除视频 + 分镜 + SchemeSegment「记录」；磁盘文件交孤儿 GC
+                    let segmentsToDelete = Array(video.segments)
+                    for segment in segmentsToDelete {
+                        for ss in Array(segment.schemeSegments) { context.delete(ss) }
+                        context.delete(segment)
+                    }
+                    context.delete(video)
+                    context.safeSave()
+                    MixLog.info(" 视频无引用，已删除记录: \(video.name)")
+                } else {
+                    MixLog.info(" 视频仍被其它项目引用，仅解除关联: \(video.name)")
+                }
+            },
+            undo: { [weak self] in
+                guard let self else { return }
+                self.cancelledVideoIDs.remove(videoID)   // 恢复处理资格
+                project.projectVideos.append(contentsOf: pvsToHide)   // 放回关联
+            }
         )
-        let pvsToDelete = project.projectVideos.filter { pvIDsToDelete.contains($0.id) }
-        project.projectVideos.removeAll { pvIDsToDelete.contains($0.id) }
-        for pv in pvsToDelete {
-            context.delete(pv)
-        }
-        context.safeSave()
-
-        // 检查视频是否还被其他项目引用
-        let remainingRefs = video.projectVideos.count
-        if remainingRefs == 0 {
-            // 无任何项目引用，真正删除
-            let localPath = video.localPath
-            let thumbnailPath = video.thumbnailPath
-
-            // 删除所有 Segment 及其 SchemeSegment 引用（同样先收集再删除）
-            let segmentsToDelete = Array(video.segments)
-            for segment in segmentsToDelete {
-                let ssToDelete = Array(segment.schemeSegments)
-                for ss in ssToDelete {
-                    context.delete(ss)
-                }
-                context.delete(segment)
-            }
-
-            context.delete(video)
-            context.safeSave()
-
-            // 清理磁盘文件
-            FileHelper.deleteGlobalVideoFiles(localPath: localPath, thumbnailPath: thumbnailPath)
-            // 清理分镜缩略图
-            for segment in video.segments {
-                if let thumbPath = segment.thumbnailPath {
-                    try? FileManager.default.removeItem(atPath: thumbPath)
-                }
-            }
-            MixLog.info(" 视频无引用，已彻底删除: \(video.name)")
-        } else {
-            MixLog.info(" 视频仍被 \(remainingRefs) 个项目引用，仅解除关联: \(video.name)")
-        }
     }
 
     // MARK: - 全局视频查找

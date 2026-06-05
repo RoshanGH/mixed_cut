@@ -371,6 +371,66 @@ actor SchemeGenerationService {
         return allCompositions
     }
 
+    // MARK: - 叙事结构变体生成
+
+    /// 按叙事结构生成变体：每段候选池挑 1 条 → AI 多变体 + 自检连贯 → 程序侧二次过滤非法变体
+    /// 返回的每个元素是「按段顺序排列的 segment 别名字符串数组」
+    func generateNarrativeVariants(
+        slots: [NarrativeSlot],
+        pools: [[SegmentDescriptor]],     // 与 slots 顺序一一对应（已 topCandidates 截断）
+        idAliasMap: [UUID: String],       // segment.id → 目录里用的别名(如 "V1_03")
+        catalogBySlot: [String],          // 每段渲染好的 "别名|时长|台词" 多行文本
+        requested: Int
+    ) async throws -> [[String]] {
+        let n = NarrativeStructureEngine.feasibleVariantLimit(pools: pools, requested: requested)
+        guard n > 0 else { return [] }
+
+        let structureText = slots.enumerated().map { i, slot in
+            "段\(i + 1) [标签:\(slot.tags.joined(separator: "/"))] 候选:\n\(catalogBySlot[i])"
+        }.joined(separator: "\n")
+
+        let prompt = """
+        你是信息流广告混剪专家。下面是一个固定的「叙事结构」(若干段,顺序不可变),
+        每段给了一组候选分镜。任务:为每段从它自己的候选里挑 1 条,组成成片;
+        生成 \(n) 个不同变体;对每个变体做台词连贯性自检,只输出连贯的。
+
+        ## 叙事结构(段顺序=成片顺序,固定;你只决定每段选哪条)
+        \(structureText)
+
+        ## 硬性规则
+        1. 每段必须且只能从【该段自己的候选】里选 1 条;不能借别段候选、不能漏段、不能改段序。
+        2. 同一变体内不得重复使用同一条分镜。
+        3. 生成 \(n) 个变体,彼此要有差异,不得有两个完全相同的 ID 组合。
+        4. 连贯性自检——只输出通过的,不通过的直接丢弃:
+           a. 相邻段台词语义衔接,整体像一条完整口播,不跳脱;
+           b. ⚠️ 台词逻辑顺序不能排反:若两条台词本身有先后(同句上/下半句、"首先…其次…"),
+              后半不能排在前半之前;
+           c. 整体符合信息流节奏(开头抓人→中间种草→结尾促单)。
+
+        ## 输出格式(JSON,只含通过自检的变体;segments 按段顺序填各段选中的别名)
+        {"compositions":[{"segments":["V1_03","V1_05","V2_07","V1_09"],"desc":"一句话描述"}]}
+        只输出 JSON,不要其他文字。
+        """
+
+        let response = try await aiProvider.generateJSON(
+            prompt: prompt,
+            responseType: CompositionResponse.self
+        )
+
+        // 别名 → id 反查表
+        let aliasToID = Dictionary(uniqueKeysWithValues: idAliasMap.map { ($0.value, $0.key) })
+
+        // 程序侧二次过滤：别名→id，再用 NarrativeStructureEngine.isValidVariant 校验（不只信 AI 自觉）
+        var valid: [[String]] = []
+        for comp in response.compositions {
+            let ids = comp.segments.compactMap { aliasToID[$0] }
+            if NarrativeStructureEngine.isValidVariant(ids, pools: pools) {
+                valid.append(comp.segments)
+            }
+        }
+        return valid
+    }
+
     // MARK: - 辅助方法
 
     private func buildSegmentSummary(_ segments: [Segment]) -> String {
