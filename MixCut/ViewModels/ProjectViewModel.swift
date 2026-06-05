@@ -108,8 +108,8 @@ final class ProjectViewModel {
             }
         }
 
-        // 清理旧版项目目录（如果存在）
-        FileHelper.deleteProjectDirectory(for: projectID)
+        // 注意：不在此 inline 删除任何磁盘文件/目录（含旧版 Projects/{UUID}/），
+        // 否则删除无法被 ⌘Z 完整撤销。磁盘回收统一交给启动时孤儿 GC。
         context.safeSave()
         fetchProjects()
         ToastCenter.shared.show("已删除项目", icon: "trash.fill", style: .warning,
