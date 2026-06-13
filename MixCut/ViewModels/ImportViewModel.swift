@@ -537,6 +537,14 @@ final class ImportViewModel {
             segment.keywords = aiSeg.keywords
             segment.video = video
             context.insert(segment)
+            // 帧化：把秒边界 round 成帧号作为真相（永不差帧）
+            if video.fps > 0 {
+                segment.setFrameRange(
+                    startFrame: FrameTime.frame(seconds: adjustedStart, fps: video.fps),
+                    endFrame: FrameTime.frame(seconds: adjustedEnd, fps: video.fps),
+                    fps: video.fps
+                )
+            }
             createdSegments.append(segment)
         }
 
@@ -680,7 +688,11 @@ final class ImportViewModel {
 
             if i > 0 {
                 let prev = segments[i - 1]
-                prev.endTime = seg.endTime
+                if let fps = prev.video?.fps, fps > 0 {
+                    prev.setFrameRange(startFrame: prev.startFrame, endFrame: seg.endFrame, fps: fps)
+                } else {
+                    prev.endTime = seg.endTime
+                }
                 prev.text = prev.text + seg.text
                 var kw = prev.keywords
                 for k in seg.keywords where !kw.contains(k) { kw.append(k) }
@@ -689,7 +701,11 @@ final class ImportViewModel {
                 segments.remove(at: i)
             } else if segments.count > 1 {
                 let next = segments[1]
-                next.startTime = seg.startTime
+                if let fps = next.video?.fps, fps > 0 {
+                    next.setFrameRange(startFrame: seg.startFrame, endFrame: next.endFrame, fps: fps)
+                } else {
+                    next.startTime = seg.startTime
+                }
                 next.text = seg.text + next.text
                 context.delete(seg)
                 segments.remove(at: 0)

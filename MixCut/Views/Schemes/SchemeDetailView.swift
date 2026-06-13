@@ -380,16 +380,16 @@ struct StoryboardTimeRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // IN 调整
+            // IN 调整（±1 帧）
             miniAdjustButton(icon: "minus") {
-                viewModel.adjustStartTime(for: segment, by: -0.1)
+                viewModel.adjustStartFrame(for: segment, by: -1)
             }
-            Text(String(format: "%.1f", segment.startTime))
+            Text(FrameTime.timecode(frame: segment.startFrame, fps: segment.video?.fps ?? 30))
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 28, alignment: .center)
+                .frame(width: 52, alignment: .center)
             miniAdjustButton(icon: "plus") {
-                viewModel.adjustStartTime(for: segment, by: 0.1)
+                viewModel.adjustStartFrame(for: segment, by: 1)
             }
 
             // 分隔
@@ -398,16 +398,16 @@ struct StoryboardTimeRow: View {
                 .foregroundStyle(.quaternary)
                 .padding(.horizontal, 2)
 
-            // OUT 调整
+            // OUT 调整（±1 帧）
             miniAdjustButton(icon: "minus") {
-                viewModel.adjustEndTime(for: segment, by: -0.1)
+                viewModel.adjustEndFrame(for: segment, by: -1)
             }
-            Text(String(format: "%.1f", segment.endTime))
+            Text(FrameTime.timecode(frame: segment.endFrame, fps: segment.video?.fps ?? 30))
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(.secondary)
-                .frame(width: 28, alignment: .center)
+                .frame(width: 52, alignment: .center)
             miniAdjustButton(icon: "plus") {
-                viewModel.adjustEndTime(for: segment, by: 0.1)
+                viewModel.adjustEndFrame(for: segment, by: 1)
             }
         }
         .frame(maxWidth: .infinity)

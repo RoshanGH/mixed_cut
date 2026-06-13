@@ -48,8 +48,12 @@ enum PositionType: String, Codable, CaseIterable, Identifiable {
 final class Segment: Identifiable {
     @Attribute(.unique) var id: UUID
     var segmentIndex: String   // seg_001 格式
-    var startTime: Double
-    var endTime: Double
+    // 边界「真相」：以帧号存储（永不差帧）。startTime/endTime 是 = 帧号/fps 的精确派生缓存，
+    // 仅供显示和未改造的读取点用，编辑一律走 setFrameRange / adjust*Frame。
+    var startFrame: Int = 0
+    var endFrame: Int = 0
+    var startTime: Double      // 派生缓存：FrameTime.seconds(frame: startFrame, fps: video.fps)
+    var endTime: Double        // 派生缓存：FrameTime.seconds(frame: endFrame, fps: video.fps)
     var text: String
     var semanticTypesData: Data?  // [SemanticType] 编码存储（可多个）
     var positionType: PositionType
@@ -123,6 +127,28 @@ final class Segment: Identifiable {
     /// 时长（保证非负）
     var duration: Double {
         max(0, endTime - startTime)
+    }
+
+    /// 分镜帧数
+    var frameCount: Int { max(0, endFrame - startFrame) }
+
+    /// 以帧号为准设置边界，并同步秒缓存（fps 来自所属视频）。所有边界编辑都应走这里。
+    func setFrameRange(startFrame: Int, endFrame: Int, fps: Double) {
+        self.startFrame = startFrame
+        self.endFrame = endFrame
+        self.startTime = FrameTime.seconds(frame: startFrame, fps: fps)
+        self.endTime = FrameTime.seconds(frame: endFrame, fps: fps)
+    }
+
+    /// 用所属视频的 fps，把当前秒边界 round 成帧号回填（迁移/兜底用）
+    func backfillFramesFromSeconds() {
+        let fps = video?.fps ?? 0
+        guard fps > 0 else { return }
+        startFrame = FrameTime.frame(seconds: startTime, fps: fps)
+        endFrame = FrameTime.frame(seconds: endTime, fps: fps)
+        // 同步秒缓存到精确帧栅格点
+        startTime = FrameTime.seconds(frame: startFrame, fps: fps)
+        endTime = FrameTime.seconds(frame: endFrame, fps: fps)
     }
 
     /// 关键词

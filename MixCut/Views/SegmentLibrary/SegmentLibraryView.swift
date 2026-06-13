@@ -692,7 +692,9 @@ struct SegmentInlinePlayer: View {
 
     @State private var player: AVPlayer?
     @State private var isPlaying = false
+    @State private var isFrozen = false        // 播放到结尾后定格在最后一帧（非 nil player，但已暂停）
     @State private var timeObserver: Any?
+    @State private var endNotifObserver: NSObjectProtocol?  // 到达 forwardPlaybackEndTime / 视频自然播完 → 定格
     @State private var currentTime: Double = 0
     @State private var isHovering = false
     @State private var hoverTimer: Timer?
@@ -718,7 +720,7 @@ struct SegmentInlinePlayer: View {
     var body: some View {
         // 性能关键：默认只渲染缩略图 + 时长（最轻量），hover/播放才组装完整 ZStack
         Group {
-            if !isHovering && !isPlaying {
+            if !isHovering && !isPlaying && !isFrozen {
                 // 静态轻量态：只有缩略图 + 时长角标
                 thumbnailView
                     .overlay(alignment: .bottomTrailing) {
@@ -753,7 +755,7 @@ struct SegmentInlinePlayer: View {
         // 也要能响应微调（adjustStartTime/adjustEndTime）触发的 requestPlay，否则点加减不播放。
         // play() 会把 isPlaying 置 true，body 随即切到 playerUI。
         .onChange(of: viewModel.playingSegmentID) { _, newID in
-            if newID != segment.id && isPlaying {
+            if newID != segment.id && (isPlaying || isFrozen) {
                 stopPlayback()
             }
         }
@@ -768,14 +770,14 @@ struct SegmentInlinePlayer: View {
     @ViewBuilder
     private var playerUI: some View {
         ZStack {
-            if isPlaying, let player {
+            if (isPlaying || isFrozen), let player {
                 PlayerRepresentable(player: player)
                     .aspectRatio(videoAspectRatio, contentMode: .fit)   // F11/F12: 横屏视频在 9:16 容器内留黑边，不裁切
             } else {
                 thumbnailView
             }
 
-            if isHovering && !isPlaying {
+            if isHovering && !isPlaying && !isFrozen {
                 Color.black.opacity(0.15)
                 Image(systemName: "play.fill")
                     .font(.system(size: 20))
@@ -815,7 +817,7 @@ struct SegmentInlinePlayer: View {
             } else {
                 hoverTimer?.invalidate()
                 hoverTimer = nil
-                if isPlaying {
+                if isPlaying || isFrozen {
                     stopPlayback()
                     viewModel.stopCurrentPlayback()
                 }
@@ -862,26 +864,68 @@ struct SegmentInlinePlayer: View {
               FileManager.default.fileExists(atPath: videoPath) else { return }
 
         let item = AVPlayerItem(url: URL(fileURLWithPath: videoPath))
+
+        // 半帧偏移：零容差 seek 会落到「pts ≤ 目标时间」的那一帧。若分镜起点 startTime
+        // 比目标帧真实 pts 早哪怕几微秒（编码后帧 pts 常为非整值），就会掉到前一帧，
+        // 开头多出上个镜头的尾帧。把目标时间挪到帧正中央 (startTime + 0.5/fps) 即可稳定命中目标帧。
+        let fps = segment.video?.fps ?? 0
+        let halfFrame = fps > 0 ? 0.5 / fps : 0.01
+
+        // 关键：让播放器在「本段最后一帧」处物理停住，绝不越过 endTime 冲进下一个镜头。
+        // 这样就不需要「越界后 pause+seek 回退」——那个回退正是肉眼看到的「往后闪一下又回来」。
+        // endTime 是下一段起点(exclusive)，本段最后一帧落在 endTime 前半帧。
+        item.forwardPlaybackEndTime = CMTime(seconds: max(0, endTime - halfFrame), preferredTimescale: 600)
+
         let avPlayer = AVPlayer(playerItem: item)
+        avPlayer.actionAtItemEnd = .pause   // 到结尾停住，不回到开头、不循环
         self.player = avPlayer
         isPlaying = true
+        isFrozen = false
 
-        let startCMTime = CMTime(seconds: startTime, preferredTimescale: 600)
+        let startCMTime = CMTime(seconds: startTime + halfFrame, preferredTimescale: 600)
         avPlayer.seek(to: startCMTime, toleranceBefore: .zero, toleranceAfter: .zero)
 
-        let endCMTime = CMTime(seconds: endTime, preferredTimescale: 600)
-        let interval = CMTime(seconds: 0.1, preferredTimescale: 600)
+        // 进度更新（periodic，仅刷新进度条，不做结束判断）
+        let interval = CMTime(seconds: 0.05, preferredTimescale: 600)
         timeObserver = avPlayer.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [self] time in
             currentTime = CMTimeGetSeconds(time)
-            if time >= endCMTime {
-                Task { @MainActor in
-                    stopPlayback()
-                    viewModel.stopCurrentPlayback()
-                }
-            }
+        }
+
+        // 到达 forwardPlaybackEndTime（本段结尾）或视频自然播完，都会发这个通知 → 统一定格。
+        // 不再用 boundary 观察者：boundary 是「越过后」才触发，必然先冲过头。
+        endNotifObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in freezeAtLastFrame(endTime: endTime) }
         }
 
         avPlayer.play()
+    }
+
+    /// 播放到分镜结尾：暂停并定格在分镜最后一帧（endTime 前半帧），不回缩略图。
+    /// 便于肉眼确认最后一帧是否已串入下一个镜头（验证 endTime 边界是否切晚了）。
+    private func freezeAtLastFrame(endTime: Double) {
+        guard !isFrozen else { return }   // 防重入：forwardPlaybackEndTime 到点与自然播完通知可能都触发
+        // 移除所有观察者，防止重复/继续触发
+        if let observer = timeObserver, let p = player { p.removeTimeObserver(observer) }
+        timeObserver = nil
+        if let no = endNotifObserver { NotificationCenter.default.removeObserver(no) }
+        endNotifObserver = nil
+        guard let p = player else { return }
+        p.pause()
+        // endTime 是下一段起点(exclusive)，本段最后一帧落在 endTime 前半帧
+        let fps = segment.video?.fps ?? 0
+        let halfFrame = fps > 0 ? 0.5 / fps : 0.01
+        let lastFrame = CMTime(seconds: max(0, endTime - halfFrame), preferredTimescale: 600)
+        p.seek(to: lastFrame, toleranceBefore: .zero, toleranceAfter: .zero)
+        currentTime = endTime
+        isPlaying = false
+        isFrozen = true
+        // 关键：不调 viewModel.stopCurrentPlayback()。那会把 playingSegmentID 置 nil，
+        // 反过来触发本视图 onChange(playingSegmentID) → stopPlayback() 把定格画面清掉回封面。
+        // 保留 playingSegmentID = 本段，定格留存；hover 到别的分镜时才会被清理。
     }
 
     private func stopPlayback() {
@@ -889,9 +933,12 @@ struct SegmentInlinePlayer: View {
             p.removeTimeObserver(observer)
         }
         timeObserver = nil
+        if let no = endNotifObserver { NotificationCenter.default.removeObserver(no) }
+        endNotifObserver = nil
         player?.pause()
         player = nil
         isPlaying = false
+        isFrozen = false
         currentTime = 0
     }
 }
@@ -1123,53 +1170,52 @@ struct BoundaryAdjustRow: View {
         case start, end
     }
 
-    @State private var startTimeText: String = ""
-    @State private var endTimeText: String = ""
+    @State private var startText: String = ""
+    @State private var endText: String = ""
     @FocusState private var focusedField: TimeField?
 
+    private var fps: Double { segment.video?.fps ?? 30 }
+    private func timecode(_ frame: Int) -> String { FrameTime.timecode(frame: frame, fps: fps) }
+
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             // IN 时间组
-            HStack(spacing: 2) {
+            HStack(spacing: 1) {
                 adjustButton(systemName: "minus") {
-                    viewModel.adjustStartTime(for: segment, by: -0.1)
+                    viewModel.adjustStartFrame(for: segment, by: -1)
                 }
-                TextField("", text: $startTimeText)
+                TextField("", text: $startText)
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(focusedField == .start ? .primary : .secondary)
                     .focused($focusedField, equals: .start)
-                    .onSubmit { commitStartTime() }
-                    .frame(width: 32, height: 16)
+                    .onSubmit { commitStart() }
+                    .frame(width: 44, height: 16)
                     .background(focusedField == .start ? Color.accentColor.opacity(0.08) : .clear)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
                 adjustButton(systemName: "plus") {
-                    viewModel.adjustStartTime(for: segment, by: 0.1)
+                    viewModel.adjustStartFrame(for: segment, by: 1)
                 }
             }
 
-            Text("–")
-                .font(.system(size: 9))
-                .foregroundStyle(.quaternary)
-
             // OUT 时间组
-            HStack(spacing: 2) {
+            HStack(spacing: 1) {
                 adjustButton(systemName: "minus") {
-                    viewModel.adjustEndTime(for: segment, by: -0.1)
+                    viewModel.adjustEndFrame(for: segment, by: -1)
                 }
-                TextField("", text: $endTimeText)
+                TextField("", text: $endText)
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                     .textFieldStyle(.plain)
                     .multilineTextAlignment(.center)
                     .foregroundStyle(focusedField == .end ? .primary : .secondary)
                     .focused($focusedField, equals: .end)
-                    .onSubmit { commitEndTime() }
-                    .frame(width: 32, height: 16)
+                    .onSubmit { commitEnd() }
+                    .frame(width: 44, height: 16)
                     .background(focusedField == .end ? Color.accentColor.opacity(0.08) : .clear)
                     .clipShape(RoundedRectangle(cornerRadius: 3))
                 adjustButton(systemName: "plus") {
-                    viewModel.adjustEndTime(for: segment, by: 0.1)
+                    viewModel.adjustEndFrame(for: segment, by: 1)
                 }
             }
 
@@ -1213,49 +1259,47 @@ struct BoundaryAdjustRow: View {
             .menuStyle(.borderlessButton)
             .fixedSize()
         }
-        .onChange(of: focusedField) { oldField, _ in
-            // 焦点离开时自动保存
-            if oldField == .start { commitStartTime() }
-            if oldField == .end { commitEndTime() }
+        .onChange(of: focusedField) { oldField, newField in
+            // 进入编辑显示帧号（便于精确输入）；离开时提交并恢复时间码显示
+            if newField == .start { startText = "\(segment.startFrame)" }
+            if newField == .end { endText = "\(segment.endFrame)" }
+            if oldField == .start { commitStart() }
+            if oldField == .end { commitEnd() }
         }
         .onAppear {
-            startTimeText = String(format: "%.1f", segment.startTime)
-            endTimeText = String(format: "%.1f", segment.endTime)
+            startText = timecode(segment.startFrame)
+            endText = timecode(segment.endFrame)
         }
-        .onChange(of: segment.startTime) { _, newVal in
-            if focusedField != .start {
-                startTimeText = String(format: "%.1f", newVal)
-            }
+        .onChange(of: segment.startFrame) { _, newVal in
+            if focusedField != .start { startText = timecode(newVal) }
         }
-        .onChange(of: segment.endTime) { _, newVal in
-            if focusedField != .end {
-                endTimeText = String(format: "%.1f", newVal)
-            }
+        .onChange(of: segment.endFrame) { _, newVal in
+            if focusedField != .end { endText = timecode(newVal) }
         }
     }
 
-    private func commitStartTime() {
-        guard let newValue = Double(startTimeText), newValue >= 0 else { return }
-        // 不允许开始时间 >= 结束时间
-        guard newValue < segment.endTime else {
-            startTimeText = String(format: "%.2f", segment.startTime)
+    /// 提交开始帧（输入框输入的是帧号整数）
+    private func commitStart() {
+        guard let f = Int(startText.trimmingCharacters(in: .whitespaces)), f >= 0 else {
+            startText = timecode(segment.startFrame)
             return
         }
-        if abs(newValue - segment.startTime) > 0.01 {
-            viewModel.setStartTime(for: segment, to: newValue)
+        if f != segment.startFrame {
+            viewModel.setStartFrame(for: segment, to: f)
         }
+        startText = timecode(segment.startFrame)
     }
 
-    private func commitEndTime() {
-        guard let newValue = Double(endTimeText), newValue > 0 else { return }
-        // 不允许结束时间 <= 开始时间
-        guard newValue > segment.startTime else {
-            endTimeText = String(format: "%.2f", segment.endTime)
+    /// 提交结束帧（输入框输入的是帧号整数）
+    private func commitEnd() {
+        guard let f = Int(endText.trimmingCharacters(in: .whitespaces)), f > 0 else {
+            endText = timecode(segment.endFrame)
             return
         }
-        if abs(newValue - segment.endTime) > 0.01 {
-            viewModel.setEndTime(for: segment, to: newValue)
+        if f != segment.endFrame {
+            viewModel.setEndFrame(for: segment, to: f)
         }
+        endText = timecode(segment.endFrame)
     }
 
     private func adjustButton(systemName: String, action: @escaping () -> Void) -> some View {
@@ -1263,7 +1307,7 @@ struct BoundaryAdjustRow: View {
             Image(systemName: systemName)
                 .font(.system(size: 7, weight: .heavy))
                 .foregroundStyle(.tertiary)
-                .frame(width: 18, height: 18)
+                .frame(width: 14, height: 14)
                 .background(.secondary.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .overlay(

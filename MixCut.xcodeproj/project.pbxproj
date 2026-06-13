@@ -13,6 +13,8 @@
 		1A613852B34EE99F8438AAA2 /* NarrativeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = DC350939E30230D56399E112 /* NarrativeModels.swift */; };
 		1BF0326E3E9F3C597920E4D0 /* InlineBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55AF6B2F5FEBD2593D995456 /* InlineBanner.swift */; };
 		1D0D7A9086A5EF0295451C24 /* NarrativeStructureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53F751C5D0FD58200E4E3FB2 /* NarrativeStructureEngine.swift */; };
+		B0D1A2E3C4F5061728394A5B /* BoundaryAlignmentEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C2E3D4F5061728394A5B6C /* BoundaryAlignmentEngine.swift */; };
+		C1D2E3F4A5B60718293A4B5C /* FrameTime.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F4A5B6C70819203A4B5D /* FrameTime.swift */; };
 		1D93F909F2863466F91445A0 /* ProjectOverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B99051CE888828756AFF18E /* ProjectOverviewView.swift */; };
 		23944C9C060858AC2E094047 /* SchemeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9747A5EC55B7AB12BE78AA02 /* SchemeViewModel.swift */; };
 		24AFC03D4A4D6DBEADD606EB /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 366DA1F6DE45567983ECE0A4 /* OnboardingView.swift */; };
@@ -101,6 +103,8 @@
 		4ACE2ED824CD1A03D8F12A62 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		510B36E7476585C9BB4D0DC4 /* SchemeDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeDetailView.swift; sourceTree = "<group>"; };
 		53F751C5D0FD58200E4E3FB2 /* NarrativeStructureEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NarrativeStructureEngine.swift; path = Sources/MixCutCore/NarrativeStructureEngine.swift; sourceTree = "<group>"; };
+		A1C2E3D4F5061728394A5B6C /* BoundaryAlignmentEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BoundaryAlignmentEngine.swift; path = Sources/MixCutCore/BoundaryAlignmentEngine.swift; sourceTree = "<group>"; };
+		D2E3F4A5B6C70819203A4B5D /* FrameTime.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = FrameTime.swift; path = Sources/MixCutCore/FrameTime.swift; sourceTree = "<group>"; };
 		55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentPickerDrawer.swift; sourceTree = "<group>"; };
 		55AF6B2F5FEBD2593D995456 /* InlineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineBanner.swift; sourceTree = "<group>"; };
 		56B4B3C845C059F96ABA5AF1 /* OpenAICompatibleClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICompatibleClient.swift; sourceTree = "<group>"; };
@@ -273,6 +277,8 @@
 			children = (
 				DC350939E30230D56399E112 /* NarrativeModels.swift */,
 				53F751C5D0FD58200E4E3FB2 /* NarrativeStructureEngine.swift */,
+				A1C2E3D4F5061728394A5B6C /* BoundaryAlignmentEngine.swift */,
+				D2E3F4A5B6C70819203A4B5D /* FrameTime.swift */,
 				0FA1B2C3D4E5F60718293A4C /* OrphanFileFinder.swift */,
 			);
 			name = MixCutCore;
@@ -586,6 +592,8 @@
 				4073A3718CC9FAB5EE400BB7 /* UpdateChecker.swift in Sources */,
 				1A613852B34EE99F8438AAA2 /* NarrativeModels.swift in Sources */,
 				1D0D7A9086A5EF0295451C24 /* NarrativeStructureEngine.swift in Sources */,
+				B0D1A2E3C4F5061728394A5B /* BoundaryAlignmentEngine.swift in Sources */,
+				C1D2E3F4A5B60718293A4B5C /* FrameTime.swift in Sources */,
 				0FA1B2C3D4E5F60718293A4B /* OrphanFileFinder.swift in Sources */,
 				49505D7B9C93AB97795DAD97 /* PendingDeletionCenter.swift in Sources */,
 			);
@@ -612,7 +620,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.7;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -735,7 +743,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.3.7;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

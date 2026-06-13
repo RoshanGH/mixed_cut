@@ -115,6 +115,8 @@ struct MixCutApp: App {
             Self.fixMissingSemanticTypes(container: modelContainer)
             // 清洗已有台词中的乱码和多余空格
             Self.cleanExistingTranscripts(container: modelContainer)
+            // 帧化迁移：把现有分镜的秒边界回填成帧号
+            Self.backfillSegmentFrames(container: modelContainer)
             // 迁移旧版数据：Video.project → ProjectVideo 多对多
             Self.migrateToProjectVideoRelation(container: modelContainer)
             // 从磁盘恢复丢失的项目和视频（schema 变更后数据库被清空时）
@@ -279,6 +281,29 @@ struct MixCutApp: App {
         }
         sqlite3_finalize(updateStmt)
 
+        UserDefaults.standard.set(true, forKey: fixKey)
+    }
+
+    /// 帧化迁移：现有分镜以秒存边界，按各自视频 fps 回填帧号（startFrame/endFrame）。
+    /// 一次性执行；之后新建分镜直接走帧化创建。endFrame==0 视为未帧化。
+    private static func backfillSegmentFrames(container: ModelContainer) {
+        let fixKey = "didBackfillSegmentFrames_v1"
+        if UserDefaults.standard.bool(forKey: fixKey) { return }
+
+        let context = container.mainContext
+        guard let segments = try? context.fetch(FetchDescriptor<Segment>()) else { return }
+
+        var fixed = 0
+        for seg in segments {
+            if seg.endFrame != 0 { continue }   // 已帧化
+            guard let fps = seg.video?.fps, fps > 0 else { continue }
+            seg.backfillFramesFromSeconds()
+            fixed += 1
+        }
+        if fixed > 0 {
+            try? context.save()
+            MixLog.info(" 帧化迁移：已为 \(fixed) 个分镜回填帧号")
+        }
         UserDefaults.standard.set(true, forKey: fixKey)
     }
 

@@ -8,6 +8,7 @@ struct BatchExportItem: Sendable, Identifiable {
     let startTime: Double
     let endTime: Double
     let sequenceNumber: Int        // 分镜在所属视频内的编号（1-based）
+    var fps: Double = 0            // 帧率：>0 时按帧精确切，0 退回按秒
 
     /// 默认文件名：{编号}_{原视频名}.mp4
     var fileName: String {
@@ -82,6 +83,7 @@ actor BatchSegmentExportService {
                     from: item.sourcePath,
                     start: item.startTime,
                     end: item.endTime,
+                    fps: item.fps,
                     to: outputURL.path
                 )
                 succeeded += 1

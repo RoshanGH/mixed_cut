@@ -50,10 +50,14 @@ actor SceneDetectionService {
     // MARK: - 场景切换检测
 
     /// 使用 FFmpeg scene filter 检测镜头切换点
+    ///
+    /// 用 `metadata=print` 而非 `showinfo`：showinfo 不会输出 scene 分数，
+    /// 只有 metadata=print 才会打印 `lavfi.scene_score`（画面变化强度），
+    /// 边界优化需要这个强度来区分「强切镜」与「轻微变化」。
     func detectScenes(in videoPath: String, threshold: Double = 0.3) async throws -> [SceneBoundary] {
         let args = [
             "-i", videoPath,
-            "-vf", "select='gt(scene,\(threshold))',showinfo",
+            "-vf", "select='gt(scene,\(threshold))',metadata=print",
             "-f", "null",
             "-"
         ]
@@ -210,24 +214,34 @@ actor SceneDetectionService {
     // MARK: - 解析方法
 
     /// 解析场景边界
+    ///
+    /// metadata=print 的输出每个切换点占两行（顺序固定：先时间行，后分数行）：
+    /// ```
+    /// [Parsed_metadata_1 @ 0x...] frame:0    pts:130560  pts_time:5.44
+    /// [Parsed_metadata_1 @ 0x...] lavfi.scene_score=0.412376
+    /// ```
+    /// 因此用 pendingTime 暂存时间行，遇到 scene_score 行时配对生成 SceneBoundary。
     private func parseSceneBoundaries(from output: String) -> [SceneBoundary] {
         var boundaries: [SceneBoundary] = []
+        var pendingTime: Double?
         let lines = output.components(separatedBy: "\n")
 
         for line in lines {
-            guard line.contains("showinfo") else { continue }
-
             if let range = line.range(of: #"pts_time:\s*([\d.]+)"#, options: .regularExpression) {
-                let match = String(line[range])
-                let timeStr = match.replacingOccurrences(of: "pts_time:", with: "").trimmingCharacters(in: .whitespaces)
-                if let time = Double(timeStr) {
-                    var confidence = 0.5
-                    if let scoreRange = line.range(of: #"scene_score=([\d.]+)"#, options: .regularExpression) {
-                        let scoreStr = String(line[scoreRange])
-                            .replacingOccurrences(of: "scene_score=", with: "")
-                        confidence = Double(scoreStr) ?? 0.5
-                    }
-                    boundaries.append(SceneBoundary(time: time, confidence: confidence))
+                let timeStr = String(line[range])
+                    .replacingOccurrences(of: "pts_time:", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                pendingTime = Double(timeStr)
+            }
+
+            if let scoreRange = line.range(of: #"lavfi\.scene_score=([\d.]+)"#, options: .regularExpression) {
+                let scoreStr = String(line[scoreRange])
+                    .replacingOccurrences(of: "lavfi.scene_score=", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                if let time = pendingTime {
+                    let score = min(1.0, Double(scoreStr) ?? 0.5)
+                    boundaries.append(SceneBoundary(time: time, confidence: score))
+                    pendingTime = nil
                 }
             }
         }

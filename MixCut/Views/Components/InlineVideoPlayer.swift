@@ -54,6 +54,10 @@ struct InlineVideoPlayer: View {
                 if player.timeControlStatus == .playing {
                     player.pause()
                 } else {
+                    // 若已定格在结尾，先回到开头再播
+                    if duration > 0 && currentTime >= duration - 0.05 {
+                        player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                    }
                     player.play()
                 }
             } label: {
@@ -180,13 +184,13 @@ struct InlineVideoPlayer: View {
 
         newPlayer.play()
 
-        // 播放结束自动停止
+        // 播放结束：定格在最后一帧（不回缩略图），便于确认末帧画面。再次点播放会从头重播。
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: newPlayer.currentItem,
             queue: .main
         ) { _ in
-            stopPlayback()
+            player?.pause()
         }
     }
 

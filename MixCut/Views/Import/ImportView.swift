@@ -280,6 +280,52 @@ struct ImportedVideoCard: View {
         return sentences.enumerated().map { (index: $0.offset + 1, text: $0.element, time: "") }
     }
 
+    /// 是否有可用的 ASR 时间戳（决定复制结果是否带时间码、Toast 文案如何措辞）
+    private var hasASRTimecode: Bool {
+        !video.asrWords.isEmpty || !video.asrSentences.isEmpty
+    }
+
+    /// 一键复制用的「带起止时间」全文台词（ASR 风格：每行 `[起 - 止] 文本`）。
+    /// 有时间戳数据时输出 `[0:00.0 - 0:02.3] 句子`；无时间戳（纯 transcript 兜底）时
+    /// 只输出每句一行的纯文本，避免给出错误的 0:00 时间。
+    private var transcriptWithTimeForCopy: String {
+        if hasASRTimecode {
+            let result = TranscriptionResult(
+                text: video.transcript ?? "",
+                words: video.asrWords,
+                rawSentences: video.asrSentences,
+                language: "zh",
+                duration: video.duration
+            )
+            let lines = result.sentences.map { s in
+                "[\(Self.copyTimeLabel(s.startTime)) - \(Self.copyTimeLabel(s.endTime))] \(s.text)"
+            }
+            return lines.joined(separator: "\n")
+        }
+
+        // 兜底：仅有纯文本，无时间戳 → 复用界面分句逻辑，每句一行
+        return cachedSentences.map(\.text).joined(separator: "\n")
+    }
+
+    /// 把全文台词写入系统剪贴板并弹 Toast。按钮与右键菜单共用，避免逻辑重复。
+    private func copyTranscript() {
+        let text = transcriptWithTimeForCopy
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        let suffix = hasASRTimecode ? "（含时间码）" : ""
+        ToastCenter.shared.show("已复制 \(cachedSentences.count) 句台词\(suffix)", icon: "doc.on.doc.fill")
+    }
+
+    /// 复制台词用的时间格式：`分:秒.十分位`（如 `0:02.3`、`1:05.8`）。
+    /// 注：`%04.1f` 的宽度 4 = 两位整数 + 小数点 + 一位小数（即 `SS.S`），printf 自带四舍五入。
+    private static func copyTimeLabel(_ t: Double) -> String {
+        let total = max(0, t)
+        let minutes = Int(total) / 60
+        let seconds = total - Double(minutes * 60)
+        return String(format: "%d:%04.1f", minutes, seconds)
+    }
+
     /// 检测 ASR 输出粒度是否异常（基于 cachedSentences）
     private func computeIsASRAbnormal(_ sentences: [(index: Int, text: String, time: String)]) -> Bool {
         guard video.status == .completed else { return false }
@@ -327,6 +373,14 @@ struct ImportedVideoCard: View {
                 ToastCenter.shared.show("文件名已复制", icon: "doc.on.doc.fill")
             } label: {
                 Label("复制文件名", systemImage: "doc.on.doc")
+            }
+
+            if !cachedSentences.isEmpty {
+                Button {
+                    copyTranscript()
+                } label: {
+                    Label(hasASRTimecode ? "复制台词（含时间码）" : "复制台词", systemImage: "text.quote")
+                }
             }
 
             Button {
@@ -504,6 +558,27 @@ struct ImportedVideoCard: View {
                 }
 
                 Spacer()
+
+                // 一键复制全部台词（带起止时间，ASR 风格）
+                if !cachedSentences.isEmpty {
+                    Button {
+                        copyTranscript()
+                    } label: {
+                        HStack(spacing: 2) {
+                            Image(systemName: "doc.on.doc")
+                                .font(.system(size: 8, weight: .bold))
+                            Text("复制台词")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.12))
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("复制全部台词（含起止时间）")
+                }
 
                 // ASR 异常时显示「重新识别」入口
                 if cachedIsASRAbnormal, let onRetryASR {

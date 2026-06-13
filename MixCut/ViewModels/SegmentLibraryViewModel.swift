@@ -296,31 +296,33 @@ final class SegmentLibraryViewModel {
 
     // MARK: - 边界微调
 
-    /// 调整开始时间（+/- step），调整后直接播放到对应时间
-    func adjustStartTime(for segment: Segment, by step: Double) {
-        let newStart = max(0, segment.startTime + step)
-        guard newStart < segment.endTime - 0.2 else { return }
-        modelContext?.undoManager?.setActionName("修改时间")
-        segment.startTime = newStart
+    /// 调整开始帧（±frames），调整后从新起点播放预览
+    func adjustStartFrame(for segment: Segment, by frames: Int) {
+        guard let fps = segment.video?.fps, fps > 0 else { return }
+        let newStart = max(0, segment.startFrame + frames)
+        guard newStart < segment.endFrame - 1 else { return }
+        modelContext?.undoManager?.setActionName("修改边界")
+        segment.setFrameRange(startFrame: newStart, endFrame: segment.endFrame, fps: fps)
         reExtractText(for: segment)
         modelContext?.safeSave()
 
-        // 直接从新开始时间播放 2 秒
-        requestPlay(segment: segment, from: newStart, to: min(newStart + 2, segment.endTime))
+        let toFrame = min(newStart + Int((2 * fps).rounded()), segment.endFrame)
+        requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps))
     }
 
-    /// 调整结束时间（+/- step），调整后直接播放到对应时间
-    func adjustEndTime(for segment: Segment, by step: Double) {
-        let videoDuration = segment.video?.duration ?? Double.greatestFiniteMagnitude
-        let newEnd = min(videoDuration, segment.endTime + step)
-        guard newEnd > segment.startTime + 0.2 else { return }
-        modelContext?.undoManager?.setActionName("修改时间")
-        segment.endTime = newEnd
+    /// 调整结束帧（±frames），调整后播放到结束
+    func adjustEndFrame(for segment: Segment, by frames: Int) {
+        guard let fps = segment.video?.fps, fps > 0 else { return }
+        let maxFrame = segment.video.map { FrameTime.frame(seconds: $0.duration, fps: fps) } ?? Int.max
+        let newEnd = min(maxFrame, segment.endFrame + frames)
+        guard newEnd > segment.startFrame + 1 else { return }
+        modelContext?.undoManager?.setActionName("修改边界")
+        segment.setFrameRange(startFrame: segment.startFrame, endFrame: newEnd, fps: fps)
         reExtractText(for: segment)
         modelContext?.safeSave()
 
-        // 从结束时间前 1 秒播放到结束
-        requestPlay(segment: segment, from: max(segment.startTime, newEnd - 1), to: newEnd)
+        let fromFrame = max(segment.startFrame, newEnd - Int(fps.rounded()))
+        requestPlay(segment: segment, from: FrameTime.seconds(frame: fromFrame, fps: fps), to: segment.endTime)
     }
 
     /// 根据当前时间范围重新从 ASR 提取台词（中心点匹配，避免跨段重复）
@@ -337,27 +339,31 @@ final class SegmentLibraryViewModel {
         }
     }
 
-    /// 直接设置开始时间
-    func setStartTime(for segment: Segment, to newStart: Double) {
+    /// 直接设置开始帧（输入框提交帧号）
+    func setStartFrame(for segment: Segment, to newStart: Int) {
+        guard let fps = segment.video?.fps, fps > 0 else { return }
         let clamped = max(0, newStart)
-        guard clamped < segment.endTime - 0.2 else { return }
-        modelContext?.undoManager?.setActionName("修改时间")
-        segment.startTime = clamped
+        guard clamped < segment.endFrame - 1 else { return }
+        modelContext?.undoManager?.setActionName("修改边界")
+        segment.setFrameRange(startFrame: clamped, endFrame: segment.endFrame, fps: fps)
         reExtractText(for: segment)
         modelContext?.safeSave()
-        requestPlay(segment: segment, from: clamped, to: min(clamped + 2, segment.endTime))
+        let toFrame = min(clamped + Int((2 * fps).rounded()), segment.endFrame)
+        requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps))
     }
 
-    /// 直接设置结束时间
-    func setEndTime(for segment: Segment, to newEnd: Double) {
-        let videoDuration = segment.video?.duration ?? Double.greatestFiniteMagnitude
-        let clamped = min(videoDuration, newEnd)
-        guard clamped > segment.startTime + 0.2 else { return }
-        modelContext?.undoManager?.setActionName("修改时间")
-        segment.endTime = clamped
+    /// 直接设置结束帧（输入框提交帧号）
+    func setEndFrame(for segment: Segment, to newEnd: Int) {
+        guard let fps = segment.video?.fps, fps > 0 else { return }
+        let maxFrame = segment.video.map { FrameTime.frame(seconds: $0.duration, fps: fps) } ?? Int.max
+        let clamped = min(maxFrame, max(0, newEnd))
+        guard clamped > segment.startFrame + 1 else { return }
+        modelContext?.undoManager?.setActionName("修改边界")
+        segment.setFrameRange(startFrame: segment.startFrame, endFrame: clamped, fps: fps)
         reExtractText(for: segment)
         modelContext?.safeSave()
-        requestPlay(segment: segment, from: max(segment.startTime, clamped - 1), to: clamped)
+        let fromFrame = max(segment.startFrame, clamped - Int(fps.rounded()))
+        requestPlay(segment: segment, from: FrameTime.seconds(frame: fromFrame, fps: fps), to: segment.endTime)
     }
 
     /// 删除分镜（延迟删除 + 撤销浮条：先隐藏，5 秒内可撤销，不撤才真删）

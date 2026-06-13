@@ -340,10 +340,25 @@ actor FFmpegRunner {
     ///   - VideoToolbox 硬件编码确保输出第一帧就是关键帧
     ///
     /// 这是 FFmpeg 文档推荐的「精确切片且无开头黑屏」标准方法。
+    /// 切出一段。传入 fps > 0 时用帧号精确切（trim start_frame/end_frame，永不差帧）；
+    /// fps == 0 时退回按秒切（兼容）。
     func cutSegment(from videoPath: String, start: Double, end: Double,
+                    fps: Double = 0,
                     to outputPath: String) async throws {
-        let videoFilter = "trim=start=\(String(format: "%.3f", start)):end=\(String(format: "%.3f", end)),setpts=PTS-STARTPTS"
-        let audioFilter = "atrim=start=\(String(format: "%.3f", start)):end=\(String(format: "%.3f", end)),asetpts=PTS-STARTPTS"
+        let videoFilter: String
+        let audioFilter: String
+        if fps > 0 {
+            let startFrame = Int((start * fps).rounded())
+            let endFrame = Int((end * fps).rounded())
+            // 音频无帧概念，用帧换算回的精确秒
+            let aStart = Double(startFrame) / fps
+            let aEnd = Double(endFrame) / fps
+            videoFilter = "trim=start_frame=\(startFrame):end_frame=\(endFrame),setpts=PTS-STARTPTS"
+            audioFilter = "atrim=start=\(String(format: "%.5f", aStart)):end=\(String(format: "%.5f", aEnd)),asetpts=PTS-STARTPTS"
+        } else {
+            videoFilter = "trim=start=\(String(format: "%.3f", start)):end=\(String(format: "%.3f", end)),setpts=PTS-STARTPTS"
+            audioFilter = "atrim=start=\(String(format: "%.3f", start)):end=\(String(format: "%.3f", end)),asetpts=PTS-STARTPTS"
+        }
 
         let args = [
             "-i", videoPath,

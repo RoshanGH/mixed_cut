@@ -28,7 +28,8 @@ struct BatchExportSheet: View {
                 sourceVideoName: stem,
                 startTime: seg.startTime,
                 endTime: seg.endTime,
-                sequenceNumber: numberProvider(seg)
+                sequenceNumber: numberProvider(seg),
+                fps: video.fps
             )
         }
     }
