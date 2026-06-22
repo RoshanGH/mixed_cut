@@ -468,6 +468,11 @@ struct SegmentCard: View, Equatable {
     @State private var leftHeight: CGFloat = 180
     @State private var showDeleteConfirm = false
 
+    // 行内编辑台词
+    @State private var isEditingText = false
+    @State private var draftText = ""
+    @FocusState private var textEditorFocused: Bool
+
     // Equatable：SwiftUI 看到这俩相等就跳过 body 评估
     // viewModel 引用不参与比较（Bindable 让其变化通过 @State observation 触发，跟 Equatable 跳过逻辑互不冲突）
     static func == (lhs: SegmentCard, rhs: SegmentCard) -> Bool {
@@ -475,6 +480,7 @@ struct SegmentCard: View, Equatable {
             && lhs.isChecked == rhs.isChecked
             && lhs.isSelectionMode == rhs.isSelectionMode
             && lhs.sequenceNumber == rhs.sequenceNumber
+            && lhs.segment.text == rhs.segment.text
             && lhs.segment.isVoiceLocked == rhs.segment.isVoiceLocked
             && lhs.segment.hasHardSubtitle == rhs.segment.hasHardSubtitle
             && lhs.segment.maskStyleRaw == rhs.segment.maskStyleRaw
@@ -553,6 +559,14 @@ struct SegmentCard: View, Equatable {
                 Label("复制台词", systemImage: "doc.on.doc")
             }
             .disabled(segment.text.isEmpty)
+
+            Button {
+                draftText = segment.text
+                isEditingText = true
+                textEditorFocused = true
+            } label: {
+                Label("编辑台词", systemImage: "square.and.pencil")
+            }
 
             if let videoPath = segment.video?.localPath, !videoPath.isEmpty {
                 Button {
@@ -686,12 +700,49 @@ struct SegmentCard: View, Equatable {
                     .font(.system(size: 8, design: .monospaced))
                     .foregroundStyle(.tertiary)
                 Spacer()
+                if isEditingText {
+                    Button { isEditingText = false } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("取消")
+                    Button { saveText() } label: {
+                        Image(systemName: "checkmark.circle.fill").font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.green).help("保存（⌘↩）")
+                } else if isHovering || isSelected {
+                    Button {
+                        draftText = segment.text
+                        isEditingText = true
+                        textEditorFocused = true
+                    } label: {
+                        Image(systemName: "square.and.pencil").font(.system(size: 11))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("编辑台词")
+                }
             }
             .padding(.horizontal, 8)
             .padding(.top, 8)
             .padding(.bottom, 4)
 
-            if segment.text.isEmpty {
+            if isEditingText {
+                TextEditor(text: $draftText)
+                    .font(.system(size: 11))
+                    .lineSpacing(3)
+                    .focused($textEditorFocused)
+                    .scrollContentBackground(.hidden)
+                    .background(Color(.textBackgroundColor).opacity(0.6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.accentColor.opacity(0.5), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 8)
+                    // ⌘↩ 保存
+                    .onKeyPress(.return, phases: .down) { press in
+                        if press.modifiers.contains(.command) { saveText(); return .handled }
+                        return .ignored
+                    }
+            } else if segment.text.isEmpty {
                 VStack(spacing: 4) {
                     Image(systemName: "waveform.slash")
                         .font(.system(size: 14))
@@ -714,6 +765,20 @@ struct SegmentCard: View, Equatable {
                 }
             }
         }
+    }
+
+    // MARK: - 台词编辑
+
+    /// 保存行内编辑的台词（全局共享，写回 Segment.text）
+    private func saveText() {
+        let trimmed = draftText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed != segment.text {
+            segment.text = trimmed
+            try? modelContext.save()
+            ToastCenter.shared.show("台词已更新", icon: "checkmark.circle.fill")
+        }
+        isEditingText = false
+        textEditorFocused = false
     }
 
     // MARK: - 遮挡应用
