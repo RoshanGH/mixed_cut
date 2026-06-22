@@ -75,6 +75,38 @@ final class Segment: Identifiable {
 
     var createdAt: Date
 
+    // MARK: - 配音改写相关（P1）
+
+    /// 是否"保留原声"（明星出镜镜头 = true，不可重配）
+    var isVoiceLocked: Bool = false
+
+    /// 原片该分镜是否有硬字幕，需要遮挡
+    var hasHardSubtitle: Bool = false
+
+    /// 遮挡矩形（归一化 0~1，原点左上），默认底部带状区
+    var maskX: Double = 0.0
+    var maskY: Double = 0.80
+    var maskWidth: Double = 1.0
+    var maskHeight: Double = 0.12
+
+    /// 遮挡样式（MaskStyle.rawValue：blur/solid/dim）
+    var maskStyleRaw: String = "blur"
+
+    /// 遮挡矩形（桥接四个归一化 Double）
+    var maskRect: SubtitleMaskRect {
+        get { SubtitleMaskRect(x: maskX, y: maskY, width: maskWidth, height: maskHeight) }
+        set {
+            let c = newValue.clamped()
+            maskX = c.x; maskY = c.y; maskWidth = c.width; maskHeight = c.height
+        }
+    }
+
+    /// 遮挡样式
+    var maskStyle: MaskStyle {
+        get { MaskStyle(rawValue: maskStyleRaw) ?? .blur }
+        set { maskStyleRaw = newValue.rawValue }
+    }
+
     /// 语义类型（支持多个）
     var semanticTypes: [SemanticType] {
         get {

@@ -462,6 +462,8 @@ struct SegmentCard: View, Equatable {
     let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
 
+    @Environment(\.modelContext) private var modelContext
+
     @State private var isHovering = false
     @State private var leftHeight: CGFloat = 180
     @State private var showDeleteConfirm = false
@@ -473,6 +475,13 @@ struct SegmentCard: View, Equatable {
             && lhs.isChecked == rhs.isChecked
             && lhs.isSelectionMode == rhs.isSelectionMode
             && lhs.sequenceNumber == rhs.sequenceNumber
+            && lhs.segment.isVoiceLocked == rhs.segment.isVoiceLocked
+            && lhs.segment.hasHardSubtitle == rhs.segment.hasHardSubtitle
+            && lhs.segment.maskStyleRaw == rhs.segment.maskStyleRaw
+            && lhs.segment.maskX == rhs.segment.maskX
+            && lhs.segment.maskY == rhs.segment.maskY
+            && lhs.segment.maskWidth == rhs.segment.maskWidth
+            && lhs.segment.maskHeight == rhs.segment.maskHeight
     }
 
     private var isSelected: Bool {
@@ -610,6 +619,17 @@ struct SegmentCard: View, Equatable {
                     }
                     .padding(6)
                 }
+                .overlay {
+                    if segment.hasHardSubtitle {
+                        SubtitleMaskOverlay(
+                            rect: Binding(
+                                get: { segment.maskRect },
+                                set: { segment.maskRect = $0 }      // 仅写内存，拖拽期间不保存
+                            ),
+                            onCommit: { try? modelContext.save() }   // 松手才保存一次
+                        )
+                    }
+                }
 
             // 标签行：语义类型 + 位置
             FlowLayout(spacing: 3) {
@@ -619,6 +639,23 @@ struct SegmentCard: View, Equatable {
                 PositionTypeTag(type: segment.positionType)
                 QualityBadge(score: segment.qualityScore)
             }
+
+            // 配音控件：保留原声 + 硬字幕遮挡开关
+            SegmentDubControls(
+                isVoiceLocked: Binding(
+                    get: { segment.isVoiceLocked },
+                    set: { segment.isVoiceLocked = $0; try? modelContext.save() }
+                ),
+                hasHardSubtitle: Binding(
+                    get: { segment.hasHardSubtitle },
+                    set: { segment.hasHardSubtitle = $0; try? modelContext.save() }
+                ),
+                maskStyle: Binding(
+                    get: { segment.maskStyle },
+                    set: { segment.maskStyle = $0; try? modelContext.save() }
+                ),
+                onApplyMaskToAll: { applyMaskToAllSegments(of: segment) }
+            )
 
             // 边界微调 —— hover 或选中时才显示（性能优化：含多 TextField+@FocusState，
             // 默认全部展示会让 50 个分镜卡片同步实例化 100+ 个交互控件）
@@ -677,6 +714,22 @@ struct SegmentCard: View, Equatable {
                 }
             }
         }
+    }
+
+    // MARK: - 遮挡应用
+
+    /// 把当前分镜的遮挡设置应用到同一视频的所有分镜
+    private func applyMaskToAllSegments(of source: Segment) {
+        guard let video = source.video else { return }
+        let rect = source.maskRect
+        let style = source.maskStyle
+        let hasSub = source.hasHardSubtitle
+        for seg in video.segments {
+            seg.hasHardSubtitle = hasSub
+            seg.maskRect = rect
+            seg.maskStyle = style
+        }
+        try? modelContext.save()
     }
 }
 

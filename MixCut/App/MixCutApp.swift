@@ -89,6 +89,8 @@ struct MixCutApp: App {
                 MixScheme.self,
                 SchemeSegment.self,
                 ProjectVideo.self,
+                DubVariant.self,
+                SegmentDub.self,
             ])
             // 一次性迁移：旧版用共享的 default.store（会被其它非沙盒 App 清库），
             // 现改用专属库 MixCut.store。仅当旧库确实是 MixCut 的数据时才搬迁。
@@ -137,6 +139,7 @@ struct MixCutApp: App {
                 Project.self, Video.self, Segment.self,
                 MixStrategy.self, MixScheme.self, SchemeSegment.self,
                 ProjectVideo.self,
+                DubVariant.self, SegmentDub.self,
             ])
             let memConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             do {
