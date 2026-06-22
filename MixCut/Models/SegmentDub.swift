@@ -13,6 +13,13 @@ final class SegmentDub {
     var audioDuration: Double = 0
     var atempoFactor: Double = 1.0       // 对齐变速系数（1.0=不变速）
     var freezePadFrames: Int = 0         // 末尾定格补帧数
+    var trailingSilence: Double = 0      // 末尾静音秒数（AlignmentPlan 落库）
+
+    // MARK: - 失效追踪字段（生成那一刻快照，供 DubStaleness 判定）
+    var generatedForStartFrame: Int = -1  // -1 表示从未生成
+    var generatedForEndFrame: Int = -1
+    var generatedForTextHash: String = ""
+
     var statusRaw: String = "pending"    // SegmentDubStatus.rawValue
 
     var status: SegmentDubStatus {

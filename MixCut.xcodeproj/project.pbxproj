@@ -45,6 +45,9 @@
 		81112CB6139D3423C3E2661A /* AIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A500B64AE226C6FD193ACCA /* AIProvider.swift */; };
 		81AF1ADB8AEFB3C76BB8DFD8 /* SchemeListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3AAD61DE3F8030CA28E687F /* SchemeListView.swift */; };
 		82E095A3E4F3C142310F12D0 /* AIAnalysisService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FC87F15412D30AE4E82B08F /* AIAnalysisService.swift */; };
+		A0C53D2B52CBD5A50C7ADDFB /* TTSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DF8DE894214A5E2C1B54FE0 /* TTSClient.swift */; };
+		C8D4E5F60A1B27C93E8D4A15 /* QwenTTSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3A7F2E91C4D58A30E6F1D2B /* QwenTTSClient.swift */; };
+		AB411BB69DBC4EBBB62E1984 /* DubAudioFinalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90381051D2F94A9AB912BC86 /* DubAudioFinalizer.swift */; };
 		84D13408434CF8CD59AF65E6 /* BatchSegmentExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3BFE7DC5D64922CCD47A8936 /* BatchSegmentExportService.swift */; };
 		8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */; };
 		8DA76769E698732C83DFF23D /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7441C758FE1B6F0B996DCC3F /* ThumbnailCache.swift */; };
@@ -77,6 +80,9 @@
 		AA11BB22CC33DD44EE55FF66 /* DubEnums.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11BB22CC33DD44EE55FF67 /* DubEnums.swift */; };
 		BB22CC33DD44EE55FF6600AA /* SubtitleMaskRect.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB22CC33DD44EE55FF6600AB /* SubtitleMaskRect.swift */; };
 		CC00DD11EE22FF3344AA55BB /* CharBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC00DD11EE22FF3344AA55BC /* CharBudget.swift */; };
+		EE55FF6611AA22BB33CC44DD /* AlignmentPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE55FF6611AA22BB33CC44DE /* AlignmentPlan.swift */; };
+		AA00BB11CC22DD33EE44FF55 /* QwenVoice.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */; };
+		FF00BB11CC22DD3344EE55AB /* DubStaleness.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */; };
 		DD11EE22FF3344AA55BB66CC /* RewriteTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD11EE22FF3344AA55BB66CD /* RewriteTypes.swift */; };
 		EE66FF7788AA99BB00CC11DD /* RewritePromptBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE66FF7788AA99BB00CC11DE /* RewritePromptBuilder.swift */; };
 		FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */; };
@@ -131,6 +137,9 @@
 		79C5325DA9D797B618DF1F22 /* ExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportView.swift; sourceTree = "<group>"; };
 		7ACB561B3C5222BAF199821E /* ImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportView.swift; sourceTree = "<group>"; };
 		7FC87F15412D30AE4E82B08F /* AIAnalysisService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIAnalysisService.swift; sourceTree = "<group>"; };
+		2DF8DE894214A5E2C1B54FE0 /* TTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSClient.swift; sourceTree = "<group>"; };
+		B3A7F2E91C4D58A30E6F1D2B /* QwenTTSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QwenTTSClient.swift; sourceTree = "<group>"; };
+		90381051D2F94A9AB912BC86 /* DubAudioFinalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubAudioFinalizer.swift; sourceTree = "<group>"; };
 		8283DE44DCA7A13D6A08B88E /* SceneDetectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDetectionService.swift; sourceTree = "<group>"; };
 		901C23DFF0236F31144F05FC /* ad_styles.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ad_styles.md; sourceTree = "<group>"; };
 		90F2AE8BC32F1C8343785BBE /* InlineVideoPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineVideoPlayer.swift; sourceTree = "<group>"; };
@@ -150,6 +159,9 @@
 		DD44EE55FF6611AA22BB33CD /* SegmentDub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentDub.swift; sourceTree = "<group>"; };
 		BB22CC33DD44EE55FF6600AB /* SubtitleMaskRect.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SubtitleMaskRect.swift; path = Sources/MixCutCore/SubtitleMaskRect.swift; sourceTree = "<group>"; };
 		CC00DD11EE22FF3344AA55BC /* CharBudget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = CharBudget.swift; path = Sources/MixCutCore/CharBudget.swift; sourceTree = "<group>"; };
+		EE55FF6611AA22BB33CC44DE /* AlignmentPlan.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AlignmentPlan.swift; path = Sources/MixCutCore/AlignmentPlan.swift; sourceTree = "<group>"; };
+		FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = QwenVoice.swift; path = Sources/MixCutCore/QwenVoice.swift; sourceTree = "<group>"; };
+		FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubStaleness.swift; path = Sources/MixCutCore/DubStaleness.swift; sourceTree = "<group>"; };
 		DD11EE22FF3344AA55BB66CD /* RewriteTypes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewriteTypes.swift; path = Sources/MixCutCore/RewriteTypes.swift; sourceTree = "<group>"; };
 		EE66FF7788AA99BB00CC11DE /* RewritePromptBuilder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewritePromptBuilder.swift; path = Sources/MixCutCore/RewritePromptBuilder.swift; sourceTree = "<group>"; };
 		FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = RewriteResultMapper.swift; path = Sources/MixCutCore/RewriteResultMapper.swift; sourceTree = "<group>"; };
@@ -307,9 +319,12 @@
 				0FA1B2C3D4E5F60718293A4C /* OrphanFileFinder.swift */,
 				BB22CC33DD44EE55FF6600AB /* SubtitleMaskRect.swift */,
 				CC00DD11EE22FF3344AA55BC /* CharBudget.swift */,
+				EE55FF6611AA22BB33CC44DE /* AlignmentPlan.swift */,
 				DD11EE22FF3344AA55BB66CD /* RewriteTypes.swift */,
 				EE66FF7788AA99BB00CC11DE /* RewritePromptBuilder.swift */,
 				FF77AA88BB99CC0011DD22EF /* RewriteResultMapper.swift */,
+				FF88AA99BB00CC1122DD33EE /* QwenVoice.swift */,
+				FF00BB11CC22DD3344EE55AA /* DubStaleness.swift */,
 			);
 			name = MixCutCore;
 			sourceTree = SOURCE_ROOT;
@@ -370,6 +385,7 @@
 				21073E65EBB09673AAB9F0EF /* Export */,
 				6F66DECB70475D2374567DEB /* SceneDetection */,
 				0849E7884853CC51AAA2BBEC /* SchemeGeneration */,
+				EB77528DEFE174D0648B34DA /* TTS */,
 				024B0DBF6FF3DBB26DE1380C /* VideoProcessing */,
 				B3D90C14AE78316E2E14FF41 /* UpdateChecker */,
 			);
@@ -486,6 +502,16 @@
 			path = AI;
 			sourceTree = "<group>";
 		};
+		EB77528DEFE174D0648B34DA /* TTS */ = {
+			isa = PBXGroup;
+			children = (
+				2DF8DE894214A5E2C1B54FE0 /* TTSClient.swift */,
+				B3A7F2E91C4D58A30E6F1D2B /* QwenTTSClient.swift */,
+				90381051D2F94A9AB912BC86 /* DubAudioFinalizer.swift */,
+			);
+			path = TTS;
+			sourceTree = "<group>";
+		};
 		E9E35020C8C6E8661088BDE7 /* MixCut */ = {
 			isa = PBXGroup;
 			children = (
@@ -585,6 +611,9 @@
 				FCB1E2FAF87605183B47DD34 /* Segment.swift in Sources */,
 				C1B88F29FF9DEC12AE35307E /* Video.swift in Sources */,
 				82E095A3E4F3C142310F12D0 /* AIAnalysisService.swift in Sources */,
+				A0C53D2B52CBD5A50C7ADDFB /* TTSClient.swift in Sources */,
+				C8D4E5F60A1B27C93E8D4A15 /* QwenTTSClient.swift in Sources */,
+				AB411BB69DBC4EBBB62E1984 /* DubAudioFinalizer.swift in Sources */,
 				81112CB6139D3423C3E2661A /* AIProvider.swift in Sources */,
 				E18E7E305CCDE2594BE16E4B /* AIProviderManager.swift in Sources */,
 				746E1049DD2834065672FBB3 /* OpenAICompatibleClient.swift in Sources */,
@@ -636,6 +665,9 @@
 				0FA1B2C3D4E5F60718293A4B /* OrphanFileFinder.swift in Sources */,
 				BB22CC33DD44EE55FF6600AA /* SubtitleMaskRect.swift in Sources */,
 				CC00DD11EE22FF3344AA55BB /* CharBudget.swift in Sources */,
+				EE55FF6611AA22BB33CC44DD /* AlignmentPlan.swift in Sources */,
+				AA00BB11CC22DD33EE44FF55 /* QwenVoice.swift in Sources */,
+				FF00BB11CC22DD3344EE55AB /* DubStaleness.swift in Sources */,
 				DD11EE22FF3344AA55BB66CC /* RewriteTypes.swift in Sources */,
 				EE66FF7788AA99BB00CC11DD /* RewritePromptBuilder.swift in Sources */,
 				FF77AA88BB99CC0011DD22EE /* RewriteResultMapper.swift in Sources */,

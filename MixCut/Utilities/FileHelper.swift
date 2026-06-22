@@ -57,6 +57,18 @@ enum FileHelper {
         return url
     }
 
+    // MARK: - 配音音频存储（按视频 hash / 方案变体 / 分镜 ID 三级目录）
+
+    /// 配音音频全局目录：AppSupport/MixCut/Dubs/{videoHash}/v{index}/{segmentId}.m4a
+    static func dubAudioURL(videoHash: String, variantIndex: Int, segmentId: UUID) -> URL {
+        let dir = appSupportDirectory
+            .appendingPathComponent("Dubs", isDirectory: true)
+            .appendingPathComponent(videoHash, isDirectory: true)
+            .appendingPathComponent("v\(variantIndex)", isDirectory: true)
+        ensureDirectory(at: dir)
+        return dir.appendingPathComponent("\(segmentId.uuidString).m4a")
+    }
+
     // MARK: - Whisper 语音模型存储
 
     /// Whisper 语音模型存储目录。
