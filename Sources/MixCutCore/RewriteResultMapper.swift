@@ -3,8 +3,7 @@ import Foundation
 /// 把 AI 返回的 DTO 按输入分镜映射成结果：保序、漏返回回退原文、超预算标记。
 public enum RewriteResultMapper {
     public static func map(dto: RewriteResultDTO,
-                           inputs: [RewriteSegmentInput],
-                           charsPerSecond cps: Double) -> [RewrittenSegment] {
+                           inputs: [RewriteSegmentInput]) -> [RewrittenSegment] {
         // segmentId → 改写文本（重复 id 取首个）
         var byId: [String: String] = [:]
         for item in dto.segments where byId[item.segmentId] == nil {
@@ -12,7 +11,7 @@ public enum RewriteResultMapper {
         }
 
         return inputs.map { input in
-            let budget = CharBudget.forDuration(input.durationSeconds, charsPerSecond: cps)
+            let budget = CharBudget.forOriginalLength(input.originalText.count)
             let raw = byId[input.segmentId]
             let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 

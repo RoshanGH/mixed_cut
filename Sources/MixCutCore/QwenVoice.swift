@@ -1,8 +1,8 @@
 import Foundation
 
-/// 千问 qwen3-tts-flash 系统音色。
-public struct QwenVoice: Equatable, Sendable, Identifiable {
-    public let id: String          // voice 参数值，如 "Cherry"
+/// TTS 系统音色（qwen / cosyvoice 通用结构）。
+public struct TTSVoice: Equatable, Sendable, Identifiable {
+    public let id: String          // voice 参数值，如 "Cherry" / "longyingxiao"
     public let displayName: String // 中文名，如 "芊悦"
     public let summary: String     // 音色特点
     public let dialect: String?    // 方言（普通话音色为 nil）
@@ -14,6 +14,9 @@ public struct QwenVoice: Equatable, Sendable, Identifiable {
         self.dialect = dialect
     }
 }
+
+/// 兼容旧引用：原名 QwenVoice，现为通用 TTSVoice 的别名。
+public typealias QwenVoice = TTSVoice
 
 /// 全部系统音色目录（供 Settings 列表 + 试听 + 最多选 3）。
 public enum QwenVoiceCatalog {

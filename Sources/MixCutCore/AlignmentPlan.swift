@@ -20,9 +20,10 @@ public struct AlignmentPlan: Equatable, Sendable {
 public enum AudioAligner {
     /// 直接命中阈值（秒）：差异在此内不变速，保留自然音色
     private static let directThreshold = 0.15
-    /// atempo 允许区间（±10% 几乎听不出）
-    private static let atempoMin = 0.9
-    private static let atempoMax = 1.1
+    /// atempo 允许区间。下限放宽到 0.8（最多放慢 ~25%）：克隆嗓音常比原主播语速快，
+    /// 生成的配音偏短，需更大放慢幅度把音频拉满分镜、消除末尾空挡；上限 1.15 吸收偏长。
+    private static let atempoMin = 0.8
+    private static let atempoMax = 1.15
 
     /// - Parameters:
     ///   - targetDuration: 画面（分镜）时长 D

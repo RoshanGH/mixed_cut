@@ -20,11 +20,10 @@ actor ScriptRewriteService {
     /// - Parameters:
     ///   - inputs: 可重配分镜的 [原台词 + 时长 + 关键词]
     ///   - style: 本版差异化风格说明（来自 ad_styles）
-    ///   - charsPerSecond: 目标语速（字/秒）
     /// - Returns: 与 inputs 同序的改写结果；AI 漏返回的分镜回退原台词并标记 isFallback。
+    ///   字数预算锚定原台词字数（见 CharBudget.forOriginalLength），保证 TTS 语速贴近原片。
     func rewrite(inputs: [RewriteSegmentInput],
                  style: String,
-                 charsPerSecond: Double,
                  onProgress: ((String) -> Void)? = nil) async throws -> [RewrittenSegment] {
         guard !inputs.isEmpty else { return [] }
 
@@ -32,19 +31,19 @@ actor ScriptRewriteService {
         let template = promptLoader.loadPrompt(named: "script_rewrite_prompt") ?? Self.fallbackTemplate
         let prompt = RewritePromptBuilder.build(template: template,
                                                 inputs: inputs,
-                                                style: style,
-                                                charsPerSecond: charsPerSecond)
+                                                style: style)
 
         onProgress?("正在调用 AI 改写台词…")
         let dto = try await provider.generateJSON(prompt: prompt, responseType: RewriteResultDTO.self)
 
         onProgress?("改写完成，正在校验字数预算…")
-        return RewriteResultMapper.map(dto: dto, inputs: inputs, charsPerSecond: charsPerSecond)
+        return RewriteResultMapper.map(dto: dto, inputs: inputs)
     }
 
     /// 模板文件缺失时的兜底，避免整功能因资源问题挂掉。
     private static let fallbackTemplate = """
-    你是广告文案改写专家。把下列分镜原台词逐条改写为全新说法，保持关键事实不变，字数落在各自预算区间内。
+    你是广告文案改写专家。把下列分镜原台词逐条改写为全新说法。
+    硬性要求：①每条新台词字数尽量等于原字数，必须落在「允许区间」内；②语义绝对不能改变——价格指向（现价/恢复价）、时间、因果、数量、比较方向都不得反转或篡改，只能换表达；③保留关键事实。
     风格：{{STYLE}}
     分镜：
     {{SEGMENTS}}

@@ -13,13 +13,15 @@ actor DubAudioFinalizer {
                   targetDuration: Double,
                   fps: Double,
                   videoHash: String,
-                  variantIndex: Int,
-                  segmentId: UUID) async throws -> FinalizedDub {
+                  segmentId: UUID,
+                  voiceId: String,
+                  textVariantIndex: Int) async throws -> FinalizedDub {
         let plan = AudioAligner.plan(targetDuration: targetDuration,
                                      audioDuration: tts.rawDuration,
                                      fps: fps)
 
-        let dest = FileHelper.dubAudioURL(videoHash: videoHash, variantIndex: variantIndex, segmentId: segmentId)
+        let dest = FileHelper.dubAudioURL(videoHash: videoHash, segmentId: segmentId,
+                                          voiceId: voiceId, textVariantIndex: textVariantIndex)
         try? FileManager.default.removeItem(at: dest)
 
         // atempo 只接受 0.5~2.0，单系数即可覆盖我们 [0.9,1.1] 区间

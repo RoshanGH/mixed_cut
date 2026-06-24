@@ -12,6 +12,9 @@ final class SchemeSegment: Identifiable {
     var scheme: MixScheme?
     var segment: Segment?
 
+    /// 该槽选定的配音变体 SegmentDub.id；nil = 原声/锁定（P5）
+    var selectedSegmentDubId: UUID?
+
     init(position: Int, reasoning: String? = nil, positionReasoning: String? = nil) {
         self.id = UUID()
         self.position = position

@@ -10,6 +10,7 @@ struct SegmentLibraryView: View {
     @State private var showBatchDeleteConfirm = false
     @State private var showArrangeSheet = false
     @State private var isLoading = true
+    @State private var dubVM = DubbingViewModel()
 
     var body: some View {
         // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
@@ -49,10 +50,20 @@ struct SegmentLibraryView: View {
 
             Divider()
 
-            if viewModel.filteredSegments.isEmpty {
-                emptyState
-            } else {
-                segmentContent
+            HStack(spacing: 0) {
+                Group {
+                    if viewModel.filteredSegments.isEmpty {
+                        emptyState
+                    } else {
+                        segmentContent
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                if let seg = viewModel.selectedSegment {
+                    Divider()
+                    SegmentVariantInspector(segment: seg, dubVM: dubVM)
+                }
             }
         }
         .navigationTitle("分镜素材库")
@@ -381,12 +392,16 @@ struct SegmentLibraryView: View {
             }
             .padding(.horizontal, 4)
 
+            // 该视频专属的「配音」栏（一键改写只改本视频；克隆按视频各自做）
+            DubSettingsBar(video: group.video, dubVM: dubVM)
+
             // 分镜卡片/行
             // 性能关键：父视图在 ForEach 内一次性算 isChecked / sequenceNumber，
             // 传给 SegmentCard 作为 props。SegmentCard 实现 Equatable + .equatable() 后，
             // 选中变化只会重绘那一个卡片，其他卡片跳过 body 评估。
             let selectionMode = viewModel.isSelectionMode
             let selectedIDs = viewModel.selectedSegmentIDs    // 读一次本地变量
+            let selectedSegID = viewModel.selectedSegment?.id // 读一次：检视栏选中分镜
             let numberMap = viewModel.numberByVideo
             if viewModel.isGridView {
                 LazyVGrid(columns: [
@@ -397,6 +412,7 @@ struct SegmentLibraryView: View {
                             segment: segment,
                             isChecked: selectedIDs.contains(segment.id),
                             isSelectionMode: selectionMode,
+                            isSelected: segment.id == selectedSegID,
                             sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
                             viewModel: viewModel
                         )
@@ -410,6 +426,7 @@ struct SegmentLibraryView: View {
                             segment: segment,
                             isChecked: selectedIDs.contains(segment.id),
                             isSelectionMode: selectionMode,
+                            isSelected: segment.id == selectedSegID,
                             sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
                             viewModel: viewModel
                         )
@@ -459,6 +476,7 @@ struct SegmentCard: View, Equatable {
     let segment: Segment
     let isChecked: Bool
     let isSelectionMode: Bool
+    let isSelected: Bool
     let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
 
@@ -479,6 +497,7 @@ struct SegmentCard: View, Equatable {
         lhs.segment.id == rhs.segment.id
             && lhs.isChecked == rhs.isChecked
             && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.isSelected == rhs.isSelected
             && lhs.sequenceNumber == rhs.sequenceNumber
             && lhs.segment.text == rhs.segment.text
             && lhs.segment.isVoiceLocked == rhs.segment.isVoiceLocked
@@ -488,10 +507,6 @@ struct SegmentCard: View, Equatable {
             && lhs.segment.maskY == rhs.segment.maskY
             && lhs.segment.maskWidth == rhs.segment.maskWidth
             && lhs.segment.maskHeight == rhs.segment.maskHeight
-    }
-
-    private var isSelected: Bool {
-        viewModel.selectedSegment?.id == segment.id
     }
 
     var body: some View {
@@ -548,6 +563,9 @@ struct SegmentCard: View, Equatable {
         .onTapGesture {
             if isSelectionMode {
                 viewModel.toggleSelection(segment)
+            } else {
+                // 非多选：点击选中分镜 → 打开右侧配音变体检视栏
+                viewModel.selectedSegment = segment
             }
         }
         .contextMenu {
@@ -718,6 +736,18 @@ struct SegmentCard: View, Equatable {
                         Image(systemName: "square.and.pencil").font(.system(size: 11))
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary).help("编辑台词")
+                    Button {
+                        Task { await viewModel.reextractTranscript(segment, context: modelContext) }
+                    } label: {
+                        if viewModel.busyASRSegmentIDs.contains(segment.id) {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "arrow.clockwise.circle").font(.system(size: 11))
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(viewModel.busyASRSegmentIDs.contains(segment.id))
+                    .help("用阿里云 ASR 重新识别这一分镜的台词（替换原台词，whisper 不变）")
                 }
             }
             .padding(.horizontal, 8)
@@ -807,8 +837,11 @@ struct SegmentCard: View, Equatable {
 struct SegmentInlinePlayer: View {
     let segment: Segment
     @Bindable var viewModel: SegmentLibraryViewModel
+    /// 可选：选中配音变体的音频路径。非 nil 时播放静音视频原声、同步播此变体音轨（方案预览用）。
+    var dubAudioPath: String? = nil
 
     @State private var player: AVPlayer?
+    @State private var dubPlayer: AVAudioPlayer?
     @State private var isPlaying = false
     @State private var isFrozen = false        // 播放到结尾后定格在最后一帧（非 nil player，但已暂停）
     @State private var timeObserver: Any?
@@ -1000,6 +1033,18 @@ struct SegmentInlinePlayer: View {
         isPlaying = true
         isFrozen = false
 
+        // 方案预览：有选中变体音频时静音视频原声，改放变体配音（画面不变、声音用变体）
+        if let dubPath = dubAudioPath, FileManager.default.fileExists(atPath: dubPath) {
+            avPlayer.isMuted = true
+            do {
+                let ap = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: dubPath))
+                ap.prepareToPlay()
+                dubPlayer = ap
+            } catch {
+                dubPlayer = nil
+            }
+        }
+
         let startCMTime = CMTime(seconds: startTime + halfFrame, preferredTimescale: 600)
         avPlayer.seek(to: startCMTime, toleranceBefore: .zero, toleranceAfter: .zero)
 
@@ -1020,6 +1065,7 @@ struct SegmentInlinePlayer: View {
         }
 
         avPlayer.play()
+        dubPlayer?.play()
     }
 
     /// 播放到分镜结尾：暂停并定格在分镜最后一帧（endTime 前半帧），不回缩略图。
@@ -1031,6 +1077,8 @@ struct SegmentInlinePlayer: View {
         timeObserver = nil
         if let no = endNotifObserver { NotificationCenter.default.removeObserver(no) }
         endNotifObserver = nil
+        dubPlayer?.stop()
+        dubPlayer = nil
         guard let p = player else { return }
         p.pause()
         // endTime 是下一段起点(exclusive)，本段最后一帧落在 endTime 前半帧
@@ -1053,6 +1101,8 @@ struct SegmentInlinePlayer: View {
         timeObserver = nil
         if let no = endNotifObserver { NotificationCenter.default.removeObserver(no) }
         endNotifObserver = nil
+        dubPlayer?.stop()
+        dubPlayer = nil
         player?.pause()
         player = nil
         isPlaying = false
@@ -1068,6 +1118,7 @@ struct SegmentRow: View, Equatable {
     let segment: Segment
     let isChecked: Bool
     let isSelectionMode: Bool
+    let isSelected: Bool
     let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
     @State private var isHovering = false
@@ -1076,11 +1127,8 @@ struct SegmentRow: View, Equatable {
         lhs.segment.id == rhs.segment.id
             && lhs.isChecked == rhs.isChecked
             && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.isSelected == rhs.isSelected
             && lhs.sequenceNumber == rhs.sequenceNumber
-    }
-
-    private var isSelected: Bool {
-        viewModel.selectedSegment?.id == segment.id
     }
 
     var body: some View {

@@ -154,57 +154,34 @@ actor ASRService {
         language: String = "zh",
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> TranscriptionResult {
-        // Step 1: 提取音频为 16kHz mono WAV
+        // 分镜【切分时间线】用 whisper：本地、句子又细又准的时间戳，AI 切点质量靠它。
+        // 阿里实时 ASR 的整片绝对时间戳会漂移、句子又粗，喂给 AI 会让切分崩。
+        // 分镜【台词】另由 ImportViewModel.reidentifySegmentTexts 逐分镜 clip-ASR(阿里)覆盖，准。
         onProgress?(0.1)
         let tempWavPath = FileHelper.tempDirectory
             .appendingPathComponent("audio_\(UUID().uuidString).wav").path
-
         try await ffmpeg.extractAudio(from: videoPath, to: tempWavPath)
         onProgress?(0.3)
+        defer { try? FileManager.default.removeItem(atPath: tempWavPath) }
 
-        defer {
-            try? FileManager.default.removeItem(atPath: tempWavPath)
-        }
-
-        // Step 2: 检测 whisper 类型并调用
         guard let whisperPath = ASRService.findWhisperBinaryStatic() else {
             MixLog.error("Whisper 未找到，语音识别跳过")
             throw ASRError.whisperNotFound
         }
-
         onProgress?(0.4)
 
         let whisperType = detectWhisperType(path: whisperPath)
         let result: TranscriptionResult
-
         switch whisperType {
         case .python:
-            result = try await runPythonWhisper(
-                whisperPath: whisperPath,
-                audioPath: tempWavPath,
-                language: language,
-                onProgress: onProgress
-            )
+            result = try await runPythonWhisper(whisperPath: whisperPath, audioPath: tempWavPath,
+                                                language: language, onProgress: onProgress)
         case .cpp:
-            result = try await runWhisperCpp(
-                whisperPath: whisperPath,
-                audioPath: tempWavPath,
-                language: language,
-                onProgress: onProgress
-            )
+            result = try await runWhisperCpp(whisperPath: whisperPath, audioPath: tempWavPath,
+                                             language: language, onProgress: onProgress)
         }
-
         onProgress?(1.0)
-
-        // 健康指标埋点：ASR 输出粒度异常告警
-        let sentencesCount = result.sentences.count
-        let rawCount = result.rawSentences.count
-        let wordsCount = result.words.count
-        let duration = result.duration
-        if rawCount == 1 && duration > 8.0 {
-            MixLog.error("⚠️ ASR 输出粒度异常：rawSentences=1（全文一段），时长 \(String(format: "%.1f", duration))s，已自动二次切分为 \(sentencesCount) 句")
-        }
-        MixLog.info("ASR 完成：原生 \(rawCount) segments / words \(wordsCount) / 最终 \(sentencesCount) 句")
+        MixLog.info("ASR(whisper 切分用) 完成：words \(result.words.count) / 句子 \(result.sentences.count)")
         return result
     }
 

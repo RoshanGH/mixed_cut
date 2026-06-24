@@ -92,6 +92,19 @@ else
     echo "✓ Release 已创建（id=${RELEASE_ID}）"
 fi
 
+# Gitee 的 attach_files 不会覆盖同名附件，而是新增一个重复 asset；
+# 下载链接按文件名路由，会"先上传者优先"，导致拿到旧版。
+# 所以上传前必须先删掉同名旧附件，否则会发出版本过期的包（v0.4.0 踩过这个坑）。
+DMG_NAME=$(basename "$DMG")
+echo "🧹 清理同名旧附件（${DMG_NAME}）..."
+OLD_IDS=$(curl -sS "${API}/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" \
+    | jq -r --arg name "$DMG_NAME" '.[] | select(.name == $name) | .id')
+for AID in $OLD_IDS; do
+    CODE=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+        "${API}/releases/${RELEASE_ID}/attach_files/${AID}?access_token=${GITEE_TOKEN}")
+    echo "   删除旧附件 id=${AID} (HTTP ${CODE})"
+done
+
 echo "📤 上传 DMG ($(du -h "$DMG" | cut -f1)) 到 Gitee..."
 UPLOAD=$(curl -sS -X POST \
     "${API}/releases/${RELEASE_ID}/attach_files" \

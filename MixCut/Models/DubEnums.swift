@@ -1,11 +1,9 @@
 import Foundation
 
-/// 一版配音（DubVariant）的生成状态
-enum DubVariantStatus: String, Codable, CaseIterable {
-    case draft        // 台词待确认 / 未生成
-    case generating   // 改写+配音进行中
-    case ready        // 全部生成完成
-    case failed       // 整版失败
+/// 方案的音色一致性模式
+enum VoiceMode: String, Codable, CaseIterable {
+    case unified   // 整片统一音色（从选定音色里指定一个）
+    case mixed     // 片内混用（各槽位可不同音色）
 }
 
 /// 单分镜配音（SegmentDub）的状态

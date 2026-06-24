@@ -29,4 +29,35 @@ struct CharBudgetTests {
         #expect(b.maxChars == 10)
         #expect(b.minChars == 9)
     }
+
+    // MARK: - forOriginalLength（下限=原字数不更短，上限 1.15×）
+
+    @Test("原字数 10 → 目标 10，区间 [10,12]")
+    func originalLengthNormal() {
+        let b = CharBudget.forOriginalLength(10)
+        #expect(b.target == 10)
+        #expect(b.minChars == 10)  // 不允许比原台词短
+        #expect(b.maxChars == 12)  // round(11.5)=12
+    }
+
+    @Test("原字数 20 → 区间 [20,23]")
+    func originalLengthTwenty() {
+        let b = CharBudget.forOriginalLength(20)
+        #expect(b.minChars == 20)
+        #expect(b.maxChars == 23)  // round(23.0)=23
+    }
+
+    @Test("原字数 0（无台词）→ 全 0，不崩")
+    func originalLengthZero() {
+        let b = CharBudget.forOriginalLength(0)
+        #expect(b == CharBudget(target: 0, minChars: 0, maxChars: 0))
+    }
+
+    @Test("极短原字数 4 → 上限不小于原字数，下限至少 1")
+    func originalLengthShort() {
+        let b = CharBudget.forOriginalLength(4)
+        #expect(b.target == 4)
+        #expect(b.minChars >= 1)
+        #expect(b.maxChars >= 4)   // max(原字数, round(4.4)) = 4
+    }
 }

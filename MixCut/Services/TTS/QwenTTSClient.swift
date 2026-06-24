@@ -4,15 +4,19 @@ import Foundation
 /// 复用现有千问 DashScope key（与文本同一把）。
 actor QwenTTSClient: TTSClient {
     private static let endpoint = URL(string: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation")!
-    private static let model = "qwen3-tts-flash"
 
+    /// 合成模型：qwen3-tts-flash（系统音色）或 qwen3-tts-vc-*（克隆音色）。
+    private let model: String
     private let apiKeyProvider: @Sendable () -> String?
 
-    init(apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.getAPIKey(for: .qwen) }) {
+    init(model: String = "qwen3-tts-flash",
+         apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.getAPIKey(for: .qwen) }) {
+        self.model = model
         self.apiKeyProvider = apiKeyProvider
     }
 
-    func synthesize(text: String, voiceId: String, languageType: String = "Chinese") async throws -> TTSResult {
+    /// rate 形参为协议兼容保留；qwen3-tts-flash 无数值语速，忽略之。
+    func synthesize(text: String, voiceId: String, languageType: String = "Chinese", rate: Double = 1.0) async throws -> TTSResult {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw TTSError.emptyText }
         guard let key = apiKeyProvider(), !key.isEmpty else { throw TTSError.missingAPIKey }
@@ -23,7 +27,7 @@ actor QwenTTSClient: TTSClient {
         req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
-            "model": Self.model,
+            "model": model,
             "input": ["text": trimmed, "voice": voiceId, "language_type": languageType]
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -34,9 +38,12 @@ actor QwenTTSClient: TTSClient {
             throw TTSError.badResponse("HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1): \(snippet)")
         }
         let decoded = try JSONDecoder().decode(QwenTTSResponse.self, from: data)
-        guard let urlStr = decoded.output?.audio?.url, let audioURL = URL(string: urlStr) else {
+        guard let urlStr = decoded.output?.audio?.url, let rawAudioURL = URL(string: urlStr) else {
             throw TTSError.noAudioURL
         }
+        // DashScope 返回的音频结果 URL 多为 http(阿里云 OSS)，会被 ATS 拦截。
+        // OSS 预签名 V1 签名不含 scheme，升级到 https 不影响签名且更安全。
+        let audioURL = Self.upgradedToHTTPS(rawAudioURL)
 
         // 2) 下载 wav 到临时目录
         let (tmpFile, _) = try await URLSession.shared.download(from: audioURL)
@@ -53,5 +60,15 @@ actor QwenTTSClient: TTSClient {
         let duration = Double(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
 
         return TTSResult(wavPath: dest.path, rawDuration: duration)
+    }
+
+    /// 把 http URL 升级为 https（其它 scheme 原样返回）。
+    private static func upgradedToHTTPS(_ url: URL) -> URL {
+        guard url.scheme?.lowercased() == "http",
+              var comps = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return url
+        }
+        comps.scheme = "https"
+        return comps.url ?? url
     }
 }

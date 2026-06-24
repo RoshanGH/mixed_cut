@@ -33,6 +33,11 @@ final class ImportViewModel {
 
     private var modelContext: ModelContext?
     private let ffmpeg = FFmpegRunner()
+    private let asrAliyun = QwenASRClient()
+
+    /// 正在用阿里整片重识别的视频（控制卡片 loading）。
+    var reidentifyingVideoIDs: Set<UUID> = []
+
     private let sceneDetection = SceneDetectionService()
     private let asrService = ASRService()
     private let aiAnalysis = AIAnalysisService()
@@ -307,6 +312,12 @@ final class ImportViewModel {
                 context: context
             )
 
+            // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
+            // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
+            // 这里只重识别各分镜台词（失败段保留 createSegments 给的原文/AI 文本）。
+            phase = .transcribing
+            await reidentifySegmentTexts(video: video, context: context)
+
             await generateSegmentThumbnails(
                 segments: video.segments,
                 videoPath: video.localPath
@@ -470,6 +481,12 @@ final class ImportViewModel {
                 video: video,
                 context: context
             )
+
+            // 台词以「逐分镜各自切音频独立 ASR」为准覆盖：整片流式 ASR 绝对时间戳会漂移、
+            // 按整片时间戳切出的分镜台词会错位；单段短音频 ASR 永远准。边界已由本地场景/静音+AI 定好，
+            // 这里只重识别各分镜台词（失败段保留 createSegments 给的原文/AI 文本）。
+            phase = .transcribing
+            await reidentifySegmentTexts(video: video, context: context)
 
             await generateSegmentThumbnails(
                 segments: video.segments,
@@ -859,5 +876,52 @@ final class ImportViewModel {
     /// 支持的视频文件类型
     static var supportedTypes: [UTType] {
         [.movie, .mpeg4Movie, .quickTimeMovie, .avi]
+    }
+
+    /// 重识别该视频各分镜台词：**逐分镜各自切音频独立 ASR**（不动分镜边界）。
+    /// 不用整片 ASR 切片——实时流式 ASR 的整片绝对时间戳会漂移、导致台词错位；
+    /// 单段短音频 ASR 永远准。每个分镜按自己时间范围切音频、各自识别、写回 segment.text。
+    func reidentifyWholeVideo(_ video: Video, context: ModelContext) async {
+        guard !video.localPath.isEmpty, FileManager.default.fileExists(atPath: video.localPath) else {
+            ToastCenter.shared.show("找不到原视频文件", icon: "exclamationmark.triangle.fill", style: .warning); return
+        }
+        guard !reidentifyingVideoIDs.contains(video.id) else { return }
+        reidentifyingVideoIDs.insert(video.id)
+        defer { reidentifyingVideoIDs.remove(video.id) }
+
+        let (ok, fail) = await reidentifySegmentTexts(video: video, context: context)
+        if fail == 0 {
+            ToastCenter.shared.show("已逐分镜用阿里重识别台词（\(ok) 段）", icon: "checkmark.circle.fill", style: .success)
+        } else {
+            ToastCenter.shared.show("台词重识别：\(ok) 段成功 / \(fail) 段失败", icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
+        }
+    }
+
+    /// 逐分镜各自切音频独立 ASR，覆盖 segment.text（导入与重识别共用）。
+    /// 每段按自己时间范围切音频、各自识别——单段短音频时间戳天生准，不受整片漂移影响。
+    /// 失败的分镜保留原 text。返回 (成功段数, 失败段数)。
+    @discardableResult
+    func reidentifySegmentTexts(video: Video, context: ModelContext) async -> (ok: Int, fail: Int) {
+        let fps = video.fps > 0 ? video.fps : 30
+        let segs = video.segments.sorted { $0.startFrame < $1.startFrame }
+        var ok = 0, fail = 0
+        for seg in segs {
+            if cancelledVideoIDs.contains(video.id) { break }
+            let start = Double(seg.startFrame) / fps
+            let end = Double(seg.endFrame) / fps
+            let pcm = FileHelper.tempDirectory.appendingPathComponent("asrseg-\(UUID().uuidString).pcm")
+            do {
+                try await ffmpeg.extractSegmentPCM(from: video.localPath, start: start, end: end, to: pcm.path)
+                let text = try await asrAliyun.transcribe(pcmPath: pcm.path)
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { seg.text = trimmed; ok += 1 } else { fail += 1 }
+            } catch {
+                fail += 1
+                MixLog.error("[ASR] 分镜 \(seg.segmentIndex) 重识别失败: \(error.localizedDescription)")
+            }
+            try? FileManager.default.removeItem(at: pcm)
+        }
+        try? context.save()
+        return (ok, fail)
     }
 }

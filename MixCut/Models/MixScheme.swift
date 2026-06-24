@@ -21,6 +21,12 @@ final class MixScheme: Identifiable {
     var strategy: MixStrategy?
     var project: Project?
 
+    // MARK: - 三层结构（G3）：同一原分镜序列(模板)的多条变体视频共享 templateGroupId
+    /// 模板组 ID：同一序列(模板)展开出的变体视频共享此 ID；nil = 旧数据/未分组（各自独立成组）
+    var templateGroupId: UUID?
+    /// 模板组内的变体视频序号（0-based）
+    var templateVariantIndex: Int = 0
+
     @Relationship(deleteRule: .cascade, inverse: \SchemeSegment.scheme)
     var schemeSegments: [SchemeSegment] = []
 
@@ -28,6 +34,15 @@ final class MixScheme: Identifiable {
 
     /// true = AI 方案被用户手动改过分镜（添加/删除/替换/换序任一动作触发）
     var isManuallyEdited: Bool = false
+
+    // MARK: - 配音（P5）
+    var voiceModeRaw: String = "unified"   // VoiceMode.rawValue
+    var unifiedVoiceId: String?            // 统一模式选的音色（混用时 nil）
+
+    var voiceMode: VoiceMode {
+        get { VoiceMode(rawValue: voiceModeRaw) ?? .unified }
+        set { voiceModeRaw = newValue.rawValue }
+    }
 
     init(
         variationIndex: Int = 1,

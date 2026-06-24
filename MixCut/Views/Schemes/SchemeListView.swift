@@ -357,6 +357,9 @@ struct SchemeListView: View {
             }
             .frame(width: 380)
 
+            // 配音音色已无需选择：每个视频自动克隆原主播嗓音，所有配音变体统一用克隆原声。
+            // 旧的「统一/混用音色」选择已移除（裁掉多音色裂变残留）。
+
             // 自定义需求（可选）
             VStack(alignment: .leading, spacing: 6) {
                 Text("自定义需求（可选）")
@@ -518,27 +521,7 @@ struct StrategySection: View {
                 } else {
                     LazyVStack(spacing: 0) {
                         ForEach(strategy.orderedSchemes) { scheme in
-                            SchemeVariationRow(
-                                scheme: scheme,
-                                isSelected: viewModel.selectedScheme?.id == scheme.id
-                            )
-                            .onTapGesture {
-                                viewModel.selectedScheme = scheme
-                            }
-                            .contextMenu {
-                                Button {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(scheme.name, forType: .string)
-                                    ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
-                                } label: {
-                                    Label("复制方案名", systemImage: "doc.on.doc")
-                                }
-                                Divider()
-                                Button("删除变体", role: .destructive) {
-                                    // Toast（含「撤销」按钮）由 deleteScheme 内部弹出
-                                    viewModel.deleteScheme(scheme)
-                                }
-                            }
+                            schemeRow(scheme)
                         }
                     }
                 }
@@ -546,6 +529,29 @@ struct StrategySection: View {
 
             Divider()
                 .padding(.leading, 14)
+        }
+    }
+
+    /// 单条方案行。
+    @ViewBuilder
+    private func schemeRow(_ scheme: MixScheme) -> some View {
+        SchemeVariationRow(
+            scheme: scheme,
+            isSelected: viewModel.selectedScheme?.id == scheme.id
+        )
+        .onTapGesture { viewModel.selectedScheme = scheme }
+        .contextMenu {
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(scheme.name, forType: .string)
+                ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
+            } label: {
+                Label("复制方案名", systemImage: "doc.on.doc")
+            }
+            Divider()
+            Button("删除变体", role: .destructive) {
+                viewModel.deleteScheme(scheme)
+            }
         }
     }
 

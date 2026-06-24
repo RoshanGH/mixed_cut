@@ -12,6 +12,7 @@ private struct LeftPanelHeightKey: PreferenceKey {
 struct ImportView: View {
     let project: Project
     @Bindable var importVM: ImportViewModel
+    @Environment(\.modelContext) private var modelContext
     @State private var isDragTargeted = false
     @State private var showingFilePicker = false
     @State private var isLoading = true
@@ -190,7 +191,9 @@ struct ImportView: View {
                         Task {
                             await importVM.retryASR(for: video, in: project)
                         }
-                    })
+                    }, onReidentify: {
+                        Task { await importVM.reidentifyWholeVideo(video, context: modelContext) }
+                    }, isReidentifying: importVM.reidentifyingVideoIDs.contains(video.id))
                 }
             }
         }
@@ -220,6 +223,8 @@ struct ImportedVideoCard: View {
     var onDelete: (() -> Void)?
     var onRetryAI: (() -> Void)?
     var onRetryASR: (() -> Void)?
+    var onReidentify: (() -> Void)?
+    var isReidentifying: Bool = false
 
     private let panelWidth: CGFloat = 190
 
@@ -341,6 +346,17 @@ struct ImportedVideoCard: View {
     }
 
     var body: some View {
+        // 删除视频时，@Observable 的 Video 被 context.delete 后仍会向「正在被移除的本卡片」
+        // 发出变更通知，触发 body 重算；此时读 video.status 等持久属性会命中 SwiftData
+        // 已删除对象断言（EXC_BREAKPOINT）。故先判断对象是否已从上下文摘除，已删则不渲染。
+        if video.modelContext == nil {
+            Color.clear.frame(width: 0, height: 0)
+        } else {
+            cardBody
+        }
+    }
+
+    private var cardBody: some View {
         HStack(alignment: .top, spacing: 0) {
             // 左侧：视频 + 信息（自然高度，决定整体高度）
             leftPanel
@@ -599,6 +615,22 @@ struct ImportedVideoCard: View {
                     }
                     .buttonStyle(.plain)
                     .help("ASR 分句异常，点击重新识别")
+                }
+
+                // 阿里重识别整片入口
+                if let onReidentify {
+                    Button(action: onReidentify) {
+                        if isReidentifying {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Label("阿里重识别", systemImage: "waveform")
+                                .font(.system(size: 9, weight: .medium))
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(isReidentifying)
+                    .help("用阿里云 ASR 重新识别整片并刷新各分镜台词（不改分镜边界）")
                 }
             }
             .padding(.horizontal, 10)

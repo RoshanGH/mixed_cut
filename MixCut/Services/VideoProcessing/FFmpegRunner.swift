@@ -379,6 +379,25 @@ actor FFmpegRunner {
         _ = try await run(arguments: args)
     }
 
+    /// 切出 [start,end) 秒的音频为 16k 单声道裸 PCM(s16le)，供阿里实时 ASR 流式发送。
+    func extractSegmentPCM(from videoPath: String, start: Double, end: Double,
+                           sampleRate: Int = 16000, to outPath: String) async throws {
+        let args = ["-y",
+                    "-ss", String(format: "%.3f", max(0, start)),
+                    "-to", String(format: "%.3f", end),
+                    "-i", videoPath,
+                    "-vn", "-ac", "1", "-ar", String(sampleRate),
+                    "-f", "s16le", "-acodec", "pcm_s16le", outPath]
+        _ = try await run(arguments: args)
+    }
+
+    /// 整片音频转 16k 单声道裸 PCM(s16le)，供阿里整片 ASR 流式发送。
+    func extractAudioPCM(from videoPath: String, sampleRate: Int = 16000, to outPath: String) async throws {
+        let args = ["-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", String(sampleRate),
+                    "-f", "s16le", "-acodec", "pcm_s16le", outPath]
+        _ = try await run(arguments: args)
+    }
+
     /// 探测视频文件是否包含音频轨道（异步，不阻塞 actor 线程）
     private func probeHasAudio(path: String) async -> Bool {
         let ffprobePath = binaryPath.replacingOccurrences(of: "/ffmpeg", with: "/ffprobe")

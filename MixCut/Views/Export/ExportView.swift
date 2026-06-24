@@ -4,6 +4,9 @@ struct ExportView: View {
     let project: Project
     @Bindable var schemeVM: SchemeViewModel
 
+    @Environment(\.modelContext) private var modelContext
+    @State private var dubVM = DubbingViewModel()
+
     @State private var exportConfig = ExportConfig()
     @State private var isExporting = false
     @State private var exportProgress: BatchExportProgress?
@@ -413,6 +416,24 @@ struct ExportView: View {
               : selectedSchemeIDs.isEmpty ? "请先勾选要导出的方案"
               : "导出选中的 \(count) 个方案")
 
+        // 配音版导出（P5）：换音色+新台词+遮挡旧字幕+烧新字幕
+        Button {
+            startDubbedExport()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "waveform.badge.mic")
+                    .font(.system(size: 13))
+                Text(count > 0 ? "导出配音版（\(count) 个）" : "导出配音版")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .disabled(isDisabled)
+        .help("按方案选定的音色/改写台词导出；导出前自动补齐缺失配音。锁定段保留原声。")
+
         if schemeVM.schemes.isEmpty && !isExporting {
             HStack(spacing: 4) {
                 Image(systemName: "info.circle")
@@ -682,6 +703,66 @@ struct ExportView: View {
                     ToastCenter.shared.show("已导出 \(validTotal) 个视频", icon: "checkmark.seal.fill", style: .success)
                 }
 
+                exportedFolder = url.path
+                isExporting = false
+            }
+        }
+    }
+
+    /// 配音版导出（顺序逐方案：补齐缺失音频 → DubExportService 两阶段导出）。
+    private func startDubbedExport() {
+        let allSchemes = selectedSchemes
+        guard !allSchemes.isEmpty else { return }
+        exportedFolder = nil
+        errorMessage = nil
+
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "选择导出文件夹"
+
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            Task { @MainActor in
+                isExporting = true
+                let total = allSchemes.count
+                let config = exportConfig
+                var failed = 0
+
+                for (i, scheme) in allSchemes.enumerated() {
+                    exportProgress = BatchExportProgress(
+                        total: total, completed: i,
+                        description: "配音版：补齐音频「\(scheme.name)」...")
+                    await dubVM.ensureSelectedAudio(for: scheme, context: modelContext)
+
+                    guard let input = DubExportInput.from(scheme: scheme) else { failed += 1; continue }
+                    let sanitized = sanitizeFilename("\(scheme.strategy?.name ?? "未分组")_\(scheme.variationIndex)_\(scheme.name)_配音版")
+                    let outputPath = url.appendingPathComponent("\(sanitized).mp4").path
+                    let service = DubExportService()
+                    do {
+                        try await service.export(input: input, outputPath: outputPath, config: config) { p in
+                            Task { @MainActor in
+                                self.exportProgress = BatchExportProgress(
+                                    total: total, completed: i, currentProgress: p.progress,
+                                    description: "配音版导出：\(scheme.name)... \(Int(p.progress * 100))%")
+                            }
+                        }
+                    } catch {
+                        MixLog.error("配音版导出失败「\(scheme.name)」: \(error.localizedDescription)")
+                        failed += 1
+                    }
+                }
+
+                exportProgress = BatchExportProgress(total: total, completed: total, description: "配音版导出完成")
+                if failed == total {
+                    errorMessage = "所有配音版导出失败"
+                    ToastCenter.shared.show("配音版导出失败", icon: "exclamationmark.triangle.fill", style: .error)
+                } else if failed > 0 {
+                    ToastCenter.shared.show("成功 \(total - failed) / 失败 \(failed)", icon: "exclamationmark.triangle.fill", style: .warning)
+                } else {
+                    ToastCenter.shared.show("已导出 \(total) 个配音版", icon: "checkmark.seal.fill", style: .success)
+                }
                 exportedFolder = url.path
                 isExporting = false
             }

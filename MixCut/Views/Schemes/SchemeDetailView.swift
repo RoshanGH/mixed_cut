@@ -181,9 +181,13 @@ struct SchemeDetailView: View {
 
     private var storyboardView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("分镜序列")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("分镜序列")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                combinationHint
+            }
 
             ScrollView(.horizontal, showsIndicators: true) {
                 // LazyHStack：横向懒加载，屏幕外的 StoryboardCard 不同步实例化
@@ -210,6 +214,32 @@ struct SchemeDetailView: View {
                 .frame(minHeight: 380)
             }
             .frame(height: 400)
+        }
+    }
+
+    /// 每镜可选项数（锁定=1，否则 原声+各改写=1+变体数），乘积=此方案导出可生成的变体组合数。
+    private var slotFactors: [Int] {
+        scheme.orderedSegments.map { ss in
+            guard let seg = ss.segment else { return 1 }
+            return seg.isVoiceLocked ? 1 : 1 + seg.effectiveDubVariants.count
+        }
+    }
+
+    /// 「此方案可生成 N 个变体组合（3×1×3×3）」提示。
+    @ViewBuilder
+    private var combinationHint: some View {
+        let factors = slotFactors
+        let total = factors.reduce(1, *)
+        if total <= 1 {
+            Label("暂无配音变体，导出为原声", systemImage: "waveform.slash")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        } else {
+            Label("可生成 \(total) 个变体组合（\(factors.map(String.init).joined(separator: "×"))）",
+                  systemImage: "square.grid.3x3.fill")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.tint)
+                .help("此方案每个分镜可用「原声/改写A/改写B…」，全部排列组合共 \(total) 种；锁定原声的分镜计为 ×1。导出时按当前选定的一种组合输出一条视频。")
         }
     }
 
@@ -251,15 +281,33 @@ struct StoryboardCard: View {
     let onDelete: () -> Void
     let onReplace: () -> Void
     @State private var isHovering = false
+    @Environment(\.modelContext) private var modelContext
 
     private let cardWidth: CGFloat = 150
+
+    /// 该槽当前选定的配音变体
+    private var chosenDub: SegmentDub? {
+        guard let id = schemeSeg.selectedSegmentDubId else { return nil }
+        return schemeSeg.segment?.segmentDubs.first { $0.id == id }
+    }
+    private func voiceName(_ id: String) -> String {
+        if id == schemeSeg.segment?.video?.clonedVoiceId { return "原声克隆" }
+        return VoiceCatalog.displayName(id: id)
+    }
+    private func variantLabel(_ d: SegmentDub) -> String {
+        "\(voiceName(d.voiceId)) · 改写\(Character(UnicodeScalar(65 + d.textVariantIndex)!))"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let segment = schemeSeg.segment {
                 // 视频播放器 + 序号叠加 + hover 操作按钮
                 // 用 .overlay 而非 ZStack，避免 ZStack propose 不传递 height 导致 SegmentInlinePlayer 塌缩
-                SegmentInlinePlayer(segment: segment, viewModel: segmentLibraryVM)
+                SegmentInlinePlayer(
+                    segment: segment,
+                    viewModel: segmentLibraryVM,
+                    dubAudioPath: segment.isVoiceLocked ? nil : chosenDub?.audioFilePath
+                )
                     .frame(width: cardWidth, height: cardWidth * 16.0 / 9.0)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(alignment: .topLeading) {
@@ -309,6 +357,9 @@ struct StoryboardCard: View {
                         .lineSpacing(2)
                         .help(segment.text)
 
+                    // 配音变体标 + 换变体（P5）
+                    dubBadge(for: segment)
+
                     // 紧凑时间调整
                     StoryboardTimeRow(segment: segment, viewModel: segmentLibraryVM)
                 }
@@ -351,6 +402,42 @@ struct StoryboardCard: View {
             Divider()
             Button("删除", role: .destructive, action: onDelete)
                 .disabled(!canDelete)
+        }
+    }
+
+    @ViewBuilder
+    private func dubBadge(for segment: Segment) -> some View {
+        if segment.isVoiceLocked {
+            Label("原声（锁定）", systemImage: "lock.fill")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(Color.orange.opacity(0.15)))
+        } else if let d = chosenDub {
+            Menu {
+                ForEach(segment.segmentDubs.sorted { ($0.textVariantIndex, $0.voiceId) < ($1.textVariantIndex, $1.voiceId) }, id: \.id) { opt in
+                    Button {
+                        schemeSeg.selectedSegmentDubId = opt.id
+                        try? modelContext.save()
+                    } label: {
+                        Text(variantLabel(opt) + (opt.id == d.id ? "  ✓" : ""))
+                    }
+                }
+            } label: {
+                Label(variantLabel(d), systemImage: "waveform")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.green.opacity(0.15)))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+        } else {
+            Text("原声")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(Color.gray.opacity(0.12)))
         }
     }
 

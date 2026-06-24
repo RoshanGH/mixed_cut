@@ -43,6 +43,15 @@ final class Video: Identifiable {
     var asrWordsData: Data?      // [ASRWord] 编码存储
     var asrSentencesData: Data?  // [ASRSentence] Whisper 原生句子
 
+    /// 配音选定音色 id（≤3），JSON 编码
+    var selectedVoiceIdsData: Data?
+
+    /// 配音全局语速（CosyVoice rate，基准 1.0，范围 0.7~1.3）。SwiftData 加字段，默认 1.0。
+    var dubSpeechRate: Double = 1.0
+
+    /// 原声克隆音色 id（qwen3-tts-vc）。nil = 尚未克隆。SwiftData 加字段。
+    var clonedVoiceId: String?
+
     /// 文件内容哈希（SHA-256），用于全局去重
     var contentHash: String?
 
@@ -99,6 +108,17 @@ final class Video: Identifiable {
         }
         set {
             asrSentencesData = try? JSONEncoder().encode(newValue)
+        }
+    }
+
+    /// 选定的 TTS 音色 id（≤3）
+    var selectedVoiceIds: [String] {
+        get {
+            guard let data = selectedVoiceIdsData else { return [] }
+            return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+        }
+        set {
+            selectedVoiceIdsData = try? JSONEncoder().encode(newValue)
         }
     }
 
