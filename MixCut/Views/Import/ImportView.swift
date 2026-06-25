@@ -617,20 +617,26 @@ struct ImportedVideoCard: View {
                     .help("ASR 分句异常，点击重新识别")
                 }
 
-                // 阿里重识别整片入口
+                // 阿里重识别整片入口（图标按钮，避免文字换行）
                 if let onReidentify {
                     Button(action: onReidentify) {
-                        if isReidentifying {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Label("阿里重识别", systemImage: "waveform")
-                                .font(.system(size: 9, weight: .medium))
+                        Group {
+                            if isReidentifying {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
                         }
+                        .foregroundStyle(.purple)
+                        .frame(width: 20, height: 18)
+                        .background(.purple.opacity(0.12))
+                        .clipShape(Capsule())
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
+                    .fixedSize()
                     .disabled(isReidentifying)
-                    .help("用阿里云 ASR 重新识别整片并刷新各分镜台词（不改分镜边界）")
+                    .help("AI 重识别台词：用阿里云 ASR 重新识别整片，逐分镜刷新台词（不改分镜边界）")
                 }
             }
             .padding(.horizontal, 10)

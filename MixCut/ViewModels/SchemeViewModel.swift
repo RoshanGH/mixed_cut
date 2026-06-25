@@ -303,17 +303,12 @@ final class SchemeViewModel {
         if matched.count < segmentIDs.count {
             MixLog.info("[SV-09] 方案「\(scheme.name)」跳过未匹配分镜 \(segmentIDs.count - matched.count) 个")
         }
-        // 单条视频：取第一组合（每槽 textVariant A，锁定/无变体为原声）
-        let slots: [SlotOptions] = matched.map { seg in
-            SlotOptions(isLocked: seg.isVoiceLocked, dubIds: seg.effectiveDubVariants.map { $0.id })
-        }
-        let combo = VariantCombinationGenerator.generate(slots: slots, limit: 1).combinations.first
-            ?? Array<UUID?>(repeating: nil, count: matched.count)
+        // 默认全部播原声（selectedSegmentDubId = nil）；用户在分镜序列里按需手动切到克隆改写版。
         for (idx, seg) in matched.enumerated() {
             let ss = SchemeSegment(position: idx + 1, reasoning: "", positionReasoning: "")
             ss.scheme = scheme
             ss.segment = seg
-            ss.selectedSegmentDubId = combo[idx]
+            ss.selectedSegmentDubId = nil
             context.insert(ss)
         }
     }

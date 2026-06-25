@@ -24,15 +24,17 @@ struct DubExportInput: Sendable {
     let maxHeight: Int
 
     /// 从某方案解析出导出输入（必须在 @MainActor 调用）。
-    /// 每槽按 SchemeSegment.selectedSegmentDubId 取定变体；nil/锁定/无音频 → 原声回退。
+    /// - Parameter combo: 每槽选定的变体 dubId（与 orderedSegments 对齐，nil=原声）。
+    ///   传 nil 时退回按 SchemeSegment.selectedSegmentDubId 取定（单条/预览一致）。
+    ///   nil/锁定/找不到/无音频 → 原声回退。配音段会自动混入分离出的 BGM。
     @MainActor
-    static func from(scheme: MixScheme) -> DubExportInput? {
+    static func from(scheme: MixScheme, combo: [UUID?]? = nil) -> DubExportInput? {
         let ordered = scheme.orderedSegments
         guard !ordered.isEmpty else { return nil }
 
         var specs: [DubSegmentSpec] = []
         var maxW = 0, maxH = 0
-        for schemeSeg in ordered {
+        for (idx, schemeSeg) in ordered.enumerated() {
             guard let segment = schemeSeg.segment,
                   let video = segment.video,
                   FileManager.default.fileExists(atPath: video.localPath) else { continue }
@@ -41,9 +43,11 @@ struct DubExportInput: Sendable {
             maxW = max(maxW, video.width)
             maxH = max(maxH, video.height)
 
-            // 该槽选定的变体（nil 或找不到 → 原声）
-            let chosen: SegmentDub? = schemeSeg.selectedSegmentDubId.flatMap { dubId in
-                segment.segmentDubs.first { $0.id == dubId }
+            // 该槽选定的变体：combo 指定优先，否则用 selectedSegmentDubId；nil 或找不到 → 原声
+            let chosenId: UUID? = combo != nil ? (idx < combo!.count ? combo![idx] : nil)
+                                               : schemeSeg.selectedSegmentDubId
+            let chosen: SegmentDub? = chosenId.flatMap { dubId in
+                segment.effectiveDubVariants.first { $0.id == dubId }
             }
 
             if segment.isVoiceLocked || chosen == nil {
@@ -60,7 +64,8 @@ struct DubExportInput: Sendable {
                     videoPath: video.localPath, startFrame: segment.startFrame, endFrame: segment.endFrame,
                     fps: fps, captionText: caption, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
-                    freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence, bgmAudioPath: nil))
+                    freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
+                    bgmAudioPath: Self.bgmPath(for: video)))
             } else {
                 // 非锁定但无已生成配音 → 回退保留原声原字幕，保证导出不中断
                 MixLog.info("分镜 \(segment.segmentIndex) 无已生成配音，回退原声导出")
@@ -75,6 +80,69 @@ struct DubExportInput: Sendable {
         }
         guard !specs.isEmpty else { return nil }
         return DubExportInput(segments: specs, maxWidth: maxW, maxHeight: maxH)
+    }
+
+    /// 配音段的 BGM 源：demucs 分离出的整轨 bgm.wav（按视频内容哈希定位）；不存在 → nil（不混 BGM）。
+    private static func bgmPath(for video: Video) -> String? {
+        guard let hash = video.contentHash else { return nil }
+        let path = FileHelper.stemsDirectory(videoHash: hash).appendingPathComponent("bgm.wav").path
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+}
+
+/// 把一个方案展开成「全部配音组合」：每个非锁定分镜可选「原声 + 各已生成改写版」，锁定分镜恒原声。
+/// 用于导出时按笛卡尔积一次性导出多条视频。
+@MainActor
+enum SchemeComboPlanner {
+    /// 单方案最多展开的组合数（防爆炸）。
+    static let maxCombos = 256
+
+    struct Combo: Sendable {
+        let choices: [UUID?]     // 每槽选定 dubId（与 orderedSegments 对齐，nil=原声）
+        let nameSuffix: String   // 文件名后缀，如 "[原·A·原·B·A]"
+    }
+
+    struct Plan {
+        let combos: [Combo]
+        let feasibleCount: Int   // 理论组合总数（笛卡尔积）
+        let truncated: Bool      // feasibleCount > maxCombos（实际只取了前 maxCombos 条）
+    }
+
+    /// 理论组合总数（不真正生成；用于 UI 显示「将生成 N 条」）。
+    static func feasibleCount(for scheme: MixScheme) -> Int {
+        scheme.orderedSegments.reduce(1) { acc, ss in
+            guard let seg = ss.segment else { return acc }
+            return acc * (seg.isVoiceLocked ? 1 : 1 + seg.effectiveDubVariants.count)
+        }
+    }
+
+    static func plan(for scheme: MixScheme) -> Plan {
+        let ordered = scheme.orderedSegments
+        guard !ordered.isEmpty else { return Plan(combos: [], feasibleCount: 0, truncated: false) }
+
+        let slots: [SlotOptions] = ordered.map { ss in
+            guard let seg = ss.segment else { return SlotOptions(isLocked: true, dubIds: []) }
+            return SlotOptions(isLocked: seg.isVoiceLocked, dubIds: seg.effectiveDubVariants.map { $0.id })
+        }
+        let result = VariantCombinationGenerator.generate(slots: slots, limit: maxCombos, includeOriginal: true)
+
+        let combos: [Combo] = result.combinations.map { choices in
+            let parts: [String] = choices.enumerated().map { idx, dubId in
+                guard let dubId,
+                      idx < ordered.count,
+                      let seg = ordered[idx].segment,
+                      let dub = seg.effectiveDubVariants.first(where: { $0.id == dubId }) else { return "原" }
+                return Self.letter(dub.textVariantIndex)
+            }
+            return Combo(choices: choices, nameSuffix: "[" + parts.joined(separator: "·") + "]")
+        }
+        return Plan(combos: combos, feasibleCount: result.feasibleCount, truncated: result.truncated)
+    }
+
+    /// 改写版字母：0→A、1→B…
+    private static func letter(_ index: Int) -> String {
+        guard let scalar = UnicodeScalar(65 + index) else { return "\(index + 1)" }
+        return String(Character(scalar))
     }
 }
 
@@ -204,9 +272,11 @@ actor DubExportService {
         // 配音版导出固定走 h264_videotoolbox，故码率按 .h264Hardware 基准取，
         // 忽略 config.codec——否则软件编码档会落到 videoBitrateKbps 的 default(8000k) 与实际 h264 不匹配。
         let bitrate = config.quality.videoBitrateKbps(for: .h264Hardware)
+        // -ac 2：强制所有中间片统一为立体声。否则原声段(立体声)与配音段(人声单声道/amix立体声)
+        // 声道数不一致，阶段二 concat -c copy 会以首段为准，声道不符的段被播成静音（原声段无声 bug）。
         args += ["-c:v", "h264_videotoolbox", "-b:v", "\(bitrate)k", "-maxrate", "\(bitrate * 2)k",
                  "-tag:v", "avc1", "-allow_sw", "1", "-pix_fmt", "yuv420p",
-                 "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
+                 "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
                  "-movflags", "+faststart", outputPath]
 
         _ = try await ffmpeg.run(arguments: args, totalDuration: nil, onProgress: nil)
@@ -219,9 +289,34 @@ actor DubExportService {
         let body = paths.map { "file '\($0)'" }.joined(separator: "\n") + "\n"
         try body.write(to: listURL, atomically: true, encoding: .utf8)
 
-        let args = ["-y", "-f", "concat", "-safe", "0", "-i", listURL.path,
-                    "-c", "copy", "-movflags", "+faststart", outputPath]
-        _ = try await ffmpeg.run(arguments: args, totalDuration: nil, onProgress: nil)
+        // 阶段二a：concat 无损拼接到临时文件
+        let joined = workDir.appendingPathComponent("joined.mp4")
+        let concatArgs = ["-y", "-f", "concat", "-safe", "0", "-i", listURL.path,
+                          "-c", "copy", "-movflags", "+faststart", joined.path]
+        _ = try await ffmpeg.run(arguments: concatArgs, totalDuration: nil, onProgress: nil)
+
+        // 阶段二b：concat 会把首段 AAC 编码 priming 延迟转成视频起始时间偏移（start_time≈0.023s）。
+        // 后果：t=0 处无帧 → QuickTime/各平台上传时截「首帧做封面」会得到黑图（实测 AVFoundation
+        // 在 t=0 直接报 -11832 取不到帧）。这里把视频起始时间整体平移回 0，封面即为真实首帧。
+        let startTime = await probeVideoStartTime(joined.path)
+        if startTime > 0.001 {
+            let fixArgs = ["-y", "-i", joined.path, "-c", "copy",
+                           "-output_ts_offset", String(format: "%.6f", -startTime),
+                           "-movflags", "+faststart", outputPath]
+            _ = try await ffmpeg.run(arguments: fixArgs, totalDuration: nil, onProgress: nil)
+            try? FileManager.default.removeItem(at: joined)
+        } else {
+            try? FileManager.default.removeItem(atPath: outputPath)
+            try FileManager.default.moveItem(at: joined, to: URL(fileURLWithPath: outputPath))
+        }
+    }
+
+    /// 读取视频流起始时间（秒）；失败返回 0。
+    private func probeVideoStartTime(_ path: String) async -> Double {
+        let out = try? await ffmpeg.runProbe(arguments: [
+            "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=start_time", "-of", "csv=p=0", path])
+        return Double((out ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
     // MARK: - 分辨率

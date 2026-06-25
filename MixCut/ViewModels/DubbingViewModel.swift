@@ -28,14 +28,27 @@ final class DubbingViewModel {
 
     let topVoices: [TTSVoice] = VoiceCatalog.top(10)
 
-    var isRewriting = false
-    var rewriteProgress = ""
+    /// 按视频独立跟踪「正在配音（克隆/改写/合成）」状态与进度——不同视频互不联动。
+    var busyVideoIDs: Set<UUID> = []
+    var videoProgress: [UUID: String] = [:]
     var busyDubIDs: Set<UUID> = []
     var auditioningVoiceId: String?
     var playingDubID: UUID?
-    var isCloning = false
-    var cloneProgress = ""
     var errorMessage: String?
+
+    /// 该视频是否正在配音处理中（用于其专属配音条显示忙碌）。
+    func isBusy(videoID: UUID?) -> Bool {
+        guard let id = videoID else { return false }
+        return busyVideoIDs.contains(id)
+    }
+    /// 该视频当前的进度文案。
+    func progressText(videoID: UUID?) -> String {
+        guard let id = videoID else { return "" }
+        return videoProgress[id] ?? ""
+    }
+    private func beginBusy(_ id: UUID?) { if let id { busyVideoIDs.insert(id) } }
+    private func endBusy(_ id: UUID?) { if let id { busyVideoIDs.remove(id); videoProgress[id] = nil } }
+    private func setProgress(_ id: UUID?, _ text: String) { if let id { videoProgress[id] = text } }
 
     private let rewriteService = ScriptRewriteService()
     private let tts: TTSClient = CosyVoiceTTSClient()
@@ -67,31 +80,30 @@ final class DubbingViewModel {
             errorMessage = "找不到原视频文件，无法克隆原声"
             return false
         }
-        isCloning = true
-        defer { isCloning = false }
+        let vid = video.id   // 进度按此视频独立跟踪；忙碌状态由调用方管理
         MixLog.info("[Clone] 开始克隆原声: video=\(path)")
         do {
             let hash = video.contentHash ?? video.id.uuidString
-            cloneProgress = "分离人声…"
+            setProgress(vid, "分离人声…")
             let stems = try await vocalSep.separate(videoPath: path, videoHash: hash) { [weak self] msg in
-                Task { @MainActor in self?.cloneProgress = msg }
+                Task { @MainActor in self?.setProgress(vid, msg) }
             }
             MixLog.info("[Clone] 分离完成: vocals=\(stems.vocalsPath)")
-            cloneProgress = "提取克隆参考…"
+            setProgress(vid, "提取克隆参考…")
             // 参考音必须【短而干净】(≈6s)：18s 长参考含多句原话，qwen 克隆 TTS 会间歇性
             // "续读参考里的内容"导致配音混进下一段(实测 18s→clean 1/3，6s→clean 5/5)。
             let ref = try await vocalSep.referenceClip(fromVocals: stems.vocalsPath, maxSeconds: 6)
-            cloneProgress = "注册克隆音色…"
+            setProgress(vid, "注册克隆音色…")
             let voiceId = try await cloneService.enroll(referenceAudioPath: ref,
                                                         preferredName: "mixcut\(hash.prefix(8))")
             MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId)")
             video.clonedVoiceId = voiceId
             video.selectedVoiceIds = [voiceId]
             try? context.save()
-            cloneProgress = ""
+            setProgress(vid, "")
             return true
         } catch {
-            cloneProgress = ""
+            setProgress(vid, "")
             MixLog.error("[Clone] 克隆失败: \(error.localizedDescription)")
             errorMessage = "原声克隆失败：\(error.localizedDescription)"
             return false
@@ -101,14 +113,16 @@ final class DubbingViewModel {
     // MARK: - 一键改写（自动克隆原声 → 改写 K 套台词 → 克隆配音）
 
     func rewriteAll(video: Video, context: ModelContext) async {
+        let vid = video.id
+        guard !isBusy(videoID: vid) else { return }   // 防重复点击；与其它视频互不影响
+        beginBusy(vid)
+        defer { endBusy(vid) }
+
         guard await ensureClonedVoice(for: video, context: context) else { return }
         let voices = video.selectedVoiceIds   // = [clonedVoiceId]
         guard !voices.isEmpty else { errorMessage = "克隆原声未就绪"; return }
         let reconfigurable = video.segments.filter { !$0.isVoiceLocked && !$0.text.isEmpty }
         guard !reconfigurable.isEmpty else { errorMessage = "没有可重配的分镜"; return }
-
-        isRewriting = true
-        defer { isRewriting = false }
 
         let inputs = reconfigurable.map {
             RewriteSegmentInput(segmentId: $0.id.uuidString,
@@ -120,7 +134,7 @@ final class DubbingViewModel {
 
         let n = variantCount
         for k in 0..<n {
-            rewriteProgress = "改写第 \(k + 1)/\(n) 套…"
+            setProgress(vid, "改写第 \(k + 1)/\(n) 套…")
             do {
                 let results = try await rewriteService.rewrite(
                     inputs: inputs,
@@ -138,10 +152,10 @@ final class DubbingViewModel {
                 return
             }
         }
-        rewriteProgress = ""
+        setProgress(vid, "")
 
         // 改写完成后自动批量合成 TTS（用户无需逐格手动点）
-        let result = await generateAllAudio(for: reconfigurable, context: context)
+        let result = await generateAllAudio(for: reconfigurable, videoID: vid, context: context)
 
         let producedCount = reconfigurable.count * voices.count * n
         if result.fail > 0 {
@@ -165,12 +179,14 @@ final class DubbingViewModel {
         guard let video = segment.video else { return }
         guard !segment.isVoiceLocked else { errorMessage = "该分镜保留原声，不参与配音"; return }
         guard !segment.text.isEmpty else { errorMessage = "该分镜没有原台词"; return }
+        let vid = video.id
+        guard !isBusy(videoID: vid) else { return }
+        beginBusy(vid)
+        defer { endBusy(vid) }
+
         guard await ensureClonedVoice(for: video, context: context) else { return }
         let voices = video.selectedVoiceIds   // = [clonedVoiceId]
         guard !voices.isEmpty else { errorMessage = "克隆原声未就绪"; return }
-
-        isRewriting = true
-        defer { isRewriting = false }
 
         let input = RewriteSegmentInput(segmentId: segment.id.uuidString,
                                         originalText: segment.text,
@@ -178,7 +194,7 @@ final class DubbingViewModel {
                                         keywords: segment.keywords)
         let n = variantCount
         for k in 0..<n {
-            rewriteProgress = "改写第 \(k + 1)/\(n) 套…"
+            setProgress(vid, "改写第 \(k + 1)/\(n) 套…")
             do {
                 let results = try await rewriteService.rewrite(
                     inputs: [input],
@@ -195,9 +211,9 @@ final class DubbingViewModel {
                 return
             }
         }
-        rewriteProgress = ""
+        setProgress(vid, "")
 
-        let result = await generateAllAudio(for: [segment], context: context)
+        let result = await generateAllAudio(for: [segment], videoID: vid, context: context)
         if result.fail > 0 {
             ToastCenter.shared.show("本分镜已重写，配音 \(result.ok) 成功 / \(result.fail) 失败",
                                     icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
@@ -205,6 +221,50 @@ final class DubbingViewModel {
             ToastCenter.shared.show("本分镜已重新改写并生成配音",
                                     icon: "checkmark.circle.fill", style: .success)
         }
+    }
+
+    // MARK: - 手动新增一版（用户自己写台词 → 自动克隆配音）
+
+    /// 在该分镜下手动新增一个空白改写版，返回新版下标（供 UI 立即进入编辑）。
+    /// 自动确保已克隆原声；新建空文本变体，用户写完台词后 updateVariantText 会自动合成配音。
+    @discardableResult
+    func addManualVariant(for segment: Segment, context: ModelContext) async -> Int? {
+        guard let video = segment.video else { return nil }
+        guard !segment.isVoiceLocked else { errorMessage = "该分镜保留原声，不参与配音"; return nil }
+        let vid = video.id
+        guard !isBusy(videoID: vid) else { return nil }
+        beginBusy(vid)
+        defer { endBusy(vid) }
+
+        guard await ensureClonedVoice(for: video, context: context) else { return nil }
+        let voices = video.selectedVoiceIds   // = [clonedVoiceId]
+        guard !voices.isEmpty else { errorMessage = "克隆原声未就绪"; return nil }
+
+        let nextIndex = (segment.segmentDubs.map { $0.textVariantIndex }.max() ?? -1) + 1
+        for voiceId in voices {
+            upsertDub(segment: segment, voiceId: voiceId, textVariantIndex: nextIndex,
+                      text: "", context: context)
+        }
+        try? context.save()
+        return nextIndex
+    }
+
+    // MARK: - 删除某改写版（其所有音色配音 + 磁盘音频）
+
+    /// 删除该分镜下某个改写版（含一键生成的版本）：移除所有音色的 SegmentDub 与磁盘音频文件。
+    /// selectedSegmentDubId 只是 UUID 字段，消费端用 first(where:) 解析，删后自动回退原音，不会崩。
+    func deleteVariant(_ segment: Segment, textVariantIndex t: Int, context: ModelContext) {
+        let dubs = segment.segmentDubs.filter { $0.textVariantIndex == t }
+        guard !dubs.isEmpty else { return }
+        if let playing = playingDubID, dubs.contains(where: { $0.id == playing }) {
+            stopDubPlayback()
+        }
+        for d in dubs {
+            if let path = d.audioFilePath { try? FileManager.default.removeItem(atPath: path) }
+            segment.segmentDubs.removeAll { $0.id == d.id }
+            context.delete(d)
+        }
+        try? context.save()
     }
 
     // MARK: - 编辑某改写版台词（改完重生成该版 TTS）
@@ -227,11 +287,12 @@ final class DubbingViewModel {
         guard changed else { return }
         try? context.save()
 
-        isRewriting = true
-        defer { isRewriting = false }
-        rewriteProgress = "重新合成本版配音…"
-        let result = await generateAllAudio(for: [segment], context: context)
-        rewriteProgress = ""
+        let vid = segment.video?.id
+        beginBusy(vid)
+        defer { endBusy(vid) }
+        setProgress(vid, "重新合成本版配音…")
+        let result = await generateAllAudio(for: [segment], videoID: vid, context: context)
+        setProgress(vid, "")
         if result.fail > 0 {
             ToastCenter.shared.show("台词已更新，配音 \(result.ok) 成功 / \(result.fail) 失败",
                                     icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
@@ -338,17 +399,18 @@ final class DubbingViewModel {
     }
 
     /// 批量合成一组分镜下所有「还没音频」的变体（一键改写后自动调用）。
-    private func generateAllAudio(for segments: [Segment], context: ModelContext) async -> (ok: Int, fail: Int) {
+    private func generateAllAudio(for segments: [Segment], videoID: UUID?,
+                                  context: ModelContext) async -> (ok: Int, fail: Int) {
         let pending = segments
             .flatMap { $0.segmentDubs }
             .filter { $0.audioFilePath == nil && !$0.rewrittenText.isEmpty }
         guard !pending.isEmpty else { return (0, 0) }
         var ok = 0, fail = 0
         for dub in pending {
-            rewriteProgress = "合成配音 \(ok + fail + 1)/\(pending.count)…"
+            setProgress(videoID, "合成配音 \(ok + fail + 1)/\(pending.count)…")
             if await generateAudio(for: dub, context: context, silent: true) { ok += 1 } else { fail += 1 }
         }
-        rewriteProgress = ""
+        setProgress(videoID, "")
         return (ok, fail)
     }
 

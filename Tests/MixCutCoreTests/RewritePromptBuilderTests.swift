@@ -28,7 +28,7 @@ struct RewritePromptBuilderTests {
         #expect(out.contains("s1"))
         #expect(out.contains("s2"))
         #expect(out.contains("原字数=10字")) // s1 原文 10 字
-        #expect(out.contains("10~12字"))     // s1 区间（下限=原字数）
+        #expect(out.contains("10~12字"))     // s1 区间（forOriginalLength）
         #expect(out.contains("原字数=5字"))  // s2 原文 5 字
         #expect(out.contains("5~6字"))       // s2 区间
         #expect(out.contains("补水"))

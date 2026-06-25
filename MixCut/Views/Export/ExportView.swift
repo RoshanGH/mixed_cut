@@ -13,6 +13,10 @@ struct ExportView: View {
     @State private var exportedFolder: String?
     @State private var errorMessage: String?
 
+    /// 导出前确认弹窗
+    @State private var showExportConfirm = false
+    /// 正在进行的导出任务（用于「停止」取消）
+    @State private var exportTask: Task<Void, Never>?
     /// 用户选中的方案 ID 集合（默认全选）
     @State private var selectedSchemeIDs: Set<UUID> = []
     /// 已展开的策略 ID 集合（默认全部展开）
@@ -394,14 +398,16 @@ struct ExportView: View {
     private var exportButton: some View {
         let count = selectedSchemeIDs.count
         let isDisabled = selectedSchemeIDs.isEmpty || isExporting || schemeVM.schemes.isEmpty
+        let totalClips = totalComboCount()
 
+        // 配音组合导出：每个选中方案按「每镜 原声 + 各改写版」的全部排列组合，逐条导出
         Button {
-            startBatchExport()
+            showExportConfirm = true
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "square.and.arrow.up.fill")
+                Image(systemName: "waveform.badge.mic")
                     .font(.system(size: 13))
-                Text(count > 0 ? "导出选中的 \(count) 个" : "请先选择方案")
+                Text(count > 0 ? "导出配音组合（共 \(totalClips) 条）" : "请先选择方案")
                     .font(.system(size: 14, weight: .semibold))
             }
             .frame(maxWidth: .infinity)
@@ -409,30 +415,18 @@ struct ExportView: View {
         }
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
-        .disabled(isDisabled)
+        .disabled(isDisabled || totalClips == 0)
         .help(schemeVM.schemes.isEmpty
               ? "暂无方案可导出，请先在「混剪方案」页面生成"
               : isExporting ? "正在导出中"
               : selectedSchemeIDs.isEmpty ? "请先勾选要导出的方案"
-              : "导出选中的 \(count) 个方案")
-
-        // 配音版导出（P5）：换音色+新台词+遮挡旧字幕+烧新字幕
-        Button {
-            startDubbedExport()
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "waveform.badge.mic")
-                    .font(.system(size: 13))
-                Text(count > 0 ? "导出配音版（\(count) 个）" : "导出配音版")
-                    .font(.system(size: 14, weight: .semibold))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
+              : "画面不变，按每个分镜的「原声 + 各改写版」全部排列组合，串行逐条导出")
+        .alert("将生成 \(totalClips) 条视频", isPresented: $showExportConfirm) {
+            Button("取消", role: .cancel) {}
+            Button("导出") { startDubbedExport() }
+        } message: {
+            Text("选中 \(count) 个方案，画面不变，按每个分镜的「原声 + 各改写版」全部排列组合，串行逐条生成（一条一条导，避免占满机器）。")
         }
-        .buttonStyle(.bordered)
-        .controlSize(.large)
-        .disabled(isDisabled)
-        .help("按方案选定的音色/改写台词导出；导出前自动补齐缺失配音。锁定段保留原声。")
 
         if schemeVM.schemes.isEmpty && !isExporting {
             HStack(spacing: 4) {
@@ -461,6 +455,21 @@ struct ExportView: View {
                 Text("\(progress.completed)/\(progress.total)")
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
+            }
+
+            if isExporting {
+                Button(role: .destructive) {
+                    stopExport()
+                } label: {
+                    Label("停止导出", systemImage: "stop.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .tint(.red)
+                .help("立即停止导出（已完成的视频保留，正在导出的这条会被丢弃）")
             }
         }
         .padding(16)
@@ -709,12 +718,30 @@ struct ExportView: View {
         }
     }
 
-    /// 配音版导出（顺序逐方案：补齐缺失音频 → DubExportService 两阶段导出）。
+    /// 选中方案将生成的总视频条数（= 各方案配音组合数之和，单方案上限 maxCombos）。
+    private func totalComboCount() -> Int {
+        selectedSchemes.reduce(0) { acc, scheme in
+            acc + min(SchemeComboPlanner.maxCombos, SchemeComboPlanner.feasibleCount(for: scheme))
+        }
+    }
+
+    /// 配音组合导出：每个选中方案按笛卡尔积（每镜 原声 + 各改写版，锁定=1）导出。
+    /// 画面不变，仅声音不同；文件名后缀标明组合（如 [原·A·原·B·A]）。配音段混入分离 BGM。
+    /// 按机器能力自适应并发（ConcurrencyPolicy，已为机器留余量），可随时「停止」。
     private func startDubbedExport() {
         let allSchemes = selectedSchemes
         guard !allSchemes.isEmpty else { return }
         exportedFolder = nil
         errorMessage = nil
+
+        // 先在主线程把每个方案的组合算好（需读 SwiftData 模型）
+        let plans: [(scheme: MixScheme, combos: [SchemeComboPlanner.Combo])] =
+            allSchemes.map { ($0, SchemeComboPlanner.plan(for: $0).combos) }
+        let totalClips = plans.reduce(0) { $0 + $1.combos.count }
+        guard totalClips > 0 else {
+            ToastCenter.shared.show("没有可导出的组合", icon: "exclamationmark.triangle.fill", style: .warning)
+            return
+        }
 
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -724,49 +751,103 @@ struct ExportView: View {
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            Task { @MainActor in
+            exportTask = Task { @MainActor in
                 isExporting = true
-                let total = allSchemes.count
+                defer { isExporting = false; exportTask = nil }
                 let config = exportConfig
-                var failed = 0
+                let maxConcurrency = max(1, ConcurrencyPolicy.maxExportConcurrency())
 
-                for (i, scheme) in allSchemes.enumerated() {
-                    exportProgress = BatchExportProgress(
-                        total: total, completed: i,
-                        description: "配音版：补齐音频「\(scheme.name)」...")
+                // 1) 预先补齐各方案选定音频（顺序，多为 no-op；确保分离/变体音频就绪）
+                for (scheme, _) in plans {
+                    if Task.isCancelled { break }
                     await dubVM.ensureSelectedAudio(for: scheme, context: modelContext)
+                }
 
-                    guard let input = DubExportInput.from(scheme: scheme) else { failed += 1; continue }
-                    let sanitized = sanitizeFilename("\(scheme.strategy?.name ?? "未分组")_\(scheme.variationIndex)_\(scheme.name)_配音版")
-                    let outputPath = url.appendingPathComponent("\(sanitized).mp4").path
-                    let service = DubExportService()
-                    do {
-                        try await service.export(input: input, outputPath: outputPath, config: config) { p in
-                            Task { @MainActor in
-                                self.exportProgress = BatchExportProgress(
-                                    total: total, completed: i, currentProgress: p.progress,
-                                    description: "配音版导出：\(scheme.name)... \(Int(p.progress * 100))%")
+                // 2) 扁平化所有 (方案×组合) 任务（DubExportInput 须在 MainActor 构造）
+                var jobs: [DubExportJob] = []
+                for (scheme, combos) in plans {
+                    let strategyName = scheme.strategy?.name ?? "未分组"
+                    for combo in combos {
+                        guard let input = DubExportInput.from(scheme: scheme, combo: combo.choices) else { continue }
+                        let base = sanitizeFilename("\(strategyName)_方案\(scheme.variationIndex)_\(combo.nameSuffix)")
+                        jobs.append(DubExportJob(
+                            input: input,
+                            outputPath: url.appendingPathComponent("\(base).mp4").path,
+                            label: "\(scheme.name) \(combo.nameSuffix)"))
+                    }
+                }
+                let totalJobs = jobs.count
+
+                // 3) 有界并发渲染：工作队列填满 maxConcurrency 个槽，完成一个补一个
+                var completed = 0
+                var succeeded = 0
+                var nextIndex = 0
+                var stopped = false
+
+                exportProgress = BatchExportProgress(total: totalJobs, completed: 0,
+                                                     description: "导出中（\(maxConcurrency) 路并发）…")
+
+                await withTaskGroup(of: Bool.self) { group in
+                    func addJob(_ i: Int) {
+                        let job = jobs[i]
+                        group.addTask {
+                            let service = DubExportService()
+                            do {
+                                try await service.export(input: job.input, outputPath: job.outputPath, config: config)
+                                return true
+                            } catch {
+                                // 取消会终止 ffmpeg 并抛错：清理半成品，不计为失败
+                                if Task.isCancelled {
+                                    try? FileManager.default.removeItem(atPath: job.outputPath)
+                                } else {
+                                    MixLog.error("配音组合导出失败「\(job.label)」: \(error.localizedDescription)")
+                                }
+                                return false
                             }
                         }
-                    } catch {
-                        MixLog.error("配音版导出失败「\(scheme.name)」: \(error.localizedDescription)")
-                        failed += 1
+                    }
+
+                    while nextIndex < totalJobs && nextIndex < maxConcurrency {
+                        addJob(nextIndex); nextIndex += 1
+                    }
+                    for await ok in group {
+                        completed += 1
+                        if ok { succeeded += 1 }
+                        if Task.isCancelled {
+                            stopped = true
+                            group.cancelAll()
+                        } else if nextIndex < totalJobs {
+                            addJob(nextIndex); nextIndex += 1
+                        }
+                        exportProgress = BatchExportProgress(
+                            total: totalJobs, completed: completed,
+                            description: stopped ? "停止中…" : "导出中（\(maxConcurrency) 路并发）… \(completed)/\(totalJobs)")
                     }
                 }
 
-                exportProgress = BatchExportProgress(total: total, completed: total, description: "配音版导出完成")
-                if failed == total {
-                    errorMessage = "所有配音版导出失败"
-                    ToastCenter.shared.show("配音版导出失败", icon: "exclamationmark.triangle.fill", style: .error)
-                } else if failed > 0 {
-                    ToastCenter.shared.show("成功 \(total - failed) / 失败 \(failed)", icon: "exclamationmark.triangle.fill", style: .warning)
+                let failed = max(0, completed - succeeded)
+                if stopped {
+                    exportProgress = BatchExportProgress(total: totalJobs, completed: completed, description: "已停止")
+                    ToastCenter.shared.show("已停止，完成 \(succeeded) 条", icon: "stop.circle.fill", style: .warning)
                 } else {
-                    ToastCenter.shared.show("已导出 \(total) 个配音版", icon: "checkmark.seal.fill", style: .success)
+                    exportProgress = BatchExportProgress(total: totalJobs, completed: totalJobs, description: "导出完成")
+                    if succeeded == 0 {
+                        errorMessage = "所有组合导出失败"
+                        ToastCenter.shared.show("导出失败", icon: "exclamationmark.triangle.fill", style: .error)
+                    } else if failed > 0 {
+                        ToastCenter.shared.show("成功 \(succeeded) / 失败 \(failed)", icon: "exclamationmark.triangle.fill", style: .warning)
+                    } else {
+                        ToastCenter.shared.show("已导出 \(succeeded) 条视频", icon: "checkmark.seal.fill", style: .success)
+                    }
                 }
                 exportedFolder = url.path
-                isExporting = false
             }
         }
+    }
+
+    /// 停止当前导出：取消 Task → 连带终止正在运行的 ffmpeg 进程。
+    private func stopExport() {
+        exportTask?.cancel()
     }
 
     /// 清理文件名中的非法字符
@@ -774,6 +855,13 @@ struct ExportView: View {
         let illegal = CharacterSet(charactersIn: "/\\:*?\"<>|")
         return name.components(separatedBy: illegal).joined(separator: "_")
     }
+}
+
+/// 单条配音组合导出任务（值类型，可跨并发传递）
+private struct DubExportJob: Sendable {
+    let input: DubExportInput
+    let outputPath: String
+    let label: String
 }
 
 /// 批量导出进度

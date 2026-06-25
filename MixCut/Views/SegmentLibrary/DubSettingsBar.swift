@@ -15,52 +15,43 @@ struct DubSettingsBar: View {
         video.segments.reduce(0) { $0 + $1.segmentDubs.count }
     }
 
-    private var busy: Bool { dubVM.isCloning || dubVM.isRewriting }
+    /// 仅反映本视频的忙碌状态（不同视频互不联动）。
+    private var busy: Bool { dubVM.isBusy(videoID: video.id) }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Label("配音", systemImage: "waveform")
-                .font(.subheadline.weight(.semibold))
-
-            if video.clonedVoiceId != nil {
-                Label("已克隆原声", systemImage: "checkmark.seal.fill")
-                    .font(.caption).foregroundStyle(.green).labelStyle(.titleAndIcon)
-            } else {
-                Text("新台词将用克隆的原主播嗓音配音")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            if variantCount > 0 {
-                Text("· 已生成 \(variantCount) 个变体，点开分镜在右侧查看")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
+        HStack(spacing: 8) {
             Spacer()
 
             if busy {
                 ProgressView().controlSize(.small)
-                Text(dubVM.isCloning ? dubVM.cloneProgress : dubVM.rewriteProgress)
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(dubVM.progressText(videoID: video.id))
+                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1).fixedSize()
             } else {
-                Stepper(value: $variantCountSetting, in: DubbingViewModel.variantCountRange) {
-                    Text("每镜变体 \(variantCountSetting) 套")
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                if variantCount > 0 {
+                    Label("\(variantCount) 个变体", systemImage: "checkmark.seal.fill")
+                        .font(.caption2).foregroundStyle(.green)
+                        .help("已生成 \(variantCount) 个配音变体，点开分镜在右侧查看")
                 }
-                .controlSize(.small)
+
+                Stepper(value: $variantCountSetting, in: DubbingViewModel.variantCountRange) {
+                    Text("×\(variantCountSetting)")
+                        .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
+                }
+                .controlSize(.mini)
                 .fixedSize()
                 .help("每个非「保留原声」分镜要产出的台词变体数量（1–5）")
 
                 Button {
                     Task { await dubVM.rewriteAll(video: video, context: modelContext) }
                 } label: {
-                    Label("一键改写台词", systemImage: "wand.and.stars")
+                    Label(video.clonedVoiceId != nil ? "改写配音" : "克隆并改写配音",
+                          systemImage: "wand.and.stars")
+                        .font(.caption)
                 }
-                .help("自动克隆原声 → 为所有非「保留原声」分镜改写 \(variantCountSetting) 套台词 → 用克隆嗓音生成配音")
+                .controlSize(.small)
+                .help("自动克隆原声 → 为本视频所有非「保留原声」分镜改写 \(variantCountSetting) 套台词 → 用克隆嗓音生成配音")
             }
         }
-        .padding(10)
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.6))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.accentColor.opacity(0.25), lineWidth: 1))
         .alert("配音", isPresented: Binding(get: { dubVM.errorMessage != nil },
                                           set: { if !$0 { dubVM.errorMessage = nil } })) {
             Button("好", role: .cancel) {}

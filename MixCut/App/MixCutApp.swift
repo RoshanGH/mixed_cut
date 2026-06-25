@@ -118,6 +118,8 @@ struct MixCutApp: App {
             Self.purgeLegacyQwenDubs(container: modelContainer)
             // 清空旧的"长参考(18s)"克隆音色：长参考会让克隆配音漏读别段，改用 6s 短参考重克隆
             Self.purgeLongRefClones(container: modelContainer)
+            // 方案配音默认改回原声：清空旧的"默认预选改写A"，让所有分镜默认播原声、用户再手动切
+            Self.resetSchemeDubSelectionToOriginal(container: modelContainer)
             // 清洗已有台词中的乱码和多余空格
             Self.cleanExistingTranscripts(container: modelContainer)
             // 帧化迁移：把现有分镜的秒边界回填成帧号
@@ -346,6 +348,27 @@ struct MixCutApp: App {
         if cleared > 0 {
             try? ctx.save()
             MixLog.info(" 已清空 \(cleared) 个旧长参考克隆音色，下次一键改写将用 6s 短参考重克隆")
+        }
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// 一次性迁移：把所有方案分镜的配音选择重置为原声（selectedSegmentDubId = nil）。
+    /// 旧逻辑创建方案时默认预选了「改写A」，与「默认播原声、用户手动切」的产品意图不符。
+    /// 重置后用户在分镜序列下拉里按需切换克隆改写版，之后的选择不会再被重置。
+    private static func resetSchemeDubSelectionToOriginal(container: ModelContainer) {
+        let key = "didResetSchemeDubSelection_v1"
+        if UserDefaults.standard.bool(forKey: key) { return }
+        let ctx = ModelContext(container)
+        var reset = 0
+        if let segs = try? ctx.fetch(FetchDescriptor<SchemeSegment>()) {
+            for ss in segs where ss.selectedSegmentDubId != nil {
+                ss.selectedSegmentDubId = nil
+                reset += 1
+            }
+        }
+        if reset > 0 {
+            try? ctx.save()
+            MixLog.info(" 已把 \(reset) 个方案分镜的配音选择重置为原声（默认原声）")
         }
         UserDefaults.standard.set(true, forKey: key)
     }

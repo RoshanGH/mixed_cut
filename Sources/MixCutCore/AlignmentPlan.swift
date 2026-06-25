@@ -16,43 +16,45 @@ public struct AlignmentPlan: Equatable, Sendable {
     }
 }
 
-/// 对齐阶梯纯决策：字数预算已让多数情况落在直接命中/atempo 区间，定格/静音仅兜残差。
+/// 对齐阶梯纯决策。铁律：**配音绝不超过画面时长**——
+/// 偏长一律用 atempo 压缩到正好等于画面（永不靠定格补帧延长画面，freezePadFrames 恒为 0）；
+/// 偏短才适度放慢，残差用末尾静音补满。字数预算（按克隆语速配字）已让多数情况接近命中，
+/// atempo 只做微小兜底。
 public enum AudioAligner {
-    /// 直接命中阈值（秒）：差异在此内不变速，保留自然音色
+    /// 偏短直接命中阈值（秒）：配音比画面短 ≤ 此值时不变速，末尾补少量静音即可
     private static let directThreshold = 0.15
-    /// atempo 允许区间。下限放宽到 0.8（最多放慢 ~25%）：克隆嗓音常比原主播语速快，
-    /// 生成的配音偏短，需更大放慢幅度把音频拉满分镜、消除末尾空挡；上限 1.15 吸收偏长。
-    private static let atempoMin = 0.8
-    private static let atempoMax = 1.15
+    /// 放慢封底（最多放慢 ~25%）：配音偏短时拉满画面、消除末尾空挡
+    private static let atempoMinStretch = 0.8
 
     /// - Parameters:
     ///   - targetDuration: 画面（分镜）时长 D
     ///   - audioDuration: TTS 原始音频时长 D'
-    ///   - fps: 视频帧率（算定格补帧用）
+    ///   - fps: 视频帧率（保留参数，当前不再用于定格补帧）
     public static func plan(targetDuration: Double, audioDuration: Double, fps: Double) -> AlignmentPlan {
         guard targetDuration > 0, audioDuration > 0, fps > 0 else {
             return AlignmentPlan(atempoFactor: 1.0, freezePadFrames: 0, trailingSilence: 0)
         }
 
-        let diff = audioDuration - targetDuration
         let atempo: Double
-        if abs(diff) <= directThreshold {
-            atempo = 1.0
+        if audioDuration > targetDuration {
+            // 偏长 → 无封顶压缩到正好等于画面：不管台词写多少字，配音都加速塞进画面、绝不超过。
+            // （atempo>2.0 由 DubAudioFinalizer 链式拆分实现）
+            atempo = audioDuration / targetDuration
         } else {
-            atempo = min(max(audioDuration / targetDuration, atempoMin), atempoMax)
+            let shortBy = targetDuration - audioDuration
+            if shortBy <= directThreshold {
+                atempo = 1.0                       // 偏短很小，不变速
+            } else {
+                atempo = max(audioDuration / targetDuration, atempoMinStretch)  // 适度放慢减小空挡
+            }
         }
 
         let outDuration = audioDuration / atempo
-        let residual = outDuration - targetDuration   // >0 仍偏长；<0 偏短
+        let residual = outDuration - targetDuration   // >0 仅在极端超长(封顶仍超)时出现；<0 偏短
 
-        if residual > 0.001 {
-            return AlignmentPlan(atempoFactor: atempo,
-                                 freezePadFrames: Int((residual * fps).rounded()),
-                                 trailingSilence: 0)
-        } else if residual < -0.001 {
-            return AlignmentPlan(atempoFactor: atempo,
-                                 freezePadFrames: 0,
-                                 trailingSilence: -residual)
+        // 永不通过定格补帧延长画面：分镜时长 = 画面时长，配音绝不超过画面。
+        if residual < -0.001 {
+            return AlignmentPlan(atempoFactor: atempo, freezePadFrames: 0, trailingSilence: -residual)
         } else {
             return AlignmentPlan(atempoFactor: atempo, freezePadFrames: 0, trailingSilence: 0)
         }
