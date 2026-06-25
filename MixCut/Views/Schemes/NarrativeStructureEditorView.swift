@@ -24,6 +24,8 @@ struct NarrativeStructureEditorView: View {
     @State private var requestedCount = 5
     /// 正在弹出加标签面板的段位行 id（用稳定 id 而非 index，删除/拖拽后不错位）
     @State private var tagPickerSlotID: SlotRow.ID?
+    /// 项目库分镜的轻量描述缓存：仅随项目切换重算（.task），避免每次重绘碾 SwiftData 导致输入框聚焦卡顿
+    @State private var descriptors: [SegmentDescriptor] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,6 +48,7 @@ struct NarrativeStructureEditorView: View {
         // 切项目铁律：可选标签随项目刷新；同时把库内段位载入本地编辑态
         .task(id: project.id) {
             availableTags = viewModel.availableTags(in: project)
+            descriptors = buildDescriptors()
             // 库里的 NarrativeSlot 映射回 SlotRow（各生成新 UUID，order 按当前顺序丢弃）
             slots = strategy.narrativeSlots
                 .sorted { $0.order < $1.order }
@@ -438,8 +441,8 @@ struct NarrativeStructureEditorView: View {
         )
     }
 
-    /// 项目库分镜的轻量描述（用于候选数计算）
-    private var descriptors: [SegmentDescriptor] {
+    /// 构建项目库分镜的轻量描述（仅在 .task 切项目时调用一次，结果缓存到 descriptors）
+    private func buildDescriptors() -> [SegmentDescriptor] {
         project.videos.flatMap(\.segments).map { seg in
             SegmentDescriptor(
                 id: seg.id,
