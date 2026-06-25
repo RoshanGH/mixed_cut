@@ -84,3 +84,52 @@ private func seg(_ id: String, _ tags: [String] = [], q: Double = 1, d: Double =
     // 重复 id
     #expect(!NarrativeStructureEngine.isValidVariant([seg("01").id, seg("01").id], pools: pools))
 }
+
+@Test func narrativeSlot_decodesLegacyJSONWithoutDurationAsNil() throws {
+    let legacy = #"{"order":0,"tags":["痛点"]}"#.data(using: .utf8)!
+    let slot = try JSONDecoder().decode(NarrativeSlot.self, from: legacy)
+    #expect(slot.minDuration == nil)
+    #expect(slot.maxDuration == nil)
+    #expect(slot.tags == ["痛点"])
+}
+
+@Test func narrativeSlot_durationRoundTrips() throws {
+    let slot = NarrativeSlot(order: 1, tags: ["x"], minDuration: 5, maxDuration: 7.5)
+    let data = try JSONEncoder().encode(slot)
+    let back = try JSONDecoder().decode(NarrativeSlot.self, from: data)
+    #expect(back.minDuration == 5)
+    #expect(back.maxDuration == 7.5)
+}
+
+@Test func candidatePool_filtersByMinDurationInclusive() {
+    let segs = [seg("01", ["x"], d: 4.9), seg("02", ["x"], d: 5.0), seg("03", ["x"], d: 6)]
+    let slot = NarrativeSlot(order: 0, tags: ["x"], minDuration: 5)
+    let pool = NarrativeStructureEngine.candidatePool(for: slot, in: segs)
+    #expect(Set(pool.map(\.id)) == Set([seg("02").id, seg("03").id]))
+}
+
+@Test func candidatePool_filtersByMaxDurationInclusive() {
+    let segs = [seg("01", ["x"], d: 5), seg("02", ["x"], d: 7), seg("03", ["x"], d: 7.1)]
+    let slot = NarrativeSlot(order: 0, tags: ["x"], maxDuration: 7)
+    let pool = NarrativeStructureEngine.candidatePool(for: slot, in: segs)
+    #expect(Set(pool.map(\.id)) == Set([seg("01").id, seg("02").id]))
+}
+
+@Test func candidatePool_filtersByBothBoundsAndDecimals() {
+    let segs = [seg("01", ["x"], d: 4), seg("02", ["x"], d: 5.5), seg("03", ["x"], d: 8)]
+    let slot = NarrativeSlot(order: 0, tags: ["x"], minDuration: 5, maxDuration: 7)
+    let pool = NarrativeStructureEngine.candidatePool(for: slot, in: segs)
+    #expect(pool.map(\.id) == [seg("02").id])
+}
+
+@Test func candidatePool_nilDurationMeansNoDurationFilter() {
+    let segs = [seg("01", ["x"], d: 1), seg("02", ["x"], d: 99)]
+    let slot = NarrativeSlot(order: 0, tags: ["x"])
+    #expect(NarrativeStructureEngine.candidatePool(for: slot, in: segs).count == 2)
+}
+
+@Test func candidatePool_durationFilterStillRequiresTagMatch() {
+    let segs = [seg("01", ["y"], d: 6)]
+    let slot = NarrativeSlot(order: 0, tags: ["x"], minDuration: 5, maxDuration: 7)
+    #expect(NarrativeStructureEngine.candidatePool(for: slot, in: segs).isEmpty)
+}

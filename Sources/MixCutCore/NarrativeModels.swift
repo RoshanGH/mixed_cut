@@ -4,9 +4,15 @@ import Foundation
 public struct NarrativeSlot: Codable, Equatable, Sendable {
     public var order: Int
     public var tags: [String]
-    public init(order: Int, tags: [String]) {
+    /// 该段候选分镜的最短时长（秒），nil=不限
+    public var minDuration: Double?
+    /// 该段候选分镜的最长时长（秒），nil=不限
+    public var maxDuration: Double?
+    public init(order: Int, tags: [String], minDuration: Double? = nil, maxDuration: Double? = nil) {
         self.order = order
         self.tags = tags
+        self.minDuration = minDuration
+        self.maxDuration = maxDuration
     }
 }
 

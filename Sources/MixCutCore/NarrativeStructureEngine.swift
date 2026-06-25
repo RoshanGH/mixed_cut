@@ -8,10 +8,13 @@ public enum NarrativeStructureEngine {
             .joined(separator: " · ")
     }
 
-    /// 候选池：分镜标签与该段标签有交集（并集匹配）即入选
+    /// 候选池：分镜标签与该段标签有交集（并集匹配），且时长落在该段 [min,max] 闭区间内
     public static func candidatePool(for slot: NarrativeSlot, in segments: [SegmentDescriptor]) -> [SegmentDescriptor] {
         let slotTags = Set(slot.tags)
-        return segments.filter { !slotTags.isDisjoint(with: Set($0.tags)) }
+        var pool = segments.filter { !slotTags.isDisjoint(with: Set($0.tags)) }
+        if let lo = slot.minDuration { pool = pool.filter { $0.duration >= lo } }
+        if let hi = slot.maxDuration { pool = pool.filter { $0.duration <= hi } }
+        return pool
     }
 
     /// 喂 prompt 前每段取 Top-N：质量降序，质量相同按时长降序，再按 id 稳定排序
