@@ -4,6 +4,7 @@ struct SchemeDetailView: View {
     let scheme: MixScheme
     @Bindable var viewModel: SchemeViewModel
     @Bindable var segmentLibraryVM: SegmentLibraryViewModel
+    @Environment(\.modelContext) private var modelContext
 
     @State private var drawerOperation: SegmentPickerDrawer.Operation?
 
@@ -48,6 +49,26 @@ struct SchemeDetailView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: drawerOperation)
+        .task(id: scheme.id) { cleanupStaleDubs() }
+    }
+
+    /// 清理废弃的旧克隆变体：架构为「只克隆原声」，每个视频当前仅一个有效克隆声 ID
+    /// （`video.clonedVoiceId`）。voiceId 不等于当前 ID 的 SegmentDub 是历史残留，删除其音频与记录。
+    private func cleanupStaleDubs() {
+        var changed = false
+        for ss in scheme.orderedSegments {
+            guard let seg = ss.segment, let current = seg.video?.clonedVoiceId else { continue }
+            let stale = seg.segmentDubs.filter { $0.voiceId != current }
+            guard !stale.isEmpty else { continue }
+            for d in stale {
+                if let path = d.audioFilePath {
+                    try? FileManager.default.removeItem(atPath: path)
+                }
+                modelContext.delete(d)
+                changed = true
+            }
+        }
+        if changed { try? modelContext.save() }
     }
 
     private func handlePick(_ segment: Segment, operation: SegmentPickerDrawer.Operation) {
@@ -181,9 +202,13 @@ struct SchemeDetailView: View {
 
     private var storyboardView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("分镜序列")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("分镜序列")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                combinationHint
+            }
 
             ScrollView(.horizontal, showsIndicators: true) {
                 // LazyHStack：横向懒加载，屏幕外的 StoryboardCard 不同步实例化
@@ -210,6 +235,32 @@ struct SchemeDetailView: View {
                 .frame(minHeight: 380)
             }
             .frame(height: 400)
+        }
+    }
+
+    /// 每镜可选项数（锁定=1，否则 原声+各改写=1+变体数），乘积=此方案导出可生成的变体组合数。
+    private var slotFactors: [Int] {
+        scheme.orderedSegments.map { ss in
+            guard let seg = ss.segment else { return 1 }
+            return seg.isVoiceLocked ? 1 : 1 + seg.effectiveDubVariants.count
+        }
+    }
+
+    /// 「此方案可生成 N 个变体组合（3×1×3×3）」提示。
+    @ViewBuilder
+    private var combinationHint: some View {
+        let factors = slotFactors
+        let total = factors.reduce(1, *)
+        if total <= 1 {
+            Label("暂无配音变体，导出为原声", systemImage: "waveform.slash")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+        } else {
+            Label("可生成 \(total) 个变体组合（\(factors.map(String.init).joined(separator: "×"))）",
+                  systemImage: "square.grid.3x3.fill")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.tint)
+                .help("此方案每个分镜可用「原声/改写A/改写B…」，全部排列组合共 \(total) 种；锁定原声的分镜计为 ×1。导出时按当前选定的一种组合输出一条视频。")
         }
     }
 
@@ -251,16 +302,33 @@ struct StoryboardCard: View {
     let onDelete: () -> Void
     let onReplace: () -> Void
     @State private var isHovering = false
+    @Environment(\.modelContext) private var modelContext
 
     private let cardWidth: CGFloat = 150
 
+    /// 该槽当前选定的配音变体（仅在有效变体中查找；未选/选不到 → nil = 原声默认）
+    private var chosenDub: SegmentDub? {
+        guard let id = schemeSeg.selectedSegmentDubId else { return nil }
+        return schemeSeg.segment?.effectiveDubVariants.first { $0.id == id }
+    }
+    /// 改写版字母：0→A、1→B…
+    private func variantLetter(_ index: Int) -> String {
+        guard let scalar = UnicodeScalar(65 + index) else { return "\(index + 1)" }
+        return String(Character(scalar))
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 8) {
             if let segment = schemeSeg.segment {
                 // 视频播放器 + 序号叠加 + hover 操作按钮
                 // 用 .overlay 而非 ZStack，避免 ZStack propose 不传递 height 导致 SegmentInlinePlayer 塌缩
-                SegmentInlinePlayer(segment: segment, viewModel: segmentLibraryVM)
-                    .frame(width: cardWidth, height: cardWidth * 16.0 / 9.0)
+                // 视频与下方文字统一内边距（由卡片外层 .padding(6) 提供），避免满宽视频与内缩文字「错位白边」
+                SegmentInlinePlayer(
+                    segment: segment,
+                    viewModel: segmentLibraryVM,
+                    dubAudioPath: segment.isVoiceLocked ? nil : chosenDub?.audioFilePath
+                )
+                    .frame(width: cardWidth - 12, height: (cardWidth - 12) * 16.0 / 9.0)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(alignment: .topLeading) {
                         Text("#\(schemeSeg.position)")
@@ -309,12 +377,12 @@ struct StoryboardCard: View {
                         .lineSpacing(2)
                         .help(segment.text)
 
+                    // 配音变体标 + 换变体（P5）
+                    dubBadge(for: segment)
+
                     // 紧凑时间调整
                     StoryboardTimeRow(segment: segment, viewModel: segmentLibraryVM)
                 }
-                .padding(.horizontal, 6)
-                .padding(.top, 6)
-                .padding(.bottom, 8)
             } else {
                 VStack(spacing: 6) {
                     Text("#\(schemeSeg.position)")
@@ -327,9 +395,10 @@ struct StoryboardCard: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 }
-                .frame(width: cardWidth, height: 80)
+                .frame(width: cardWidth - 12, height: 80)
             }
         }
+        .padding(6)
         .frame(width: cardWidth)
         .background {
             RoundedRectangle(cornerRadius: 10)
@@ -351,6 +420,57 @@ struct StoryboardCard: View {
             Divider()
             Button("删除", role: .destructive, action: onDelete)
                 .disabled(!canDelete)
+        }
+    }
+
+    @ViewBuilder
+    private func dubBadge(for segment: Segment) -> some View {
+        if segment.isVoiceLocked {
+            // 锁定分镜：只播原声，不可切换
+            Label("原声（锁定）", systemImage: "lock.fill")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(.orange)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(Capsule().fill(Color.orange.opacity(0.15)))
+        } else {
+            let variants = segment.effectiveDubVariants
+            if variants.isEmpty {
+                // 尚无任何已生成的改写版 → 仅原声，无可选
+                Label("原声", systemImage: "waveform")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.gray.opacity(0.12)))
+            } else {
+                // 非锁定：永远是下拉，默认「原声」，可切到任一克隆改写版
+                let chosen = chosenDub        // nil = 原声
+                Menu {
+                    Button {
+                        schemeSeg.selectedSegmentDubId = nil
+                        try? modelContext.save()
+                    } label: {
+                        Text("原声" + (chosen == nil ? "  ✓" : ""))
+                    }
+                    Divider()
+                    ForEach(variants, id: \.id) { v in
+                        Button {
+                            schemeSeg.selectedSegmentDubId = v.id
+                            try? modelContext.save()
+                        } label: {
+                            Text("改写\(variantLetter(v.textVariantIndex))" + (v.id == chosen?.id ? "  ✓" : ""))
+                        }
+                    }
+                } label: {
+                    Label(chosen == nil ? "原声" : "改写\(variantLetter(chosen!.textVariantIndex))",
+                          systemImage: "waveform")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(chosen == nil ? Color.secondary : Color.green)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Capsule().fill(chosen == nil ? Color.gray.opacity(0.12) : Color.green.opacity(0.15)))
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
         }
     }
 
@@ -378,39 +498,40 @@ struct StoryboardTimeRow: View {
     let segment: Segment
     @Bindable var viewModel: SegmentLibraryViewModel
 
+    private var fps: Double { segment.video?.fps ?? 30 }
+
     var body: some View {
-        HStack(spacing: 0) {
-            // IN 调整（±1 帧）
-            miniAdjustButton(icon: "minus") {
-                viewModel.adjustStartFrame(for: segment, by: -1)
-            }
-            Text(FrameTime.timecode(frame: segment.startFrame, fps: segment.video?.fps ?? 30))
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .center)
-            miniAdjustButton(icon: "plus") {
-                viewModel.adjustStartFrame(for: segment, by: 1)
-            }
-
-            // 分隔
-            Text("–")
-                .font(.system(size: 8))
-                .foregroundStyle(.quaternary)
-                .padding(.horizontal, 2)
-
-            // OUT 调整（±1 帧）
-            miniAdjustButton(icon: "minus") {
-                viewModel.adjustEndFrame(for: segment, by: -1)
-            }
-            Text(FrameTime.timecode(frame: segment.endFrame, fps: segment.video?.fps ?? 30))
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(width: 52, alignment: .center)
-            miniAdjustButton(icon: "plus") {
-                viewModel.adjustEndFrame(for: segment, by: 1)
-            }
+        // 上下两行（始/止），每行「标签 + − + 时码(弹性) + +」，最小 ~101px，稳放进 138px 卡片，绝不溢出
+        VStack(spacing: 3) {
+            adjustRow(label: "始",
+                      frame: segment.startFrame,
+                      onMinus: { viewModel.adjustStartFrame(for: segment, by: -1) },
+                      onPlus: { viewModel.adjustStartFrame(for: segment, by: 1) })
+            adjustRow(label: "止",
+                      frame: segment.endFrame,
+                      onMinus: { viewModel.adjustEndFrame(for: segment, by: -1) },
+                      onPlus: { viewModel.adjustEndFrame(for: segment, by: 1) })
         }
         .frame(maxWidth: .infinity)
+    }
+
+    private func adjustRow(label: String,
+                           frame: Int,
+                           onMinus: @escaping () -> Void,
+                           onPlus: @escaping () -> Void) -> some View {
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 8, weight: .semibold))
+                .foregroundStyle(.tertiary)
+            miniAdjustButton(icon: "minus", action: onMinus)
+            Text(FrameTime.timecode(frame: frame, fps: fps))
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            miniAdjustButton(icon: "plus", action: onPlus)
+        }
     }
 
     private func miniAdjustButton(icon: String, action: @escaping () -> Void) -> some View {

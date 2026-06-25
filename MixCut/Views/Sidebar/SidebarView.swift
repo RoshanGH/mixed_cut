@@ -339,7 +339,7 @@ struct SidebarView: View {
     /// 微信号卡片（点击侧边栏「微信」弹出）
     private var weChatCard: some View {
         VStack(spacing: 12) {
-            Text("添加我的微信")
+            Text("添加我的微信加入交流群")
                 .font(.system(size: 13, weight: .semibold))
 
             VStack(spacing: 4) {

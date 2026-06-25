@@ -59,14 +59,34 @@ enum FileHelper {
 
     // MARK: - 配音音频存储（按视频 hash / 方案变体 / 分镜 ID 三级目录）
 
-    /// 配音音频全局目录：AppSupport/MixCut/Dubs/{videoHash}/v{index}/{segmentId}.m4a
-    static func dubAudioURL(videoHash: String, variantIndex: Int, segmentId: UUID) -> URL {
+    /// 配音音频全局目录：AppSupport/MixCut/Dubs/{videoHash}/{segmentId}/{voiceId}-v{textVariantIndex}.m4a
+    static func dubAudioURL(videoHash: String, segmentId: UUID, voiceId: String, textVariantIndex: Int) -> URL {
         let dir = appSupportDirectory
             .appendingPathComponent("Dubs", isDirectory: true)
             .appendingPathComponent(videoHash, isDirectory: true)
-            .appendingPathComponent("v\(variantIndex)", isDirectory: true)
+            .appendingPathComponent(segmentId.uuidString, isDirectory: true)
         ensureDirectory(at: dir)
-        return dir.appendingPathComponent("\(segmentId.uuidString).m4a")
+        return dir.appendingPathComponent("\(voiceId)-v\(textVariantIndex).m4a")
+    }
+
+    // MARK: - 人声分离（demucs）模型与产物
+
+    /// demucs GGML 模型存储目录（AppSupport，理由同 Whisper：不能放 Caches 被系统清理）。
+    static var demucsModelsDirectory: URL {
+        let url = appSupportDirectory.appendingPathComponent("demucs-models", isDirectory: true)
+        ensureDirectory(at: url)
+        excludeFromBackup(url)
+        return url
+    }
+
+    /// 人声分离产物缓存目录：AppSupport/MixCut/Stems/{videoHash}/（vocals.wav / bgm.wav）。
+    /// 整轨分离一次后按需切片，键 = videoHash（确定性，避免重复分离）。
+    static func stemsDirectory(videoHash: String) -> URL {
+        let dir = appSupportDirectory
+            .appendingPathComponent("Stems", isDirectory: true)
+            .appendingPathComponent(videoHash, isDirectory: true)
+        ensureDirectory(at: dir)
+        return dir
     }
 
     // MARK: - Whisper 语音模型存储

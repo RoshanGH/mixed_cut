@@ -89,7 +89,6 @@ struct MixCutApp: App {
                 MixScheme.self,
                 SchemeSegment.self,
                 ProjectVideo.self,
-                DubVariant.self,
                 SegmentDub.self,
             ])
             // 一次性迁移：旧版用共享的 default.store（会被其它非沙盒 App 清库），
@@ -115,6 +114,12 @@ struct MixCutApp: App {
 
             // 修复空的 semanticTypesData（旧数据迁移丢失）
             Self.fixMissingSemanticTypes(container: modelContainer)
+            // CosyVoice 迁移：清理 qwen 旧配音变体 + 重置非法音色选择
+            Self.purgeLegacyQwenDubs(container: modelContainer)
+            // 清空旧的"长参考(18s)"克隆音色：长参考会让克隆配音漏读别段，改用 6s 短参考重克隆
+            Self.purgeLongRefClones(container: modelContainer)
+            // 方案配音默认改回原声：清空旧的"默认预选改写A"，让所有分镜默认播原声、用户再手动切
+            Self.resetSchemeDubSelectionToOriginal(container: modelContainer)
             // 清洗已有台词中的乱码和多余空格
             Self.cleanExistingTranscripts(container: modelContainer)
             // 帧化迁移：把现有分镜的秒边界回填成帧号
@@ -133,13 +138,16 @@ struct MixCutApp: App {
             // 孤儿文件 GC：回收已删除（只删记录、未删磁盘）且无任何记录引用的视频/缩略图文件。
             // 必须放在所有迁移/恢复之后，确保 recoverFromDisk 重建的视频已被记录引用，不会误删。
             Self.runOrphanGC(container: modelContainer)
+            #if DEBUG
+            DebugSelfTest.runIfRequested(container: modelContainer)
+            #endif
         } catch {
             // 数据库损坏时尝试内存模式启动，避免 fatalError 崩溃
             let schema = Schema([
                 Project.self, Video.self, Segment.self,
                 MixStrategy.self, MixScheme.self, SchemeSegment.self,
                 ProjectVideo.self,
-                DubVariant.self, SegmentDub.self,
+                SegmentDub.self,
             ])
             let memConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             do {
@@ -285,6 +293,84 @@ struct MixCutApp: App {
         sqlite3_finalize(updateStmt)
 
         UserDefaults.standard.set(true, forKey: fixKey)
+    }
+
+    /// CosyVoice 迁移：删除 voiceId 非 CosyVoice 目录的旧配音变体（qwen Cherry/Ethan… 会被引擎拒绝报 418），
+    /// 并把各视频已选音色里非法的 id 清掉。一次性执行，用户随后重选 CosyVoice 音色 + 重跑一键改写。
+    private static func purgeLegacyQwenDubs(container: ModelContainer) {
+        let key = "didPurgeLegacyQwenDubs_v1"
+        if UserDefaults.standard.bool(forKey: key) { return }
+
+        let ctx = ModelContext(container)
+        let validIds = Set(CosyVoiceCatalog.all.map(\.id))
+
+        var removedDubs = 0
+        if let dubs = try? ctx.fetch(FetchDescriptor<SegmentDub>()) {
+            for d in dubs where !validIds.contains(d.voiceId) {
+                ctx.delete(d)
+                removedDubs += 1
+            }
+        }
+
+        var cleanedVideos = 0
+        if let videos = try? ctx.fetch(FetchDescriptor<Video>()) {
+            for v in videos {
+                let filtered = v.selectedVoiceIds.filter { validIds.contains($0) }
+                if filtered.count != v.selectedVoiceIds.count {
+                    v.selectedVoiceIds = filtered
+                    cleanedVideos += 1
+                }
+            }
+        }
+
+        if removedDubs > 0 || cleanedVideos > 0 {
+            try? ctx.save()
+            MixLog.info(" CosyVoice 迁移：清理 \(removedDubs) 个旧 qwen 配音变体，重置 \(cleanedVideos) 个视频的非法音色选择")
+        }
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// 一次性迁移：清空用「18s 长参考」克隆出的旧音色。长参考含多句原话，会让 qwen 克隆 TTS
+    /// 间歇性"续读参考内容"导致配音混进下一段（实测 18s→clean 1/3，6s→clean 5/5）。
+    /// 清空后，用户下次「一键改写」会用 6s 短参考重新克隆。
+    private static func purgeLongRefClones(container: ModelContainer) {
+        let key = "didPurgeLongRefClones_v1"
+        if UserDefaults.standard.bool(forKey: key) { return }
+        let ctx = ModelContext(container)
+        var cleared = 0
+        if let videos = try? ctx.fetch(FetchDescriptor<Video>()) {
+            for v in videos where (v.clonedVoiceId ?? "").isEmpty == false {
+                v.clonedVoiceId = nil
+                v.selectedVoiceIds = []
+                cleared += 1
+            }
+        }
+        if cleared > 0 {
+            try? ctx.save()
+            MixLog.info(" 已清空 \(cleared) 个旧长参考克隆音色，下次一键改写将用 6s 短参考重克隆")
+        }
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    /// 一次性迁移：把所有方案分镜的配音选择重置为原声（selectedSegmentDubId = nil）。
+    /// 旧逻辑创建方案时默认预选了「改写A」，与「默认播原声、用户手动切」的产品意图不符。
+    /// 重置后用户在分镜序列下拉里按需切换克隆改写版，之后的选择不会再被重置。
+    private static func resetSchemeDubSelectionToOriginal(container: ModelContainer) {
+        let key = "didResetSchemeDubSelection_v1"
+        if UserDefaults.standard.bool(forKey: key) { return }
+        let ctx = ModelContext(container)
+        var reset = 0
+        if let segs = try? ctx.fetch(FetchDescriptor<SchemeSegment>()) {
+            for ss in segs where ss.selectedSegmentDubId != nil {
+                ss.selectedSegmentDubId = nil
+                reset += 1
+            }
+        }
+        if reset > 0 {
+            try? ctx.save()
+            MixLog.info(" 已把 \(reset) 个方案分镜的配音选择重置为原声（默认原声）")
+        }
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     /// 帧化迁移：现有分镜以秒存边界，按各自视频 fps 回填帧号（startFrame/endFrame）。

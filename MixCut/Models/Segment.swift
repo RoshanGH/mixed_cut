@@ -73,6 +73,10 @@ final class Segment: Identifiable {
     @Relationship(deleteRule: .cascade, inverse: \SchemeSegment.segment)
     var schemeSegments: [SchemeSegment] = []
 
+    /// 配音变体池（每个 = 该分镜的一个 改写版×音色 变体）
+    @Relationship(deleteRule: .cascade, inverse: \SegmentDub.segment)
+    var segmentDubs: [SegmentDub] = []
+
     var createdAt: Date
 
     // MARK: - 配音改写相关（P1）

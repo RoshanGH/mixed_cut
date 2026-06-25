@@ -10,6 +10,7 @@ struct SegmentLibraryView: View {
     @State private var showBatchDeleteConfirm = false
     @State private var showArrangeSheet = false
     @State private var isLoading = true
+    @State private var dubVM = DubbingViewModel()
 
     var body: some View {
         // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
@@ -49,10 +50,20 @@ struct SegmentLibraryView: View {
 
             Divider()
 
-            if viewModel.filteredSegments.isEmpty {
-                emptyState
-            } else {
-                segmentContent
+            HStack(spacing: 0) {
+                Group {
+                    if viewModel.filteredSegments.isEmpty {
+                        emptyState
+                    } else {
+                        segmentContent
+                    }
+                }
+                .frame(maxWidth: .infinity)
+
+                if let seg = viewModel.selectedSegment {
+                    Divider()
+                    SegmentVariantInspector(segment: seg, dubVM: dubVM)
+                }
             }
         }
         .navigationTitle("分镜素材库")
@@ -381,12 +392,16 @@ struct SegmentLibraryView: View {
             }
             .padding(.horizontal, 4)
 
+            // 该视频专属的「配音」栏（一键改写只改本视频；克隆按视频各自做）
+            DubSettingsBar(video: group.video, dubVM: dubVM)
+
             // 分镜卡片/行
             // 性能关键：父视图在 ForEach 内一次性算 isChecked / sequenceNumber，
             // 传给 SegmentCard 作为 props。SegmentCard 实现 Equatable + .equatable() 后，
             // 选中变化只会重绘那一个卡片，其他卡片跳过 body 评估。
             let selectionMode = viewModel.isSelectionMode
             let selectedIDs = viewModel.selectedSegmentIDs    // 读一次本地变量
+            let selectedSegID = viewModel.selectedSegment?.id // 读一次：检视栏选中分镜
             let numberMap = viewModel.numberByVideo
             if viewModel.isGridView {
                 LazyVGrid(columns: [
@@ -397,6 +412,7 @@ struct SegmentLibraryView: View {
                             segment: segment,
                             isChecked: selectedIDs.contains(segment.id),
                             isSelectionMode: selectionMode,
+                            isSelected: segment.id == selectedSegID,
                             sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
                             viewModel: viewModel
                         )
@@ -410,6 +426,7 @@ struct SegmentLibraryView: View {
                             segment: segment,
                             isChecked: selectedIDs.contains(segment.id),
                             isSelectionMode: selectionMode,
+                            isSelected: segment.id == selectedSegID,
                             sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
                             viewModel: viewModel
                         )
@@ -459,6 +476,7 @@ struct SegmentCard: View, Equatable {
     let segment: Segment
     let isChecked: Bool
     let isSelectionMode: Bool
+    let isSelected: Bool
     let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
 
@@ -479,6 +497,7 @@ struct SegmentCard: View, Equatable {
         lhs.segment.id == rhs.segment.id
             && lhs.isChecked == rhs.isChecked
             && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.isSelected == rhs.isSelected
             && lhs.sequenceNumber == rhs.sequenceNumber
             && lhs.segment.text == rhs.segment.text
             && lhs.segment.isVoiceLocked == rhs.segment.isVoiceLocked
@@ -488,10 +507,6 @@ struct SegmentCard: View, Equatable {
             && lhs.segment.maskY == rhs.segment.maskY
             && lhs.segment.maskWidth == rhs.segment.maskWidth
             && lhs.segment.maskHeight == rhs.segment.maskHeight
-    }
-
-    private var isSelected: Bool {
-        viewModel.selectedSegment?.id == segment.id
     }
 
     var body: some View {
@@ -548,6 +563,9 @@ struct SegmentCard: View, Equatable {
         .onTapGesture {
             if isSelectionMode {
                 viewModel.toggleSelection(segment)
+            } else {
+                // 非多选：点击选中分镜 → 打开右侧配音变体检视栏
+                viewModel.selectedSegment = segment
             }
         }
         .contextMenu {
@@ -660,13 +678,13 @@ struct SegmentCard: View, Equatable {
                     get: { segment.isVoiceLocked },
                     set: { segment.isVoiceLocked = $0; try? modelContext.save() }
                 ),
-                hasHardSubtitle: Binding(
-                    get: { segment.hasHardSubtitle },
-                    set: { segment.hasHardSubtitle = $0; try? modelContext.save() }
-                ),
-                maskStyle: Binding(
-                    get: { segment.maskStyle },
-                    set: { segment.maskStyle = $0; try? modelContext.save() }
+                treatment: Binding(
+                    get: { SubtitleTreatment.from(hasHardSubtitle: segment.hasHardSubtitle, maskStyle: segment.maskStyle) },
+                    set: { newVal in
+                        segment.hasHardSubtitle = newVal.needsMask
+                        if let style = newVal.maskStyle { segment.maskStyle = style }
+                        try? modelContext.save()
+                    }
                 ),
                 onApplyMaskToAll: { applyMaskToAllSegments(of: segment) }
             )
@@ -718,6 +736,18 @@ struct SegmentCard: View, Equatable {
                         Image(systemName: "square.and.pencil").font(.system(size: 11))
                     }
                     .buttonStyle(.plain).foregroundStyle(.secondary).help("编辑台词")
+                    Button {
+                        Task { await viewModel.reextractTranscript(segment, context: modelContext) }
+                    } label: {
+                        if viewModel.busyASRSegmentIDs.contains(segment.id) {
+                            ProgressView().controlSize(.mini)
+                        } else {
+                            Image(systemName: "arrow.clockwise.circle").font(.system(size: 11))
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(viewModel.busyASRSegmentIDs.contains(segment.id))
+                    .help("用阿里云 ASR 重新识别这一分镜的台词（替换原台词，whisper 不变）")
                 }
             }
             .padding(.horizontal, 8)
@@ -807,8 +837,12 @@ struct SegmentCard: View, Equatable {
 struct SegmentInlinePlayer: View {
     let segment: Segment
     @Bindable var viewModel: SegmentLibraryViewModel
+    /// 可选：选中配音变体的音频路径。非 nil 时播放静音视频原声、同步播此变体音轨（方案预览用）。
+    var dubAudioPath: String? = nil
 
     @State private var player: AVPlayer?
+    @State private var dubPlayer: AVAudioPlayer?
+    @State private var bgmPlayer: AVAudioPlayer?   // 变体预览时叠加的分离背景音乐
     @State private var isPlaying = false
     @State private var isFrozen = false        // 播放到结尾后定格在最后一帧（非 nil player，但已暂停）
     @State private var timeObserver: Any?
@@ -852,21 +886,29 @@ struct SegmentInlinePlayer: View {
                             .padding(5)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .onHover { hovering in
-                        isHovering = hovering
-                        if hovering {
-                            hoverTimer?.invalidate()
-                            hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
-                                Task { @MainActor in
-                                    guard isHovering else { return }
-                                    viewModel.requestPlay(segment: segment)
-                                }
-                            }
-                        }
-                    }
             } else {
                 // hover 或播放态：完整 player UI
                 playerUI
+            }
+        }
+        // hover 统一挂在外层 Group(稳定容器)：静态↔playerUI 子视图切换时不会丢/错乱 hover 事件，
+        // 这是"播放中移到另一分镜会卡住"的根因修复。
+        .onHover { hovering in
+            isHovering = hovering
+            if hovering {
+                hoverTimer?.invalidate()
+                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
+                    Task { @MainActor in
+                        guard isHovering else { return }
+                        viewModel.requestPlay(segment: segment)
+                    }
+                }
+            } else {
+                hoverTimer?.invalidate()
+                hoverTimer = nil
+                if isPlaying || isFrozen { stopPlayback() }
+                // 仅当全局仍是"我"在播才清空——避免离开本分镜时误杀刚移入的下一个分镜。
+                if viewModel.playingSegmentID == segment.id { viewModel.stopCurrentPlayback() }
             }
         }
         // ⚠️ 播放请求监听必须挂在 body 顶层（而非 playerUI 内）：空闲态只渲染缩略图时
@@ -920,27 +962,10 @@ struct SegmentInlinePlayer: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)   // 横屏视频 fit 进 9:16 的留边填黑，避免透出卡片底色的「透明边」
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .onHover { hovering in
-            isHovering = hovering
-            if hovering {
-                hoverTimer?.invalidate()
-                hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { _ in
-                    Task { @MainActor in
-                        guard isHovering else { return }
-                        viewModel.requestPlay(segment: segment)
-                    }
-                }
-            } else {
-                hoverTimer?.invalidate()
-                hoverTimer = nil
-                if isPlaying || isFrozen {
-                    stopPlayback()
-                    viewModel.stopCurrentPlayback()
-                }
-            }
-        }
+        // 注意：hover 已统一挂在 body 外层 Group，playerUI 内不再重复挂 onHover（会与子视图切换打架）。
         .onDisappear {
             hoverTimer?.invalidate()
             stopPlayback()
@@ -972,6 +997,7 @@ struct SegmentInlinePlayer: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black)   // 横屏视频 fit 进 9:16 的留边填黑（否则透出卡片半透明底=「透明边」）
         .clipped()
     }
 
@@ -1000,6 +1026,33 @@ struct SegmentInlinePlayer: View {
         isPlaying = true
         isFrozen = false
 
+        // 方案预览：有选中变体音频时静音视频原声（含原人声），改放「克隆人声 + 分离BGM」
+        if let dubPath = dubAudioPath, FileManager.default.fileExists(atPath: dubPath) {
+            avPlayer.isMuted = true
+            do {
+                let ap = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: dubPath))
+                ap.prepareToPlay()
+                dubPlayer = ap
+            } catch {
+                dubPlayer = nil
+            }
+            // 背景音乐：用 demucs 分离出的 bgm.wav（已去人声、保持原响度），按原时间轴定位到本段起点，
+            // 与画面同步播放，使变体配音不再「干声无背景」。无分离文件则跳过（仅放克隆人声）。
+            if let hash = segment.video?.contentHash {
+                let bgmURL = FileHelper.stemsDirectory(videoHash: hash).appendingPathComponent("bgm.wav")
+                if FileManager.default.fileExists(atPath: bgmURL.path) {
+                    do {
+                        let bp = try AVAudioPlayer(contentsOf: bgmURL)
+                        bp.currentTime = max(0, startTime)   // BGM 与画面同走原时间轴
+                        bp.prepareToPlay()
+                        bgmPlayer = bp
+                    } catch {
+                        bgmPlayer = nil
+                    }
+                }
+            }
+        }
+
         let startCMTime = CMTime(seconds: startTime + halfFrame, preferredTimescale: 600)
         avPlayer.seek(to: startCMTime, toleranceBefore: .zero, toleranceAfter: .zero)
 
@@ -1020,6 +1073,8 @@ struct SegmentInlinePlayer: View {
         }
 
         avPlayer.play()
+        dubPlayer?.play()
+        bgmPlayer?.play()
     }
 
     /// 播放到分镜结尾：暂停并定格在分镜最后一帧（endTime 前半帧），不回缩略图。
@@ -1031,6 +1086,10 @@ struct SegmentInlinePlayer: View {
         timeObserver = nil
         if let no = endNotifObserver { NotificationCenter.default.removeObserver(no) }
         endNotifObserver = nil
+        dubPlayer?.stop()
+        dubPlayer = nil
+        bgmPlayer?.stop()
+        bgmPlayer = nil
         guard let p = player else { return }
         p.pause()
         // endTime 是下一段起点(exclusive)，本段最后一帧落在 endTime 前半帧
@@ -1053,6 +1112,10 @@ struct SegmentInlinePlayer: View {
         timeObserver = nil
         if let no = endNotifObserver { NotificationCenter.default.removeObserver(no) }
         endNotifObserver = nil
+        dubPlayer?.stop()
+        dubPlayer = nil
+        bgmPlayer?.stop()
+        bgmPlayer = nil
         player?.pause()
         player = nil
         isPlaying = false
@@ -1068,6 +1131,7 @@ struct SegmentRow: View, Equatable {
     let segment: Segment
     let isChecked: Bool
     let isSelectionMode: Bool
+    let isSelected: Bool
     let sequenceNumber: Int
     @Bindable var viewModel: SegmentLibraryViewModel
     @State private var isHovering = false
@@ -1076,11 +1140,8 @@ struct SegmentRow: View, Equatable {
         lhs.segment.id == rhs.segment.id
             && lhs.isChecked == rhs.isChecked
             && lhs.isSelectionMode == rhs.isSelectionMode
+            && lhs.isSelected == rhs.isSelected
             && lhs.sequenceNumber == rhs.sequenceNumber
-    }
-
-    private var isSelected: Bool {
-        viewModel.selectedSegment?.id == segment.id
     }
 
     var body: some View {

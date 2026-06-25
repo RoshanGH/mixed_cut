@@ -423,6 +423,46 @@ final class SegmentLibraryViewModel {
         )
     }
 
+    // MARK: - 阿里 ASR 重提取台词
+
+    /// 正在用阿里 ASR 重提取台词的分镜（控制按钮 loading / 禁用）
+    var busyASRSegmentIDs: Set<UUID> = []
+    private let asrClient = QwenASRClient()
+    private let asrFFmpeg = FFmpegRunner()
+
+    /// 用阿里 paraformer 对单个分镜重识别，只更新 segment.text（whisper 流程不动）
+    func reextractTranscript(_ segment: Segment, context: ModelContext) async {
+        guard let video = segment.video, !video.localPath.isEmpty,
+              FileManager.default.fileExists(atPath: video.localPath) else {
+            ToastCenter.shared.show("找不到原视频文件", icon: "exclamationmark.triangle.fill", style: .warning)
+            return
+        }
+        guard !busyASRSegmentIDs.contains(segment.id) else { return }
+        busyASRSegmentIDs.insert(segment.id)
+        defer { busyASRSegmentIDs.remove(segment.id) }
+
+        let fps = video.fps > 0 ? video.fps : 30
+        let start = Double(segment.startFrame) / fps
+        let end = Double(segment.endFrame) / fps
+        let pcmURL = FileHelper.tempDirectory.appendingPathComponent("asr-\(UUID().uuidString).pcm")
+        defer { try? FileManager.default.removeItem(at: pcmURL) }
+
+        do {
+            try await asrFFmpeg.extractSegmentPCM(from: video.localPath, start: start, end: end, to: pcmURL.path)
+            let text = try await asrClient.transcribe(pcmPath: pcmURL.path)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                ToastCenter.shared.show("未识别到语音，保留原台词", icon: "waveform.slash", style: .warning)
+                return
+            }
+            segment.text = trimmed
+            try? context.save()
+            ToastCenter.shared.show("已用阿里 ASR 重提取台词", icon: "checkmark.circle.fill", style: .success)
+        } catch {
+            ToastCenter.shared.show("重提取失败：\(error.localizedDescription)", icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
+        }
+    }
+
     /// 统计信息
     var statistics: (total: Int, byType: [SemanticType: Int], avgQuality: Double) {
         var byType: [SemanticType: Int] = [:]

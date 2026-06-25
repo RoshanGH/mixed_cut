@@ -29,3 +29,11 @@ MixCut/Resources/bin/
 # Python bytecode cache (来自 generate_xcodeproj.py)
 __pycache__/
 *.pyc
+
+# Superpowers 执行期临时产物(进度/brainstorm 草稿)
+.superpowers/
+
+# 散落的临时文件
+图标.png
+CODE_REVIEW_FINDINGS_*.md
+.DS_Store

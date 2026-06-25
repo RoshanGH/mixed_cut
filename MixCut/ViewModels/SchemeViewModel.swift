@@ -9,6 +9,10 @@ final class SchemeViewModel {
     var selectedStrategy: MixStrategy?
     var selectedScheme: MixScheme?
     var isGenerating = false
+
+    // 配音（P5）：生成方案时的音色模式
+    var generationVoiceMode: VoiceMode = .unified
+    var generationUnifiedVoiceId: String?
     /// 叙事结构变体生成中（独立于 AI 方案生成的 isGenerating，避免误禁用工具栏「生成」按钮）
     var isNarrativeGenerating = false
     var generationProgress: String = ""
@@ -226,6 +230,9 @@ final class SchemeViewModel {
             um?.beginUndoGrouping()
             um?.setActionName("生成方案")
             defer { um?.endUndoGrouping() }
+
+            // 一个 composition = 一个方案(原分镜序列)。方案数有限、不再炸成变体视频；
+            // 每个方案的「可生成变体组合数」只在详情页用一行字提示，导出仍是按选定组合的一条视频。
             for (i, strategyResult, compositions) in allResults {
                 let strategy = MixStrategy(
                     name: strategyResult.name,
@@ -240,17 +247,13 @@ final class SchemeViewModel {
 
                 for (vi, comp) in compositions.enumerated() {
                     guard !comp.segments.isEmpty else { continue }
-
-                    // 匹配分镜并计算时长
                     let matchedSegments = comp.segments.compactMap { catalog.idMap[$0] }
                     let totalDuration = matchedSegments.reduce(0.0) { $0 + $1.duration }
 
                     let scheme = MixScheme(
                         variationIndex: vi + 1,
                         schemeIndex: String(format: "scheme_%03d_%03d", i + 1, vi + 1),
-                        name: comp.desc.isEmpty
-                            ? "\(strategyResult.name) #\(vi + 1)"
-                            : comp.desc,
+                        name: comp.desc.isEmpty ? "\(strategyResult.name) #\(vi + 1)" : comp.desc,
                         style: strategyResult.style,
                         description: strategyResult.description,
                         targetAudience: strategyResult.targetAudience,
@@ -259,19 +262,16 @@ final class SchemeViewModel {
                     scheme.estimatedDuration = totalDuration
                     scheme.strategy = strategy
                     scheme.project = project
+                    scheme.voiceMode = generationVoiceMode
+                    scheme.unifiedVoiceId = generationUnifiedVoiceId
                     context.insert(scheme)
 
-                    // 用字典直接匹配，O(1) 查找
-                    createSchemeSegments(
-                        segmentIDs: comp.segments,
-                        scheme: scheme,
-                        idMap: catalog.idMap,
-                        context: context
-                    )
+                    createSchemeSegments(segmentIDs: comp.segments, scheme: scheme,
+                                         idMap: catalog.idMap, context: context)
                 }
 
                 try context.save()
-                MixLog.info(" 策略「\(strategyResult.name)」: \(compositions.count) 个变体")
+                MixLog.info(" 策略「\(strategyResult.name)」: \(compositions.count) 个方案")
             }
 
             project.status = .completed
@@ -279,7 +279,7 @@ final class SchemeViewModel {
             try context.save()
 
             loadSchemes(for: project)
-            generationProgress = "生成完成：\(strategies.count) 个策略，共 \(schemes.count) 个视频方案"
+            generationProgress = "生成完成：\(strategies.count) 个策略，共 \(schemes.count) 个方案"
             ToastCenter.shared.show("已生成 \(strategies.count) 个策略 · \(schemes.count) 个方案", icon: "sparkles", style: .success)
         } catch {
             errorMessage = "方案生成失败: \(error.localizedDescription)\n(\(String(describing: error).prefix(300)))"
@@ -290,43 +290,27 @@ final class SchemeViewModel {
         isGenerating = false
     }
 
-    // MARK: - 分镜匹配（字典直接查找）
+    // MARK: - 分镜匹配（字典直接查找，单条视频用）
 
-    /// 用全局 ID 字典直接匹配，替代旧的 5 层 fallback
+    /// 为单条方案创建有序 SchemeSegment，并取第一组合做配音分配（叙事模板/自定义方案用，不做变体展开）。
     private func createSchemeSegments(
         segmentIDs: [String],
         scheme: MixScheme,
         idMap: [String: Segment],
         context: ModelContext
     ) {
-        var matchedCount = 0
-        var skipped: [String] = []
-        var position = 0   // 独立编号：跳过的不占位，方案显示为 1..N 连续
-
-        for segID in segmentIDs {
-            // SV-09：AI 幻觉可能给出 idMap 里没有的 ID；不能创建 segment=nil 的 SchemeSegment
-            // 否则导出时该位置无源文件，整个方案黑屏
-            guard let matched = idMap[segID] else {
-                skipped.append(segID)
-                continue
-            }
-
-            position += 1
-            matchedCount += 1
-            let schemeSeg = SchemeSegment(
-                position: position,
-                reasoning: "",
-                positionReasoning: ""
-            )
-            schemeSeg.scheme = scheme
-            schemeSeg.segment = matched
-            context.insert(schemeSeg)
+        let matched: [Segment] = segmentIDs.compactMap { idMap[$0] }
+        if matched.count < segmentIDs.count {
+            MixLog.info("[SV-09] 方案「\(scheme.name)」跳过未匹配分镜 \(segmentIDs.count - matched.count) 个")
         }
-
-        if !skipped.isEmpty {
-            MixLog.info("[SV-09] 变体「\(scheme.name)」AI 未匹配分镜已跳过: \(skipped.joined(separator: ", "))")
+        // 默认全部播原声（selectedSegmentDubId = nil）；用户在分镜序列里按需手动切到克隆改写版。
+        for (idx, seg) in matched.enumerated() {
+            let ss = SchemeSegment(position: idx + 1, reasoning: "", positionReasoning: "")
+            ss.scheme = scheme
+            ss.segment = seg
+            ss.selectedSegmentDubId = nil
+            context.insert(ss)
         }
-        MixLog.info(" 变体「\(scheme.name)」: \(matchedCount)/\(segmentIDs.count) 分镜匹配")
     }
 
     // MARK: - 删除
@@ -647,6 +631,8 @@ final class SchemeViewModel {
             scheme.estimatedDuration = matched.reduce(0.0) { $0 + $1.duration }
             scheme.strategy = strategy
             scheme.project = project
+            scheme.voiceMode = generationVoiceMode
+            scheme.unifiedVoiceId = generationUnifiedVoiceId
             strategy.schemes.append(scheme)
             context.insert(scheme)
 
