@@ -12,6 +12,8 @@ struct NarrativeStructureEditorView: View {
     private struct SlotRow: Identifiable {
         let id = UUID()
         var tags: [String]
+        var minDuration: Double? = nil
+        var maxDuration: Double? = nil
     }
 
     /// 本地编辑态段位（值类型，编辑期间不直接写库；点保存/生成时落库）
@@ -47,7 +49,7 @@ struct NarrativeStructureEditorView: View {
             // 库里的 NarrativeSlot 映射回 SlotRow（各生成新 UUID，order 按当前顺序丢弃）
             slots = strategy.narrativeSlots
                 .sorted { $0.order < $1.order }
-                .map { SlotRow(tags: $0.tags) }
+                .map { SlotRow(tags: $0.tags, minDuration: $0.minDuration, maxDuration: $0.maxDuration) }
         }
         .sheet(item: tagPickerBinding) { boxed in
             tagPickerSheet(for: boxed.id)
@@ -129,13 +131,13 @@ struct NarrativeStructureEditorView: View {
                 }
                 .listStyle(.plain)
                 .scrollDisabled(true)
-                .frame(height: CGFloat(slots.count) * 72 + 8)
+                .frame(height: CGFloat(slots.count) * 100 + 8)
             }
         }
     }
 
     private func slotRow(index: Int, row: SlotRow) -> some View {
-        let candidateCount = candidateCount(forTags: row.tags)
+        let candidateCount = candidateCount(for: row)
         // 送 AI 的候选会截断到 30，这里据此展示，避免"候选很多但变体少"的困惑
         let sentToAI = min(candidateCount, narrativeCandidateLimit)
         let isInvalid = row.tags.isEmpty || candidateCount == 0
@@ -171,6 +173,22 @@ struct NarrativeStructureEditorView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                }
+
+                // 时长区间过滤(留空=不限)
+                HStack(spacing: 6) {
+                    Image(systemName: "timer").font(.system(size: 10)).foregroundStyle(.secondary)
+                    Text("时长").font(.system(size: 11)).foregroundStyle(.secondary)
+                    TextField("不限", text: durationBinding(for: index, keyPath: \.minDuration))
+                        .frame(width: 44).textFieldStyle(.roundedBorder).font(.system(size: 11))
+                    Text("~").font(.system(size: 11)).foregroundStyle(.secondary)
+                    TextField("不限", text: durationBinding(for: index, keyPath: \.maxDuration))
+                        .frame(width: 44).textFieldStyle(.roundedBorder).font(.system(size: 11))
+                    Text("秒").font(.system(size: 11)).foregroundStyle(.secondary)
+                    if let lo = row.minDuration, let hi = row.maxDuration, lo > hi {
+                        Label("最短>最长", systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10)).foregroundStyle(.orange)
+                    }
                 }
 
                 // 候选数 / 标红提示
@@ -311,7 +329,9 @@ struct NarrativeStructureEditorView: View {
     private var canGenerate: Bool {
         guard !viewModel.isNarrativeGenerating else { return false }
         guard !normalizedSlots.isEmpty else { return false }
-        return normalizedSlots.allSatisfy { !$0.tags.isEmpty && candidateCount(forTags: $0.tags) > 0 }
+        return normalizedSlots.allSatisfy {
+            !$0.tags.isEmpty && !NarrativeStructureEngine.candidatePool(for: $0, in: descriptors).isEmpty
+        }
     }
 
     // MARK: - 加标签面板
@@ -389,12 +409,33 @@ struct NarrativeStructureEditorView: View {
     /// 已规整 order 的段位（按当前数组下标重排 order，tags 照搬）
     private var normalizedSlots: [NarrativeSlot] {
         slots.enumerated().map { i, row in
-            NarrativeSlot(order: i, tags: row.tags)
+            NarrativeSlot(order: i, tags: row.tags, minDuration: row.minDuration, maxDuration: row.maxDuration)
         }
     }
 
-    private func candidateCount(forTags tags: [String]) -> Int {
-        NarrativeStructureEngine.candidatePool(for: NarrativeSlot(order: 0, tags: tags), in: descriptors).count
+    private func candidateCount(for row: SlotRow) -> Int {
+        let slot = NarrativeSlot(order: 0, tags: row.tags, minDuration: row.minDuration, maxDuration: row.maxDuration)
+        return NarrativeStructureEngine.candidatePool(for: slot, in: descriptors).count
+    }
+
+    /// 把可选秒数与输入框文本互转:空串↔nil;非法输入(负数/非数字)忽略,保留原值
+    private func durationBinding(for index: Int, keyPath: WritableKeyPath<SlotRow, Double?>) -> Binding<String> {
+        Binding(
+            get: {
+                guard index < self.slots.count, let v = self.slots[index][keyPath: keyPath] else { return "" }
+                return v.rounded() == v ? String(Int(v)) : String(v)
+            },
+            set: { newText in
+                guard index < self.slots.count else { return }
+                let trimmed = newText.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty {
+                    self.slots[index][keyPath: keyPath] = nil
+                } else if let d = Double(trimmed), d >= 0 {
+                    self.slots[index][keyPath: keyPath] = d
+                }
+                self.persist()
+            }
+        )
     }
 
     /// 项目库分镜的轻量描述（用于候选数计算）
