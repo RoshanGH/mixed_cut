@@ -13,6 +13,11 @@ enum AIProviderError: LocalizedError {
         case .apiKeyNotConfigured(let provider):
             return "\(provider.displayName) API Key 未配置，请在设置中添加"
         case .requestFailed(let msg):
+            // 先尝试识别确切原因（欠费/无效 Key/未开通模型/限流），识别不出才退回「网络」兜底——
+            // 否则会把欠费、无效 Key 等都误报成「请检查网络」，误导排查方向。
+            if let hint = APIErrorClassifier.hint(msg) {
+                return "\(hint)（接口返回：\(msg.prefix(200)))"
+            }
             return "AI 服务连接失败，请检查网络后重试。(\(msg))"
         case .invalidResponse(let msg):
             return "AI 返回了无法识别的内容，请重试。(\(msg))"
@@ -21,6 +26,59 @@ enum AIProviderError: LocalizedError {
         case .jsonParsingFailed(let msg):
             return "AI 返回的数据格式异常，请重试。(\(msg))"
         }
+    }
+}
+
+/// 把第三方 API（DashScope/千问等 OpenAI 兼容、TTS）返回的原始错误文本，识别成用户能看懂的中文原因。
+/// AI 改写与 TTS 配音共用一套，避免各处重复翻译。识别不出返回 nil，由调用方兜底（保留原文）。
+enum APIErrorClassifier {
+
+    /// 识别原始错误文本的友好中文原因；无法识别返回 nil。
+    static func hint(_ raw: String) -> String? {
+        let l = raw.lowercased()
+
+        // 欠费 / 余额不足（阿里云 Arrearage）—— 与网络无关，必须单独识别
+        if l.contains("arrearage") || l.contains("overdue") || l.contains("欠费")
+            || l.contains("good standing") {
+            return "账户已欠费或余额不足：请到阿里云百炼（DashScope）控制台充值/检查额度后重试。"
+        }
+        // 克隆音色失效（多因更换 API Key，旧克隆音色绑定原账户）
+        if l.contains("tts speak request failed")
+            || (l.contains("invalidparameter") && l.contains("voice")) {
+            return "克隆音色在当前 API Key 下不可用——通常是更换了千问 API Key（克隆音色绑定原账户）。请重新「一键改写」自动用当前 Key 重克隆原声；若仍失败，请确认该 Key 已开通 qwen3-tts-vc 声音克隆。"
+        }
+        // API Key 无效 / 未授权
+        if l.contains("invalidapikey") || l.contains("invalid api key")
+            || l.contains("invalid_api_key") || l.contains("incorrect api key")
+            || l.contains("unauthorized") || l.contains("http 401") {
+            return "API Key 无效或未授权：请到「设置」检查 API Key 是否填写正确、是否已开通对应服务（DashScope/百炼）。"
+        }
+        // 模型未开通 / 无权限
+        if l.contains("accessdenied") || l.contains("model.access")
+            || l.contains("http 403") || (l.contains("model") && l.contains("denied")) {
+            return "该 API Key 未开通所需模型权限，请在控制台开通对应模型后重试（声音克隆需 qwen-voice-enrollment 与 qwen3-tts-vc）。"
+        }
+        // 限流
+        if l.contains("throttl") || l.contains("ratelimit") || l.contains("rate limit")
+            || l.contains("requests rate") || l.contains("http 429") {
+            return "请求过于频繁（限流），请稍后再试。"
+        }
+        // 真正的网络问题
+        if l.contains("timed out") || l.contains("timeout") || l.contains("offline")
+            || l.contains("network connection") || l.contains("could not connect")
+            || l.contains("connection lost") || l.contains("not connect to the internet") {
+            return "网络异常或超时，请检查网络后重试。"
+        }
+        return nil
+    }
+
+    /// 带兜底：识别不出时返回原文（截断）。
+    static func friendly(_ error: Error, maxRawLen: Int = 200) -> String {
+        let raw = error.localizedDescription
+        if let hint = hint(raw) {
+            return "\(hint)\n（接口返回：\(raw.prefix(maxRawLen)))"
+        }
+        return raw
     }
 }
 

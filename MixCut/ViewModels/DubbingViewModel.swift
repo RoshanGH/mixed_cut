@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import AVFoundation
+import CryptoKit
 
 @MainActor
 @Observable
@@ -35,6 +36,8 @@ final class DubbingViewModel {
     var auditioningVoiceId: String?
     var playingDubID: UUID?
     var errorMessage: String?
+    /// 每个变体最近一次合成失败的友好原因（dubID → 文案），供批量汇总与单格展示。
+    var lastDubErrors: [UUID: String] = [:]
 
     /// 该视频是否正在配音处理中（用于其专属配音条显示忙碌）。
     func isBusy(videoID: UUID?) -> Bool {
@@ -70,11 +73,24 @@ final class DubbingViewModel {
     /// 确保该视频已克隆出原声音色（无则分离人声并注册）。返回是否就绪。
     /// 已去掉手动选音色：克隆原声就是唯一音色，落在 selectedVoiceIds=[clonedVoiceId]。
     @discardableResult
-    func ensureClonedVoice(for video: Video, context: ModelContext) async -> Bool {
-        if let cv = video.clonedVoiceId, !cv.isEmpty {
-            if video.selectedVoiceIds != [cv] { video.selectedVoiceIds = [cv]; try? context.save() }
-            return true
+    func ensureClonedVoice(for video: Video, context: ModelContext, forceReclone: Bool = false) async -> Bool {
+        let hash = video.contentHash ?? video.id.uuidString
+        let fpKey = "clonedVoiceKeyFP_\(hash)"
+        let currentFP = Self.currentKeyFingerprint()
+        if !forceReclone, let cv = video.clonedVoiceId, !cv.isEmpty {
+            // DashScope 克隆音色绑定注册它的账户(API Key)。换 Key 后旧 voiceId 在新账户不存在，
+            // 合成会报 InvalidParameter。指纹能识别「装新版后克隆」的音色；存量旧音色无指纹，
+            // 这里乐观复用，真失败时由 generateAllAudioWithRecloneFallback 兜底强制重克隆。
+            let savedFP = UserDefaults.standard.string(forKey: fpKey)
+            if currentFP == nil || savedFP == nil || savedFP == currentFP {
+                if video.selectedVoiceIds != [cv] { video.selectedVoiceIds = [cv]; try? context.save() }
+                return true
+            }
+            MixLog.info("[Clone] 检测到千问 API Key 变更，旧克隆音色(\(cv))在新账户不可用，自动重新克隆")
+        } else if forceReclone {
+            MixLog.info("[Clone] 强制重新克隆（合成失败自愈）")
         }
+        video.clonedVoiceId = nil   // 走下方重克隆流程（能复用的已在上面 return）
         let path = video.localPath
         guard !path.isEmpty, FileManager.default.fileExists(atPath: path) else {
             errorMessage = "找不到原视频文件，无法克隆原声"
@@ -83,7 +99,6 @@ final class DubbingViewModel {
         let vid = video.id   // 进度按此视频独立跟踪；忙碌状态由调用方管理
         MixLog.info("[Clone] 开始克隆原声: video=\(path)")
         do {
-            let hash = video.contentHash ?? video.id.uuidString
             setProgress(vid, "分离人声…")
             let stems = try await vocalSep.separate(videoPath: path, videoHash: hash) { [weak self] msg in
                 Task { @MainActor in self?.setProgress(vid, msg) }
@@ -99,13 +114,14 @@ final class DubbingViewModel {
             MixLog.info("[Clone] 克隆成功: voiceId=\(voiceId)")
             video.clonedVoiceId = voiceId
             video.selectedVoiceIds = [voiceId]
+            if let fp = currentFP { UserDefaults.standard.set(fp, forKey: fpKey) }   // 记录注册时的 Key 指纹
             try? context.save()
             setProgress(vid, "")
             return true
         } catch {
             setProgress(vid, "")
             MixLog.error("[Clone] 克隆失败: \(error.localizedDescription)")
-            errorMessage = "原声克隆失败：\(error.localizedDescription)"
+            errorMessage = "原声克隆失败：\(Self.friendlyError(error))"
             return false
         }
     }
@@ -154,16 +170,16 @@ final class DubbingViewModel {
         }
         setProgress(vid, "")
 
-        // 改写完成后自动批量合成 TTS（用户无需逐格手动点）
-        let result = await generateAllAudio(for: reconfigurable, videoID: vid, context: context)
+        // 改写完成后自动批量合成 TTS（用户无需逐格手动点）；换 Key 致音色失效时自动重克隆重试
+        let result = await generateAllAudioWithRecloneFallback(
+            for: reconfigurable, videoID: vid, video: video, context: context)
 
         let producedCount = reconfigurable.count * voices.count * n
         if result.fail > 0 {
-            ToastCenter.shared.show(
-                "已生成 \(producedCount) 个变体，配音合成 \(result.ok) 成功 / \(result.fail) 失败，失败项可在分镜右侧点 ↻ 重试",
-                icon: "exclamationmark.triangle.fill",
-                style: .warning,
-                duration: 4.0)
+            // 弹 alert 给出真实失败原因（可截图/复制），不再只显示笼统计数
+            errorMessage = Self.dubFailureMessage(
+                summary: "已生成 \(producedCount) 个变体，配音合成 \(result.ok) 成功 / \(result.fail) 失败。",
+                errors: result.errors)
         } else {
             ToastCenter.shared.show(
                 "已生成 \(producedCount) 个配音变体并完成 TTS 合成，点开任意分镜可在右侧试听",
@@ -213,10 +229,12 @@ final class DubbingViewModel {
         }
         setProgress(vid, "")
 
-        let result = await generateAllAudio(for: [segment], videoID: vid, context: context)
+        let result = await generateAllAudioWithRecloneFallback(
+            for: [segment], videoID: vid, video: video, context: context)
         if result.fail > 0 {
-            ToastCenter.shared.show("本分镜已重写，配音 \(result.ok) 成功 / \(result.fail) 失败",
-                                    icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
+            errorMessage = Self.dubFailureMessage(
+                summary: "本分镜已重写，配音 \(result.ok) 成功 / \(result.fail) 失败。",
+                errors: result.errors)
         } else {
             ToastCenter.shared.show("本分镜已重新改写并生成配音",
                                     icon: "checkmark.circle.fill", style: .success)
@@ -287,18 +305,44 @@ final class DubbingViewModel {
         guard changed else { return }
         try? context.save()
 
-        let vid = segment.video?.id
+        guard let video = segment.video else { return }
+        let vid = video.id
         beginBusy(vid)
         defer { endBusy(vid) }
         setProgress(vid, "重新合成本版配音…")
-        let result = await generateAllAudio(for: [segment], videoID: vid, context: context)
+        let result = await generateAllAudioWithRecloneFallback(
+            for: [segment], videoID: vid, video: video, context: context)
         setProgress(vid, "")
         if result.fail > 0 {
-            ToastCenter.shared.show("台词已更新，配音 \(result.ok) 成功 / \(result.fail) 失败",
-                                    icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
+            errorMessage = Self.dubFailureMessage(
+                summary: "台词已更新，配音 \(result.ok) 成功 / \(result.fail) 失败。",
+                errors: result.errors)
         } else {
             ToastCenter.shared.show("台词已更新并重新生成配音", icon: "checkmark.circle.fill", style: .success)
         }
+    }
+
+    /// 汇总批量配音失败信息：概览 + 真实失败原因（最多列前 2 条，避免过长）+ 重试指引。
+    static func dubFailureMessage(summary: String, errors: [String]) -> String {
+        guard !errors.isEmpty else { return summary + "\n失败项可在分镜右侧点 ↻ 重试。" }
+        let shown = errors.prefix(2).enumerated()
+            .map { errors.count > 1 ? "\($0.offset + 1). \($0.element)" : $0.element }
+            .joined(separator: "\n")
+        let more = errors.count > 2 ? "\n…等共 \(errors.count) 类原因" : ""
+        return "\(summary)\n\n失败原因：\n\(shown)\(more)\n\n失败项可在分镜右侧点 ↻ 重试。"
+    }
+
+    /// 当前千问 API Key 的指纹（SHA256 前 8 位 hex）。只存指纹不存明文，用于检测换 Key。
+    static func currentKeyFingerprint() -> String? {
+        guard let key = KeychainHelper.getAPIKey(for: .qwen), !key.isEmpty else { return nil }
+        let digest = SHA256.hash(data: Data(key.utf8))
+        return digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 把底层（DashScope / 网络）错误翻译成用户能看懂的提示，并保留原始返回片段便于排查。
+    /// 与 AI 改写共用 APIErrorClassifier 的识别规则，避免重复维护两套。
+    static func friendlyError(_ error: Error) -> String {
+        APIErrorClassifier.friendly(error)
     }
 
     /// qwen 克隆 TTS 偶发"续读参考内容"(合成音频比台词长、混进下一段，且常带重复)。
@@ -389,29 +433,77 @@ final class DubbingViewModel {
             dub.generatedForTextHash = DubStaleness.textHash(of: dub.rewrittenText)
             dub.status = .generated
             try? context.save()
+            lastDubErrors[dub.id] = nil   // 成功后清掉旧失败原因
             return true
         } catch {
             dub.status = .failed
             try? context.save()
-            if !silent { errorMessage = "配音生成失败：\(error.localizedDescription)" }
+            let friendly = Self.friendlyError(error)
+            lastDubErrors[dub.id] = friendly   // 即使 silent 也记录，供批量汇总透出
+            MixLog.error("[Dub] 配音生成失败 dub=\(dub.id): \(error.localizedDescription)")
+            if !silent { errorMessage = "配音生成失败：\(friendly)" }
             return false
         }
     }
 
     /// 批量合成一组分镜下所有「还没音频」的变体（一键改写后自动调用）。
     private func generateAllAudio(for segments: [Segment], videoID: UUID?,
-                                  context: ModelContext) async -> (ok: Int, fail: Int) {
+                                  context: ModelContext) async -> (ok: Int, fail: Int, errors: [String]) {
         let pending = segments
             .flatMap { $0.segmentDubs }
             .filter { $0.audioFilePath == nil && !$0.rewrittenText.isEmpty }
-        guard !pending.isEmpty else { return (0, 0) }
+        guard !pending.isEmpty else { return (0, 0, []) }
         var ok = 0, fail = 0
+        var errors: [String] = []   // 去重收集真实失败原因，供上层透出
         for dub in pending {
             setProgress(videoID, "合成配音 \(ok + fail + 1)/\(pending.count)…")
-            if await generateAudio(for: dub, context: context, silent: true) { ok += 1 } else { fail += 1 }
+            if await generateAudio(for: dub, context: context, silent: true) {
+                ok += 1
+            } else {
+                fail += 1
+                if let m = lastDubErrors[dub.id], !errors.contains(m) { errors.append(m) }
+            }
         }
         setProgress(videoID, "")
-        return (ok, fail)
+        return (ok, fail, errors)
+    }
+
+    /// 判断批量失败是否为「克隆音色失效」（多因更换 API Key，旧克隆音色在新账户不存在）。
+    static func isStaleCloneError(_ errors: [String]) -> Bool {
+        errors.contains { e in
+            let l = e.lowercased()
+            return l.contains("tts speak request failed")
+                || (l.contains("invalidparameter") && l.contains("voice"))
+                || l.contains("克隆音色在当前 api key")
+        }
+    }
+
+    /// 批量合成；若失败是「克隆音色失效」，自动用当前 Key 强制重克隆、把待生成变体迁到新音色后重试一次。
+    /// 覆盖指纹无法识别的存量旧音色：乐观复用→真失败→自愈重克隆，用户无感；没换 Key 则永不触发。
+    private func generateAllAudioWithRecloneFallback(
+        for segments: [Segment], videoID vid: UUID?, video: Video, context: ModelContext
+    ) async -> (ok: Int, fail: Int, errors: [String]) {
+        let first = await generateAllAudio(for: segments, videoID: vid, context: context)
+        guard first.fail > 0, Self.isStaleCloneError(first.errors) else { return first }
+        guard let oldVoice = video.clonedVoiceId else { return first }
+
+        setProgress(vid, "检测到克隆音色失效，正在用当前 Key 重新克隆…")
+        guard await ensureClonedVoice(for: video, context: context, forceReclone: true),
+              let newVoice = video.clonedVoiceId, newVoice != oldVoice else {
+            return first   // 重克隆失败 → 保留原始错误供展示
+        }
+        // 把这些分镜下「待生成且仍指向旧克隆音色」的变体迁到新音色（已生成的本地文件不动）
+        for seg in segments {
+            for dub in seg.segmentDubs where dub.audioFilePath == nil && dub.voiceId == oldVoice {
+                dub.voiceId = newVoice
+                dub.status = .pending
+            }
+        }
+        try? context.save()
+        setProgress(vid, "重克隆完成，重新合成配音…")
+        let retry = await generateAllAudio(for: segments, videoID: vid, context: context)
+        setProgress(vid, "")
+        return retry
     }
 
     // MARK: - 试听已生成的变体音频（对齐后的成片音频）
@@ -474,7 +566,7 @@ final class DubbingViewModel {
             auditionPlayer = player
             player.play()
         } catch {
-            errorMessage = "试听失败：\(error.localizedDescription)"
+            errorMessage = "试听失败：\(Self.friendlyError(error))"
         }
     }
 }

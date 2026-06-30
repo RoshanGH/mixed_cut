@@ -24,7 +24,13 @@ actor VocalSeparationService {
     }
 
     private static let modelFileName = "ggml-htdemucs-4s.bin"
-    private static let modelURL = URL(string: "https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin")!
+    /// 下载兜底源（优先国内可达，再退原站）。正常情况走 bundle 内置模型，根本不会下载；
+    /// 仅当 bundle 缺失（异常）时才用到这些源。国内镜像对该冷门 repo 会 308 跳回原站，
+    /// 故同时给到原站，并配合超时/重试，避免裸 download 永久卡死。
+    private static let modelURLs: [URL] = [
+        URL(string: "https://hf-mirror.com/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin")!,
+        URL(string: "https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin")!,
+    ]
 
     /// 整轨分离（已缓存直接返回）。onProgress 回调进度文案。
     func separate(videoPath: String, videoHash: String,
@@ -96,16 +102,63 @@ actor VocalSeparationService {
     // MARK: - 模型与二进制
 
     private func ensureModel(onProgress: (@Sendable (String) -> Void)?) async throws -> String {
+        // 1) bundle 内置模型（开箱即用，国内用户零下载）—— 正常路径
+        if let bundled = Self.findBundledModel() {
+            return bundled
+        }
+        // 2) 之前下载过的缓存
         let dest = FileHelper.demucsModelsDirectory.appendingPathComponent(Self.modelFileName)
         if FileManager.default.fileExists(atPath: dest.path) { return dest.path }
-        onProgress?("下载人声分离模型（约 80MB，仅首次）…")
-        let (tmpURL, resp) = try await URLSession.shared.download(from: Self.modelURL)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw SepError.modelUnavailable
+        // 3) 兜底下载（仅当 bundle 异常缺失时）：多源 + 超时 + 重试
+        return try await downloadModel(to: dest, onProgress: onProgress)
+    }
+
+    /// 查 bundle 内置的 demucs 模型（与 demucs 二进制同放 `Resources/bin/`，随 folder reference 打包）。
+    static func findBundledModel() -> String? {
+        if let url = Bundle.main.resourceURL?
+            .appendingPathComponent("bin").appendingPathComponent(Self.modelFileName),
+           FileManager.default.fileExists(atPath: url.path) {
+            return url.path
         }
-        try? FileManager.default.removeItem(at: dest)
-        try FileManager.default.moveItem(at: tmpURL, to: dest)
-        return dest.path
+        if let path = Bundle.main.path(forResource: "ggml-htdemucs-4s", ofType: "bin", inDirectory: "bin") {
+            return path
+        }
+        return nil
+    }
+
+    /// 兜底下载：多源（国内镜像优先）+ 单次 60s 超时 + 每源 2 次尝试。
+    private func downloadModel(to dest: URL,
+                              onProgress: (@Sendable (String) -> Void)?) async throws -> String {
+        onProgress?("下载人声分离模型（约 80MB，仅首次）…")
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = 1800
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: config)
+        defer { session.finishTasksAndInvalidate() }
+
+        var lastError: Error?
+        for url in Self.modelURLs {
+            let source = url.host?.contains("hf-mirror") == true ? "国内镜像" : "HuggingFace"
+            for attempt in 0..<2 {
+                try Task.checkCancellation()
+                do {
+                    let (tmpURL, resp) = try await session.download(from: url)
+                    guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                        throw SepError.modelUnavailable
+                    }
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.moveItem(at: tmpURL, to: dest)
+                    return dest.path
+                } catch is CancellationError {
+                    throw CancellationError()
+                } catch {
+                    lastError = error
+                    MixLog.error("[Sep][\(source) attempt \(attempt + 1)] 模型下载失败: \(error.localizedDescription)")
+                }
+            }
+        }
+        throw lastError ?? SepError.modelUnavailable
     }
 
     /// 查 bundle 内 demucs 二进制（folder reference）。

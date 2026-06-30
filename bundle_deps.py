@@ -5,10 +5,17 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEST = os.path.join(SCRIPT_DIR, "MixCut", "Resources", "bin")
 RPATH_PREFIX = "@loader_path"
+
+# 不由本脚本生成、但必须随 bin/ 一起打包的产物：
+# - demucs：人声分离二进制（demucs.cpp 编译产物，手动放入）
+# - ggml-htdemucs-4s.bin：人声分离模型（80MB，内置以避免国内运行时下载超时）
+# 这些文件在 main() 的 rmtree 前会被暂存，重建目录后原样恢复，避免重跑脚本时被清掉。
+PRESERVE = ["demucs", "ggml-htdemucs-4s.bin"]
 
 def get_dylib_deps(binary_path):
     """获取非系统 dylib 依赖"""
@@ -74,10 +81,29 @@ def fix_id(lib_path):
     ], capture_output=True)
 
 def main():
-    # 清理并创建目标目录
+    # 清理并创建目标目录（先暂存非脚本生成的产物，避免被 rmtree 清掉）
+    preserved = {}
     if os.path.exists(DEST):
+        for name in PRESERVE:
+            src = os.path.join(DEST, name)
+            if os.path.isfile(src):
+                tmp = tempfile.mktemp()
+                shutil.copy2(src, tmp)
+                preserved[name] = tmp
+                print(f"  暂存待恢复: {name}")
         shutil.rmtree(DEST)
     os.makedirs(DEST)
+
+    # 恢复暂存的产物
+    for name, tmp in preserved.items():
+        dst = os.path.join(DEST, name)
+        shutil.copy2(tmp, dst)
+        os.remove(tmp)
+        if not name.endswith(".bin"):  # 二进制需可执行权限；模型不需要
+            os.chmod(dst, 0o755)
+    missing = [n for n in PRESERVE if not os.path.isfile(os.path.join(DEST, n))]
+    if missing:
+        print(f"  ⚠️  缺少需内置的文件（请先放入 {DEST}）: {', '.join(missing)}")
 
     # ============================================================
     # 1. FFmpeg + FFprobe
@@ -191,7 +217,7 @@ def main():
         if name.endswith(".dylib"):
             subprocess.run(["codesign", "--force", "--sign", "-", fpath], capture_output=True)
             print(f"    签名: {name}")
-    for name in ["ffmpeg", "ffprobe", "whisper"]:
+    for name in ["ffmpeg", "ffprobe", "whisper", "demucs"]:
         fpath = os.path.join(DEST, name)
         if os.path.exists(fpath):
             subprocess.run(["codesign", "--force", "--sign", "-", fpath], capture_output=True)
