@@ -54,8 +54,8 @@ private final class ThreadSafeStringBuffer: @unchecked Sendable {
 /// FFmpeg 命令执行封装
 actor FFmpegRunner {
 
-    /// FFmpeg 二进制路径
-    private let binaryPath: String
+    /// 显式指定的二进制路径（仅测试/特殊场景用）；nil 表示每次调用时动态解析。
+    private let explicitBinaryPath: String?
 
     /// 当前运行中的进程（用于取消）
     private var runningProcess: Process?
@@ -70,23 +70,59 @@ actor FFmpegRunner {
     }()
 
     init() {
+        self.explicitBinaryPath = nil
+    }
+
+    init(binaryPath: String) {
+        self.explicitBinaryPath = binaryPath
+    }
+
+    /// 动态解析 FFmpeg 路径（**每次调用时解析，而非 init 定死**）。
+    ///
+    /// 为什么不在 init 里定死：本项目开发期工作流会在 app 运行时于后台反复 clean/重建
+    /// app bundle（Release 编译 + 打包 DMG）。若 init 时选中 bundle 内 ffmpeg 并缓存，
+    /// 在几分钟级别的长任务（如 demucs 人声分离）执行中途，bundle 内的 ffmpeg 可能已被
+    /// 后台构建删除/替换，后续 `ff.run` 就会对已失效路径 `fileExists` 失败并误报
+    /// 「视频处理组件未找到」——即使系统里明明装着可用的 ffmpeg。
+    /// 改为调用时解析后：bundled 失效会自动回退系统安装；长生命周期实例也不再持有陈旧路径。
+    ///
+    /// 优先级：显式指定 > bundle 内（存在才用）> 系统安装 > "".
+    private func resolveBinary() -> String {
+        if let explicitBinaryPath { return explicitBinaryPath }
+
         // 优先使用 bundle 内的 FFmpeg（开箱即用，用户无需安装任何依赖）
-        // 使用 resourceURL 拼接路径（folder reference 下 path(forResource:) 在 Release 构建中不可靠）
-        let bundledPath = Self.findBundledBinary("ffmpeg")
-
-        // 系统安装仅作为开发期 fallback
-        let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
-        let systemPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) })
-
-        if let bundledPath {
-            self.binaryPath = bundledPath
-        } else if let systemPath {
-            self.binaryPath = systemPath
-            MixLog.info("使用系统 FFmpeg（开发模式）: \(systemPath)")
-        } else {
-            self.binaryPath = ""
-            MixLog.error("未找到可用的 FFmpeg，视频处理功能不可用")
+        // findBundledBinary 内部已校验 fileExists，返回即代表当下存在
+        if let bundledPath = Self.findBundledBinary("ffmpeg") {
+            return bundledPath
         }
+
+        // 系统安装作为回退（开发期 fallback，也兜底 bundle 中途失效）
+        let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
+        if let systemPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            return systemPath
+        }
+
+        // 不在此处打日志：resolveBinary 是热路径（concat 一次会调多次），真缺失时由调用方
+        // 的 guard 抛 binaryNotFound 统一透出，避免刷屏。
+        return ""
+    }
+
+    /// 动态解析 ffprobe 路径（与 resolveBinary 对称，**独立回退系统安装**）。
+    /// ffprobe 通常与 ffmpeg 同批打包/删除，但为真正兑现「bundle 中途失效自动回退」的承诺，
+    /// 这里独立解析，而非从 ffmpeg 路径字符串推导（否则 ffmpeg 尚存、ffprobe 被删时会误报）。
+    private func resolveProbeBinary() -> String {
+        if let explicitBinaryPath {
+            // 测试/显式覆盖：沿用「与 ffmpeg 同目录」的推导，保持旧行为
+            return explicitBinaryPath.replacingOccurrences(of: "/ffmpeg", with: "/ffprobe")
+        }
+        if let bundledPath = Self.findBundledBinary("ffprobe") {
+            return bundledPath
+        }
+        let candidates = ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"]
+        if let systemPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            return systemPath
+        }
+        return ""
     }
 
     /// 从 Bundle 中查找二进制（兼容 folder reference 和 resource group）
@@ -106,10 +142,6 @@ actor FFmpegRunner {
         return nil
     }
 
-    init(binaryPath: String) {
-        self.binaryPath = binaryPath
-    }
-
     // MARK: - 核心执行
 
     /// 执行 FFmpeg 命令并返回 stdout
@@ -118,6 +150,7 @@ actor FFmpegRunner {
         totalDuration: Double? = nil,
         onProgress: (@Sendable (FFmpegProgress) -> Void)? = nil
     ) async throws -> Data {
+        let binaryPath = resolveBinary()
         guard FileManager.default.fileExists(atPath: binaryPath) else {
             throw FFmpegError.binaryNotFound
         }
@@ -198,7 +231,7 @@ actor FFmpegRunner {
     ///   - arguments: ffprobe 参数（不含可执行路径）
     ///   - timeoutSeconds: 超时秒数，默认 60s
     func runProbe(arguments: [String], timeoutSeconds: Int = 60) async throws -> String {
-        let ffprobePath = binaryPath.replacingOccurrences(of: "/ffmpeg", with: "/ffprobe")
+        let ffprobePath = resolveProbeBinary()
         guard FileManager.default.fileExists(atPath: ffprobePath) else {
             throw FFmpegError.binaryNotFound
         }
@@ -260,6 +293,7 @@ actor FFmpegRunner {
 
     /// 执行 FFmpeg 命令并返回 stderr（用于获取元数据、场景检测等）
     func runForStderr(arguments: [String]) async throws -> String {
+        let binaryPath = resolveBinary()
         guard FileManager.default.fileExists(atPath: binaryPath) else {
             throw FFmpegError.binaryNotFound
         }
@@ -400,7 +434,7 @@ actor FFmpegRunner {
 
     /// 探测视频文件是否包含音频轨道（异步，不阻塞 actor 线程）
     private func probeHasAudio(path: String) async -> Bool {
-        let ffprobePath = binaryPath.replacingOccurrences(of: "/ffmpeg", with: "/ffprobe")
+        let ffprobePath = resolveProbeBinary()
         guard FileManager.default.fileExists(atPath: ffprobePath) else {
             return true  // 无 ffprobe 时默认有音频
         }
