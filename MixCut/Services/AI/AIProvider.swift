@@ -53,6 +53,15 @@ enum APIErrorClassifier {
             || l.contains("unauthorized") || l.contains("http 401") {
             return "API Key 无效或未授权：请到「设置」检查 API Key 是否填写正确、是否已开通对应服务（DashScope/百炼）。"
         }
+        // 免费额度耗尽 / 需开通付费（DashScope 对付费档模型如 qwen-plus 返回 HTTP 403，
+        // message 为 "free quota has been exhausted ... complete your payment information
+        // (or disable the \"use free tier only\" mode)"）。
+        // 必须放在下面通用 403 分支之前，否则会被误判成「未开通模型权限」，误导用户去开克隆权限。
+        if l.contains("free quota") || l.contains("free tier")
+            || l.contains("payment information")
+            || (l.contains("quota") && l.contains("exhausted")) {
+            return "所选模型的免费额度已用完：请到阿里云百炼（DashScope）控制台完成付费开通（或关闭「仅用免费额度 / use free tier only」模式），也可先换用仍有额度的模型（如 qwen-flash / qwen-turbo）后重试。此错误与声音克隆权限无关。"
+        }
         // 模型未开通 / 无权限
         if l.contains("accessdenied") || l.contains("model.access")
             || l.contains("http 403") || (l.contains("model") && l.contains("denied")) {
