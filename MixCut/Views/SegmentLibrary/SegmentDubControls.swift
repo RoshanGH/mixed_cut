@@ -7,6 +7,9 @@ struct SegmentDubControls: View {
     @Binding var treatment: SubtitleTreatment
     let onApplyMaskToAll: () -> Void
 
+    /// 烧录字幕字号（全局统一，与画面预览、导出共用同一 UserDefaults 键）
+    @AppStorage(SubtitleFontSize.userDefaultsKey) private var fontRatio: Double = SubtitleFontSize.defaultRatio
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Toggle(isOn: $isVoiceLocked) {
@@ -46,6 +49,27 @@ struct SegmentDubControls: View {
                     .buttonStyle(.borderless)
                     .controlSize(.mini)
                 }
+
+                // 字幕字号（全局统一）——拖动时上方画面预览实时变化，可与原字幕比大小
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "textformat.size")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.tertiary)
+                        Text("字幕字号")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(String(format: "%.1f%%", SubtitleFontSize.clamp(fontRatio) * 100))
+                            .font(.system(size: 9, design: .rounded))
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: $fontRatio,
+                           in: SubtitleFontSize.minRatio...SubtitleFontSize.maxRatio)
+                        .controlSize(.mini)
+                }
+                .help("字幕字号全片统一。拖动时上方画面里的示例字幕会实时变大变小，可与原视频字幕对比大小。")
             }
         }
     }

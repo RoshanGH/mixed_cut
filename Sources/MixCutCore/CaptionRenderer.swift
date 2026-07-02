@@ -19,6 +19,43 @@ public struct CaptionImage: Equatable, Sendable {
 public enum CaptionRenderer {
     public enum RenderError: Error { case contextCreationFailed, pngEncodingFailed, unsupportedPlatform }
 
+    /// 烧录字幕预处理：把中英文标点替换为空格并合并多余空白（短视频字幕风格，
+    /// 既符合观感也利于换行）。全角/半角标点、全角空格统一处理。
+    public static func stripPunctuation(_ text: String) -> String {
+        // 恒定转空格的标点（中文标点、括号、引号、感叹问号等）
+        let alwaysPunct: Set<Character> = [
+            "，", "。", "、", "！", "？", "；", "：", "“", "”", "‘", "’",
+            "「", "」", "『", "』", "（", "）", "【", "】", "《", "》", "〈", "〉",
+            "…", "—", "～", "·", "・", "\u{3000}",
+            "!", "?", ";", "\"", "'", "(", ")", "[", "]", "{", "}", "<", ">", "~"
+        ]
+        // 半角 . , : 是数字内部分隔符（9.9元 / 1,000 / 8:00）——前后都是数字时保留，
+        // 否则视为标点转空格。避免破坏广告里的价格/折扣/时间等数字卖点。
+        let numericSeparators: Set<Character> = [".", ",", ":"]
+
+        let chars = Array(text)
+        func isASCIIDigit(_ i: Int) -> Bool {
+            guard i >= 0, i < chars.count else { return false }
+            return chars[i].isNumber && chars[i].isASCII
+        }
+
+        var mapped: [Character] = []
+        mapped.reserveCapacity(chars.count)
+        for (i, c) in chars.enumerated() {
+            if alwaysPunct.contains(c) {
+                mapped.append(" ")
+            } else if numericSeparators.contains(c) {
+                mapped.append(isASCIIDigit(i - 1) && isASCIIDigit(i + 1) ? c : " ")
+            } else {
+                mapped.append(c)
+            }
+        }
+        // 合并连续空白为单个空格并去首尾
+        return String(mapped)
+            .split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" })
+            .joined(separator: " ")
+    }
+
     /// - Parameters:
     ///   - text: 台词文本
     ///   - canvasWidth: 画布像素宽（一般取成片宽度的 ~90%）
@@ -30,7 +67,8 @@ public enum CaptionRenderer {
                               fontSize: CGFloat = 56) throws -> CaptionImage {
         #if canImport(AppKit)
         let sidePadding: CGFloat = 28
-        let vPadding: CGFloat = 18
+        // 垂直留白随字号放大，保证贴字底衬胶囊上下不被裁切
+        let vPadding: CGFloat = max(18, fontSize * 0.20)
         let maxTextWidth = max(1, CGFloat(canvasWidth) - sidePadding * 2)
 
         let font = NSFont(name: "PingFangSC-Semibold", size: fontSize)
@@ -92,12 +130,19 @@ public enum CaptionRenderer {
         ctx.cgContext.clear(CGRect(x: 0, y: 0, width: canvasW, height: canvasH))  // 透明背景
 
         if withBackdrop {
-            let inset: CGFloat = 6
-            let pillRect = NSRect(x: inset, y: inset,
-                                  width: CGFloat(canvasW) - inset * 2,
-                                  height: CGFloat(canvasH) - inset * 2)
-            let pill = NSBezierPath(roundedRect: pillRect, xRadius: 14, yRadius: 14)
-            NSColor(white: 0, alpha: 0.55).setFill()
+            // 贴字圆角胶囊（与分镜卡片预览一致：padding≈字号比例、opacity 0.5、圆角≈字号 0.25），
+            // 非通栏满宽，保证「预览=成片」。多行时以最宽行为准。
+            let padX = fontSize * 0.35
+            let padY = fontSize * 0.18
+            let textW = ceil(bounds.width)
+            let pillW = min(CGFloat(canvasW), textW + padX * 2)
+            let pillH = min(CGFloat(canvasH), textH + padY * 2)
+            let pillRect = NSRect(x: (CGFloat(canvasW) - pillW) / 2,
+                                  y: (CGFloat(canvasH) - pillH) / 2,
+                                  width: pillW, height: pillH)
+            let radius = min(fontSize * 0.25, pillH / 2)
+            let pill = NSBezierPath(roundedRect: pillRect, xRadius: radius, yRadius: radius)
+            NSColor(white: 0, alpha: 0.5).setFill()
             pill.fill()
         }
 

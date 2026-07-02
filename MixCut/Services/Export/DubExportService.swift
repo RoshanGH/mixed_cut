@@ -228,12 +228,18 @@ actor DubExportService {
 
         let keepOriginalAudio = spec.isVoiceLocked || spec.dubAudioPath == nil
 
-        if !spec.isVoiceLocked, !spec.captionText.isEmpty {
-            let canvasW = max(2, Int(Double(outW) * 0.9))
+        // 烧录字幕：标点→空格；字号按成片宽度自适应（全局档位，避免小分辨率上字巨大）
+        let burnText = CaptionRenderer.stripPunctuation(spec.captionText)
+        if !spec.isVoiceLocked, !burnText.isEmpty {
+            // 字幕画布宽 = 遮挡区宽：文本在遮挡区内换行，配合 overlayOrigin 落在遮挡区正中。
+            // 下限 120px 防御：万一将来遮挡框宽可编辑到极窄，避免文本被逐字竖排成超高 PNG。
+            let canvasW = max(120, maskPixel.width)
+            let fontSize = SubtitleFontSize.fontSize(forOutputWidth: outW)
             let withBackdrop = (mode != .solid)
             let pngURL = workDir.appendingPathComponent(String(format: "cap_%03d.png", index))
             let img = try CaptionRenderer.renderToFile(
-                text: spec.captionText, canvasWidth: canvasW, withBackdrop: withBackdrop, to: pngURL)
+                text: burnText, canvasWidth: canvasW, withBackdrop: withBackdrop,
+                fontSize: fontSize, to: pngURL)
             captionOrigin = CaptionLayout.overlayOrigin(
                 outputWidth: outW, outputHeight: outH, maskRect: spec.maskRect,
                 captionWidth: img.pixelWidth, captionHeight: img.pixelHeight)

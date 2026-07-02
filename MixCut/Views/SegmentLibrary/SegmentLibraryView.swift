@@ -662,6 +662,16 @@ struct SegmentCard: View, Equatable {
                         )
                     }
                 }
+                // 字幕字号所见即所得：示例字幕按全局比例叠在真实画面上，居中于遮挡区、
+                // 跟随遮挡框移动，可与原字幕比大小与位置
+                .overlay {
+                    if !segment.isVoiceLocked {
+                        SubtitleSizePreviewOverlay(
+                            frameWidth: 200,
+                            frameHeight: 200.0 * 16.0 / 9.0,
+                            maskRect: segment.maskRect)
+                    }
+                }
 
             // 标签行：语义类型 + 位置
             FlowLayout(spacing: 3) {
@@ -825,6 +835,36 @@ struct SegmentCard: View, Equatable {
             seg.maskStyle = style
         }
         try? modelContext.save()
+    }
+}
+
+// MARK: - 字幕字号所见即所得预览
+
+/// 叠在分镜真实画面上的示例字幕，字号 = 画面显示宽 × 全局比例（与导出换算一致，见
+/// SubtitleFontSize）；居中落在遮挡区（maskRect）正中并跟随遮挡框移动，与导出落位一致
+/// （见 CaptionLayout.overlayOrigin）。拖字号滑条/拖遮挡框时实时变化。仅预览，不参与交互。
+private struct SubtitleSizePreviewOverlay: View {
+    @AppStorage(SubtitleFontSize.userDefaultsKey) private var fontRatio: Double = SubtitleFontSize.defaultRatio
+    /// 画面在屏上的显示尺寸（此处播放器固定 200 × 200*16/9）
+    let frameWidth: CGFloat
+    let frameHeight: CGFloat
+    let maskRect: SubtitleMaskRect
+
+    var body: some View {
+        let fontPt = frameWidth * SubtitleFontSize.clamp(fontRatio)
+        let rect = maskRect.clamped()
+        let cx = CGFloat(rect.x + rect.width / 2) * frameWidth
+        let cy = CGFloat(rect.y + rect.height / 2) * frameHeight
+        Text("这里是字幕")
+            .font(.custom("PingFangSC-Semibold", size: fontPt))
+            .foregroundStyle(.white)
+            .padding(.horizontal, fontPt * 0.35)
+            .padding(.vertical, fontPt * 0.18)
+            .background(Color.black.opacity(0.5),
+                        in: RoundedRectangle(cornerRadius: fontPt * 0.25))
+            .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
+            .position(x: cx, y: cy)   // 落在遮挡区正中
+            .allowsHitTesting(false)
     }
 }
 

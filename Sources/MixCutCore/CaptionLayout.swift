@@ -28,13 +28,13 @@ public struct PixelRect: Equatable, Sendable {
 
 /// 字幕 PNG 在成片画面里的像素落位（纯数学）。
 public enum CaptionLayout {
-    /// 计算字幕 PNG 的 overlay 原点（左上角像素）。水平居中于整幅画面；
-    /// 竖直居中于 maskRect 字幕带；最后钳进画面避免出界。
+    /// 计算字幕 PNG 的 overlay 原点（左上角像素）。水平、竖直均居中于 maskRect 遮挡带
+    /// （字幕永远落在遮挡区正中）；最后钳进画面避免出界。
     public static func overlayOrigin(outputWidth: Int, outputHeight: Int,
                                      maskRect: SubtitleMaskRect,
                                      captionWidth: Int, captionHeight: Int) -> (x: Int, y: Int) {
         let band = PixelRect.from(maskRect, outputWidth: outputWidth, outputHeight: outputHeight)
-        let rawX = (Double(outputWidth) - Double(captionWidth)) / 2.0
+        let rawX = Double(band.x) + (Double(band.width) - Double(captionWidth)) / 2.0
         let rawY = Double(band.y) + (Double(band.height) - Double(captionHeight)) / 2.0
         let maxX = Double(max(0, outputWidth - captionWidth))
         let maxY = Double(max(0, outputHeight - captionHeight))
