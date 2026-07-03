@@ -59,7 +59,7 @@ MixCut 面向广告投放团队，两条主线能力：
 ## 系统要求
 
 - macOS 14.0 (Sonoma) 或更高
-- Apple Silicon (M1/M2/M3/M4) 推荐 | Intel Mac 软件编码回退可用
+- **Apple Silicon 与 Intel Mac 均原生支持**（Universal 二进制，主程序 + 内置 ffmpeg/whisper/demucs 都含 arm64 + x86_64）
 - 首次启动下载 Whisper 模型 ~1.5 GB（仅一次）；人声分离模型已内置无需下载
 
 ## 用户使用（普通用户）
@@ -87,9 +87,10 @@ MixCut 面向广告投放团队，两条主线能力：
 git clone https://github.com/RoshanGH/mixed_cut.git
 cd mixed_cut
 
-# 2. 打包二进制依赖到 Resources/bin/（ffmpeg / ffprobe / whisper / demucs + 模型）
-brew install ffmpeg whisper-cpp
-python3 bundle_deps.py
+# 2. 生成内置 universal 二进制到 Resources/bin/（静态自包含 arm64+x86_64，支持 Intel）
+#    下载静态 ffmpeg/ffprobe + 源码编 whisper/demucs + lipo 合并
+./scripts/build_universal_binaries.sh
+python3 bundle_deps.py   # 校验四个二进制均为 universal
 
 # 3. 用 Xcode 打开
 open MixCut.xcodeproj

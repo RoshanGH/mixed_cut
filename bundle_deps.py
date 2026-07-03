@@ -1,263 +1,52 @@
 #!/usr/bin/env python3
-"""将 FFmpeg 和 whisper.cpp 及其所有依赖打包到 app Resources/bin 中"""
-import glob
+"""校验 MixCut 内置二进制是否就位且为 universal (arm64 + x86_64)。
+
+历史：本脚本曾负责「从 Homebrew 抓 ffmpeg/whisper + 递归收集/修复 dylib」。
+现已改为**静态自包含 universal 二进制**方案（支持 Intel Mac），二进制由
+`scripts/build_universal_binaries.sh` 生成（下载静态 ffmpeg + 源码编 whisper/demucs
++ lipo 合并）。本脚本退化为校验器：确认文件就位、且都是双架构。
+"""
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEST = os.path.join(SCRIPT_DIR, "MixCut", "Resources", "bin")
-RPATH_PREFIX = "@loader_path"
+DEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MixCut", "Resources", "bin")
+BINARIES = ["ffmpeg", "ffprobe", "whisper", "demucs"]   # 需为 universal
+DATA = ["ggml-htdemucs-4s.bin"]                         # 架构无关（人声分离模型）
 
-# 不由本脚本生成、但必须随 bin/ 一起打包的产物：
-# - demucs：人声分离二进制（demucs.cpp 编译产物，手动放入）
-# - ggml-htdemucs-4s.bin：人声分离模型（80MB，内置以避免国内运行时下载超时）
-# 这些文件在 main() 的 rmtree 前会被暂存，重建目录后原样恢复，避免重跑脚本时被清掉。
-PRESERVE = ["demucs", "ggml-htdemucs-4s.bin"]
 
-def get_dylib_deps(binary_path):
-    """获取非系统 dylib 依赖"""
-    result = subprocess.run(["otool", "-L", binary_path], capture_output=True, text=True)
-    deps = []
-    for line in result.stdout.strip().split("\n")[1:]:  # skip first line (binary name)
-        path = line.strip().split(" (")[0].strip()
-        if (path and
-            not path.startswith("/usr/lib") and
-            not path.startswith("/System") and
-            not path.startswith("@rpath") and
-            not path.startswith("@executable_path") and
-            not path.startswith("@loader_path") and
-            os.path.exists(path)):
-            deps.append(path)
-    return deps
+def archs(path):
+    try:
+        return set(subprocess.check_output(["lipo", "-archs", path], text=True).split())
+    except Exception:
+        return set()
 
-def resolve_path(path):
-    """解析符号链接"""
-    return os.path.realpath(path)
-
-def collect_all_dylibs(binaries):
-    """递归收集所有非系统 dylib"""
-    collected = {}  # basename -> realpath
-    queue = list(binaries)
-    visited = set()
-
-    while queue:
-        binary = queue.pop(0)
-        if binary in visited:
-            continue
-        visited.add(binary)
-
-        for dep in get_dylib_deps(binary):
-            real = resolve_path(dep)
-            basename = os.path.basename(dep)
-            if basename not in collected:
-                collected[basename] = real
-                queue.append(real)
-
-    return collected
-
-def fix_references(binary_path, all_libs):
-    """修复二进制中的 dylib 引用"""
-    result = subprocess.run(["otool", "-L", binary_path], capture_output=True, text=True)
-    for line in result.stdout.strip().split("\n")[1:]:
-        path = line.strip().split(" (")[0].strip()
-        if path.startswith("@"):
-            continue
-        basename = os.path.basename(path)
-        if basename in all_libs or os.path.exists(os.path.join(DEST, basename)):
-            subprocess.run([
-                "install_name_tool", "-change", path,
-                f"{RPATH_PREFIX}/{basename}", binary_path
-            ], capture_output=True)
-
-def fix_id(lib_path):
-    """修复 dylib 的 install name"""
-    basename = os.path.basename(lib_path)
-    subprocess.run([
-        "install_name_tool", "-id",
-        f"{RPATH_PREFIX}/{basename}", lib_path
-    ], capture_output=True)
 
 def main():
-    # 清理并创建目标目录（先暂存非脚本生成的产物，避免被 rmtree 清掉）
-    preserved = {}
-    if os.path.exists(DEST):
-        for name in PRESERVE:
-            src = os.path.join(DEST, name)
-            if os.path.isfile(src):
-                tmp = tempfile.mktemp()
-                shutil.copy2(src, tmp)
-                preserved[name] = tmp
-                print(f"  暂存待恢复: {name}")
-        shutil.rmtree(DEST)
-    os.makedirs(DEST)
-
-    # 恢复暂存的产物
-    for name, tmp in preserved.items():
-        dst = os.path.join(DEST, name)
-        shutil.copy2(tmp, dst)
-        os.remove(tmp)
-        if not name.endswith(".bin"):  # 二进制需可执行权限；模型不需要
-            os.chmod(dst, 0o755)
-    missing = [n for n in PRESERVE if not os.path.isfile(os.path.join(DEST, n))]
-    if missing:
-        print(f"  ⚠️  缺少需内置的文件（请先放入 {DEST}）: {', '.join(missing)}")
-
-    # ============================================================
-    # 1. FFmpeg + FFprobe
-    # ============================================================
-    print("=== 1. 收集 FFmpeg 依赖 ===")
-    ffmpeg_real = resolve_path("/opt/homebrew/bin/ffmpeg")
-    ffprobe_real = resolve_path("/opt/homebrew/bin/ffprobe")
-
-    shutil.copy2(ffmpeg_real, os.path.join(DEST, "ffmpeg"))
-    shutil.copy2(ffprobe_real, os.path.join(DEST, "ffprobe"))
-    os.chmod(os.path.join(DEST, "ffmpeg"), 0o755)
-    os.chmod(os.path.join(DEST, "ffprobe"), 0o755)
-
-    print("  递归收集 dylib...")
-    ff_libs = collect_all_dylibs([ffmpeg_real, ffprobe_real])
-    print(f"  共收集 {len(ff_libs)} 个 dylib")
-
-    for basename, realpath in ff_libs.items():
-        dest_path = os.path.join(DEST, basename)
-        shutil.copy2(realpath, dest_path)
-        os.chmod(dest_path, 0o755)
-        print(f"    {basename}")
-
-    # 修复 ffmpeg/ffprobe
-    for name in ["ffmpeg", "ffprobe"]:
-        fix_references(os.path.join(DEST, name), ff_libs)
-
-    # 修复所有 dylib
-    for basename in ff_libs:
-        lib_path = os.path.join(DEST, basename)
-        fix_id(lib_path)
-        fix_references(lib_path, ff_libs)
-
-    print("  FFmpeg 打包完成")
-
-    # ============================================================
-    # 2. Whisper-cli
-    # ============================================================
-    print("\n=== 2. 打包 Whisper-cli ===")
-    # 自动检测 whisper-cpp 安装路径（支持任意版本号）
-    whisper_cellar = "/opt/homebrew/Cellar/whisper-cpp"
-    if os.path.isdir(whisper_cellar):
-        versions = sorted(os.listdir(whisper_cellar))
-        if versions:
-            whisper_dir = os.path.join(whisper_cellar, versions[-1], "libexec")
+    print(f"校验 {DEST}")
+    ok = True
+    for name in BINARIES:
+        p = os.path.join(DEST, name)
+        if not os.path.isfile(p):
+            print(f"  ✗ 缺少 {name}")
+            ok = False
+            continue
+        a = archs(p)
+        if {"arm64", "x86_64"} <= a:
+            print(f"  ✓ {name}: {' '.join(sorted(a))}")
         else:
-            print("  ERROR: whisper-cpp Cellar 目录为空")
-            sys.exit(1)
-    else:
-        print("  ERROR: whisper-cpp 未通过 Homebrew 安装")
+            print(f"  ✗ {name} 架构不完整: {' '.join(sorted(a)) or '未知'}（需 arm64 + x86_64）")
+            ok = False
+    for name in DATA:
+        p = os.path.join(DEST, name)
+        print(f"  {'✓' if os.path.isfile(p) else '✗'} {name}")
+        ok = ok and os.path.isfile(p)
+
+    if not ok:
+        print("\n内置二进制缺失或非 universal，请运行：\n  ./scripts/build_universal_binaries.sh")
         sys.exit(1)
-    whisper_src = os.path.join(whisper_dir, "bin/whisper-cli")
+    print("\n✅ 所有内置二进制就位且为 universal (arm64 + x86_64)。")
 
-    shutil.copy2(whisper_src, os.path.join(DEST, "whisper"))
-    os.chmod(os.path.join(DEST, "whisper"), 0o755)
-
-    whisper_dylibs = [
-        "libwhisper.1.dylib",
-        "libggml.0.dylib",
-        "libggml-cpu.0.dylib",
-        "libggml-blas.0.dylib",
-        "libggml-metal.0.dylib",
-        "libggml-base.0.dylib",
-    ]
-
-    for lib in whisper_dylibs:
-        src = resolve_path(os.path.join(whisper_dir, "lib", lib))
-        dest = os.path.join(DEST, lib)
-        shutil.copy2(src, dest)
-        os.chmod(dest, 0o755)
-        print(f"    {lib}")
-
-    # 复制 Metal shader
-    for ext in ["*.metal", "*.metallib"]:
-        for f in glob.glob(os.path.join(whisper_dir, "lib", ext)):
-            shutil.copy2(f, os.path.join(DEST, os.path.basename(f)))
-            print(f"    {os.path.basename(f)}")
-
-    # 修复 whisper
-    whisper_path = os.path.join(DEST, "whisper")
-    for lib in whisper_dylibs:
-        subprocess.run([
-            "install_name_tool", "-change",
-            f"@rpath/{lib}", f"@loader_path/{lib}",
-            whisper_path
-        ], capture_output=True)
-
-    # 修复 whisper dylib
-    for lib in whisper_dylibs:
-        lib_path = os.path.join(DEST, lib)
-        fix_id(lib_path)
-        for dep in whisper_dylibs:
-            if lib != dep:
-                subprocess.run([
-                    "install_name_tool", "-change",
-                    f"@rpath/{dep}", f"{RPATH_PREFIX}/{dep}",
-                    lib_path
-                ], capture_output=True)
-
-    print("  Whisper 打包完成")
-
-    # ============================================================
-    # 3. 代码签名（macOS 要求所有可执行文件有有效签名）
-    # ============================================================
-    print("\n=== 3. Ad-hoc 代码签名 ===")
-    # 先签 dylib，再签可执行文件（签名顺序：依赖 → 主体）
-    for name in sorted(os.listdir(DEST)):
-        fpath = os.path.join(DEST, name)
-        if not os.path.isfile(fpath):
-            continue
-        if name.endswith(".dylib"):
-            subprocess.run(["codesign", "--force", "--sign", "-", fpath], capture_output=True)
-            print(f"    签名: {name}")
-    for name in ["ffmpeg", "ffprobe", "whisper", "demucs"]:
-        fpath = os.path.join(DEST, name)
-        if os.path.exists(fpath):
-            subprocess.run(["codesign", "--force", "--sign", "-", fpath], capture_output=True)
-            print(f"    签名: {name}")
-
-    # ============================================================
-    # 4. 验证
-    # ============================================================
-    print("\n=== 4. 验证 ===")
-
-    # 检查残留绝对路径
-    has_bad = False
-    for name in os.listdir(DEST):
-        fpath = os.path.join(DEST, name)
-        if not os.path.isfile(fpath):
-            continue
-        result = subprocess.run(["otool", "-L", fpath], capture_output=True, text=True)
-        for line in result.stdout.split("\n"):
-            if "/opt/homebrew" in line or "/usr/local" in line:
-                print(f"  WARNING: {name} 仍引用 {line.strip()}")
-                has_bad = True
-
-    if not has_bad:
-        print("  OK: 无残留绝对路径引用")
-
-    # 总大小
-    total = sum(os.path.getsize(os.path.join(DEST, f)) for f in os.listdir(DEST) if os.path.isfile(os.path.join(DEST, f)))
-    print(f"\n  总大小: {total / 1024 / 1024:.1f} MB")
-    print(f"  文件数: {len(os.listdir(DEST))}")
-
-    # 列出最大的文件
-    files = []
-    for f in os.listdir(DEST):
-        fp = os.path.join(DEST, f)
-        if os.path.isfile(fp):
-            files.append((f, os.path.getsize(fp)))
-    files.sort(key=lambda x: -x[1])
-    print("\n  最大文件:")
-    for name, size in files[:15]:
-        print(f"    {size/1024:.0f}K  {name}")
 
 if __name__ == "__main__":
     main()

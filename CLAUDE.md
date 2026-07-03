@@ -34,7 +34,9 @@ MixCut 是一款 macOS 原生桌面应用（SwiftUI + SwiftData），面向广�
 - **Whisper 模型**: `ggml-small.bin` (~488MB) — 首次使用时自动下载到 `~/Library/Caches/com.mixcut.app/whisper-models/`
 
 > **核心原则：开箱即用** — 像剪映一样，用户双击即可使用，不需要安装 homebrew、FFmpeg、Whisper 等任何外部依赖。
-> `bundle_deps.py` 负责将 FFmpeg/Whisper 二进制及其 dylib 打包到 `MixCut/Resources/bin/` 目录，并修复 dylib 路径为 `@loader_path`。
+> 内置二进制均为**静态自包含 universal（arm64 + x86_64）**，无外部 dylib，支持 Intel Mac。
+> 由 `./scripts/build_universal_binaries.sh` 生成（下载静态 ffmpeg + 源码编 whisper/demucs + `lipo` 合并）；
+> `bundle_deps.py` 现为校验器（检查 4 个二进制是否就位且双架构）。`Resources/bin/` 为 gitignored 本地产物。
 > 开发期间如果 bundle 内二进制不可用，会 fallback 到系统安装的版本（仅开发便利，不应依赖）。
 
 ## 架构
@@ -118,11 +120,16 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
   xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build
   pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/MixCut.app
   # 2. Release 编译 + 打包 DMG（后台执行，不阻塞用户）
-  xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Release build
+  # ⚠️ 必须带 universal 参数，否则默认只编本机 arm64，Intel Mac 装了报「不支持此应用程序」
+  xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Release \
+    -destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
   TEMP=$(mktemp -d) && cp -R <DerivedData>/Build/Products/Release/MixCut.app "$TEMP/" && ln -s /Applications "$TEMP/Applications"
   rm -f ~/Desktop/MixCut.dmg && hdiutil create -volname MixCut -srcfolder "$TEMP" -ov -format UDZO ~/Desktop/MixCut.dmg
   rm -rf "$TEMP"
   ```
+
+  > **发版前务必校验 DMG 内主程序是 universal**：`lipo -archs <app>/Contents/MacOS/MixCut` 应为 `x86_64 arm64`。
+  > 普通 `xcodebuild ... Release build`（不带 `-destination generic + ARCHS`）只出 arm64，会悄悄丢掉 Intel 支持。
 
 ## 自己先测试，别让用户当测试员（必须遵守 ⚠️⚠️⚠️）
 
@@ -164,6 +171,20 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
   Gitee Token 保存在 `~/.config/mixcut/gitee.env`（不在 git 仓库内），换 token 编辑这个文件。
 
 ## 关键开发规则（必须遵守）
+
+### 双系统（Universal）支持铁律 ⚠️⚠️⚠️
+
+MixCut 必须**同时原生支持 Apple Silicon 与 Intel Mac**。任何构建、发版、二进制改动都必须保持 universal，绝不能退回 arm64-only（否则 Intel 同事装了直接报「这台 Mac 不支持此应用程序」）。
+
+1. **主程序**：Release/DMG 构建必须带 `-destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO`。普通 `xcodebuild ... Release build` 只出本机 arm64，**严禁**用它打分发包。
+2. **内置二进制**：ffmpeg / ffprobe / whisper / demucs 必须都是 universal（arm64 + x86_64）静态自包含二进制，由 `./scripts/build_universal_binaries.sh` 生成；改动或更新任何内置二进制后，必须重跑该脚本并 `python3 bundle_deps.py` 校验。
+3. **发版前强制校验**（缺一不可）：
+   - `lipo -archs <app>/Contents/MacOS/MixCut` == `x86_64 arm64`
+   - 四个内置二进制逐个 `lipo -archs` 均为双架构（或直接 `python3 bundle_deps.py`）
+   - DMG 内 `CFBundleShortVersionString` == 目标版本号
+4. **新增任何内置二进制/处理链组件**：默认就要做成 universal，并纳入 `build_universal_binaries.sh` 与 `bundle_deps.py` 的校验清单。
+
+> 背景：v0.6.0 曾因 arm64-only 分发导致 Intel 同事「不支持此应用程序」；v0.6.1 起整条链改为 universal。此后**任何发版都必须守住双系统**。
 
 ### 不要在修改过程中破坏已有功能（最重要 ⚠️⚠️⚠️）
 
