@@ -3,9 +3,11 @@ import Foundation
 /// 一个分镜槽的配音可选项（笛卡尔积输入）。
 public struct SlotOptions: Equatable, Sendable {
     public let isLocked: Bool
-    public let dubIds: [UUID]    // 该槽可选变体；空 = 只有原声
-    public init(isLocked: Bool, dubIds: [UUID]) {
+    public let includeOriginal: Bool   // 该槽是否把原声(nil)作为一个可选项（逐格控制）
+    public let dubIds: [UUID]          // 该槽可选变体（已按"参与组合"过滤）
+    public init(isLocked: Bool, includeOriginal: Bool, dubIds: [UUID]) {
         self.isLocked = isLocked
+        self.includeOriginal = includeOriginal
         self.dubIds = dubIds
     }
 }
@@ -29,17 +31,15 @@ public enum VariantCombinationGenerator {
     /// 防止 feasibleCount 在槽多/选项多时整数溢出的上限（仅用于上报与遍历边界）。
     private static let feasibleCap = 1_000_000
 
-    /// - Parameter includeOriginal: 为 true 时，每个非锁定槽把「原声(nil)」也作为一个可选项
-    ///   （即 选项 = 原声 + 各变体）；用于三层方案把「原+改写A+改写B」全排列。
-    ///   为 false 时非锁定槽只在各变体里选（无变体则原声）。
-    public static func generate(slots: [SlotOptions], limit: Int,
-                               includeOriginal: Bool = false) -> CombinationResult {
+    /// 每个非锁定槽的可选集合 = (includeOriginal ? [原声] : []) + 参与变体；空则兜底原声。
+    /// 锁定槽恒原声。includeOriginal 现为**逐槽**控制（`SlotOptions.includeOriginal`）。
+    public static func generate(slots: [SlotOptions], limit: Int) -> CombinationResult {
         // 每槽的实际可选集合（升序保证确定性）
         let choices: [[UUID?]] = slots.map { slot in
             if slot.isLocked { return [nil] }
             let variants = slot.dubIds.sorted { $0.uuidString < $1.uuidString }.map { Optional($0) }
-            if includeOriginal { return [nil] + variants }          // 原声 + 各变体
-            return variants.isEmpty ? [nil] : variants               // 仅变体（无则原声）
+            let withOriginal: [UUID?] = (slot.includeOriginal ? [nil] : []) + variants
+            return withOriginal.isEmpty ? [nil] : withOriginal       // 空则兜底原声
         }
 
         // 笛卡尔积大小（防溢出夹紧）

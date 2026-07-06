@@ -150,9 +150,11 @@ struct ExportInput: Sendable {
         var maxHeight = 0
         for schemeSeg in orderedSegments {
             guard let segment = schemeSeg.segment,
-                  let video = segment.video,
-                  FileManager.default.fileExists(atPath: video.localPath) else { continue }
-            segments.append((path: video.localPath, start: segment.startTime, end: segment.endTime))
+                  let video = segment.video else { continue }
+            // 走"当前生效画面"（替换版=合成片整段；原版=源视频帧区间）
+            let ep = segment.effectivePicture
+            guard !ep.videoPath.isEmpty, FileManager.default.fileExists(atPath: ep.videoPath) else { continue }
+            segments.append((path: ep.videoPath, start: ep.startTime, end: ep.endTime))
             maxWidth = max(maxWidth, video.width)
             maxHeight = max(maxHeight, video.height)
         }

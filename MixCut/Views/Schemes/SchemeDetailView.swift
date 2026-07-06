@@ -242,7 +242,7 @@ struct SchemeDetailView: View {
     private var slotFactors: [Int] {
         scheme.orderedSegments.map { ss in
             guard let seg = ss.segment else { return 1 }
-            return seg.isVoiceLocked ? 1 : 1 + seg.effectiveDubVariants.count
+            return seg.combinationSlotCount   // 与导出笛卡尔积一致（含参与过滤/兜底/锁定）
         }
     }
 

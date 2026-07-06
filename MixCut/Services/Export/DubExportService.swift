@@ -36,10 +36,12 @@ struct DubExportInput: Sendable {
         var maxW = 0, maxH = 0
         for (idx, schemeSeg) in ordered.enumerated() {
             guard let segment = schemeSeg.segment,
-                  let video = segment.video,
-                  FileManager.default.fileExists(atPath: video.localPath) else { continue }
+                  let video = segment.video else { continue }
+            // 走"当前生效画面"：替换版=合成片整段(0..frameCount)；原版=源视频帧区间。音频/字幕仍属分镜本身。
+            let ep = segment.effectivePicture
+            guard !ep.videoPath.isEmpty, FileManager.default.fileExists(atPath: ep.videoPath) else { continue }
 
-            let fps = video.fps > 0 ? video.fps : 30
+            let fps = ep.fps > 0 ? ep.fps : 30
             maxW = max(maxW, video.width)
             maxH = max(maxH, video.height)
 
@@ -52,7 +54,7 @@ struct DubExportInput: Sendable {
 
             if segment.isVoiceLocked || chosen == nil {
                 specs.append(DubSegmentSpec(
-                    videoPath: video.localPath, startFrame: segment.startFrame, endFrame: segment.endFrame,
+                    videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
                     fps: fps, captionText: segment.text, hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil))
@@ -61,7 +63,7 @@ struct DubExportInput: Sendable {
                       FileManager.default.fileExists(atPath: audioPath) {
                 let caption = dub.rewrittenText.isEmpty ? segment.text : dub.rewrittenText
                 specs.append(DubSegmentSpec(
-                    videoPath: video.localPath, startFrame: segment.startFrame, endFrame: segment.endFrame,
+                    videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
                     fps: fps, captionText: caption, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
                     freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
@@ -72,7 +74,7 @@ struct DubExportInput: Sendable {
                 // 故意写死 hasHardSubtitle: false：回退段不重配也不烧新字幕，
                 // 因此不能遮挡旧硬字幕（否则会把要保留的原字幕也遮掉）。勿改回 segment.hasHardSubtitle。
                 specs.append(DubSegmentSpec(
-                    videoPath: video.localPath, startFrame: segment.startFrame, endFrame: segment.endFrame,
+                    videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
                     fps: fps, captionText: segment.text, hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil))
@@ -112,7 +114,7 @@ enum SchemeComboPlanner {
     static func feasibleCount(for scheme: MixScheme) -> Int {
         scheme.orderedSegments.reduce(1) { acc, ss in
             guard let seg = ss.segment else { return acc }
-            return acc * (seg.isVoiceLocked ? 1 : 1 + seg.effectiveDubVariants.count)
+            return acc * seg.combinationSlotCount   // 单一真源（含锁定/兜底/参与过滤）
         }
     }
 
@@ -121,10 +123,13 @@ enum SchemeComboPlanner {
         guard !ordered.isEmpty else { return Plan(combos: [], feasibleCount: 0, truncated: false) }
 
         let slots: [SlotOptions] = ordered.map { ss in
-            guard let seg = ss.segment else { return SlotOptions(isLocked: true, dubIds: []) }
-            return SlotOptions(isLocked: seg.isVoiceLocked, dubIds: seg.effectiveDubVariants.map { $0.id })
+            guard let seg = ss.segment else { return SlotOptions(isLocked: true, includeOriginal: true, dubIds: []) }
+            return SlotOptions(
+                isLocked: seg.isVoiceLocked,
+                includeOriginal: seg.isVoiceLocked ? true : seg.originalParticipatesInCombination,
+                dubIds: seg.isVoiceLocked ? [] : seg.combinationDubVariants.map { $0.id })
         }
-        let result = VariantCombinationGenerator.generate(slots: slots, limit: maxCombos, includeOriginal: true)
+        let result = VariantCombinationGenerator.generate(slots: slots, limit: maxCombos)
 
         let combos: [Combo] = result.combinations.map { choices in
             let parts: [String] = choices.enumerated().map { idx, dubId in

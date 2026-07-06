@@ -24,6 +24,9 @@ final class SegmentDub {
 
     var statusRaw: String = "pending"      // SegmentDubStatus.rawValue
 
+    /// 是否参与导出组合（默认不参与，opt-in；勾选后才进方案笛卡尔积/单批量导出）
+    var participatesInCombination: Bool = false
+
     var status: SegmentDubStatus {
         get { SegmentDubStatus(rawValue: statusRaw) ?? .pending }
         set { statusRaw = newValue.rawValue }
@@ -57,5 +60,17 @@ extension Segment {
             }
         }
         return byIndex.values.sorted { $0.textVariantIndex < $1.textVariantIndex }
+    }
+
+    /// 参与导出组合的变体（= effectiveDubVariants 里勾选了"参与"的）。所有导出路径的单一真源。
+    var combinationDubVariants: [SegmentDub] {
+        effectiveDubVariants.filter { $0.participatesInCombination }
+    }
+
+    /// 该分镜参与组合的"档数"（含锁定/兜底语义）。用于组合计数展示与笛卡尔积基数。
+    var combinationSlotCount: Int {
+        if isVoiceLocked { return 1 }
+        let base = originalParticipatesInCombination ? 1 : 0
+        return max(1, base + combinationDubVariants.count)   // 兜底 ≥1（回退仅原版）
     }
 }

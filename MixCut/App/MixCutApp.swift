@@ -90,6 +90,8 @@ struct MixCutApp: App {
                 SchemeSegment.self,
                 ProjectVideo.self,
                 SegmentDub.self,
+                PhysicalShot.self,
+                ShotVariant.self,
             ])
             // 一次性迁移：旧版用共享的 default.store（会被其它非沙盒 App 清库），
             // 现改用专属库 MixCut.store。仅当旧库确实是 MixCut 的数据时才搬迁。
@@ -148,6 +150,8 @@ struct MixCutApp: App {
                 MixStrategy.self, MixScheme.self, SchemeSegment.self,
                 ProjectVideo.self,
                 SegmentDub.self,
+                PhysicalShot.self,
+                ShotVariant.self,
             ])
             let memConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
             do {
@@ -910,7 +914,20 @@ struct MixCutApp: App {
             }
         }
         if let segs = try? ctx.fetch(FetchDescriptor<Segment>()) {
-            for s in segs { if let t = s.thumbnailPath { referenced.insert(t) } }
+            for s in segs {
+                if let t = s.thumbnailPath { referenced.insert(t) }
+                // 就地替换画面：生效中的合成片/缩略图受保护，不被回收
+                if let p = s.replacedPictureVideoPath { referenced.insert(p) }
+                if let t = s.replacedPictureThumbnailPath { referenced.insert(t) }
+                // 分镜头缩略图 + 变体产物
+                for shot in s.physicalShots {
+                    if let t = shot.thumbnailPath { referenced.insert(t) }
+                    for v in shot.variants {
+                        if let p = v.resultVideoPath { referenced.insert(p) }
+                        if let t = v.thumbnailPath { referenced.insert(t) }
+                    }
+                }
+            }
         }
         FileHelper.collectOrphanFiles(referencedPaths: referenced)
     }

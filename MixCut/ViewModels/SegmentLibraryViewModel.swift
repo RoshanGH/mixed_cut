@@ -24,6 +24,8 @@ final class SegmentLibraryViewModel {
     var segments: [Segment] = []
     var filteredSegments: [Segment] = []
     var selectedSegment: Segment?
+    /// 右键"分镜头替换"请求的分镜（驱动 ShotEditSheet 弹出）
+    var shotEditRequestSegment: Segment?
     var filter = SegmentFilter()
     var sortByQuality = false
     var isGridView = true

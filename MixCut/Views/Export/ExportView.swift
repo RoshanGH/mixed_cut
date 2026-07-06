@@ -583,7 +583,7 @@ struct ExportView: View {
             Task { @MainActor in
                 // 在 MainActor 上提取所有导出任务数据（SwiftData 模型必须在 MainActor）
                 let total = allSchemes.count
-                let concurrency = optimalConcurrency
+                let concurrency = 1   // 导出一律串行（用户要求，不再并发）
 
                 var exportTasks: [(input: ExportInput, outputPath: String, name: String)] = []
                 for scheme in allSchemes {
@@ -755,7 +755,7 @@ struct ExportView: View {
                 isExporting = true
                 defer { isExporting = false; exportTask = nil }
                 let config = exportConfig
-                let maxConcurrency = max(1, ConcurrencyPolicy.maxExportConcurrency())
+                let maxConcurrency = 1   // 导出一律串行（用户要求，不再并发）
 
                 // 1) 预先补齐各方案选定音频（顺序，多为 no-op；确保分离/变体音频就绪）
                 for (scheme, _) in plans {
@@ -785,7 +785,7 @@ struct ExportView: View {
                 var stopped = false
 
                 exportProgress = BatchExportProgress(total: totalJobs, completed: 0,
-                                                     description: "导出中（\(maxConcurrency) 路并发）…")
+                                                     description: "串行导出中…")
 
                 await withTaskGroup(of: Bool.self) { group in
                     func addJob(_ i: Int) {
@@ -821,7 +821,7 @@ struct ExportView: View {
                         }
                         exportProgress = BatchExportProgress(
                             total: totalJobs, completed: completed,
-                            description: stopped ? "停止中…" : "导出中（\(maxConcurrency) 路并发）… \(completed)/\(totalJobs)")
+                            description: stopped ? "停止中…" : "串行导出中… \(completed)/\(totalJobs)")
                     }
                 }
 
