@@ -67,6 +67,9 @@ struct SegmentLibraryView: View {
             }
         }
         .navigationTitle("分镜素材库")
+        .sheet(item: $viewModel.shotEditRequestSegment) { seg in
+            ShotEditSheet(segment: seg)
+        }
         .sheet(isPresented: $showBatchExportSheet) {
             BatchExportSheet(
                 segments: viewModel.selectedSegments,
@@ -586,6 +589,24 @@ struct SegmentCard: View, Equatable {
                 Label("编辑台词", systemImage: "square.and.pencil")
             }
 
+            Button {
+                viewModel.shotEditRequestSegment = segment
+            } label: {
+                Label("分镜头替换", systemImage: "wand.and.stars")
+            }
+
+            if segment.replacedPictureVideoPath != nil {
+                Button(role: .destructive) {
+                    segment.replacedPictureVideoPath = nil
+                    segment.replacedPictureThumbnailPath = nil
+                    segment.replacedPictureFrameCount = 0
+                    segment.pictureShowsReplaced = false
+                    try? modelContext.save()   // 旧文件留给孤儿 GC 回收
+                } label: {
+                    Label("删除替换画面", systemImage: "photo.badge.arrow.down")
+                }
+            }
+
             if let videoPath = segment.video?.localPath, !videoPath.isEmpty {
                 Button {
                     let url = URL(fileURLWithPath: videoPath)
@@ -650,6 +671,28 @@ struct SegmentCard: View, Equatable {
                         }
                     }
                     .padding(6)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    // 就地替换画面：切换按钮（仅当存在替换画面时显示）原画面 ↔ 替换画面
+                    if segment.replacedPictureVideoPath != nil {
+                        Button {
+                            segment.pictureShowsReplaced.toggle()
+                            try? modelContext.save()
+                        } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: "arrow.triangle.2.circlepath")
+                                Text(segment.pictureShowsReplaced ? "替换画面" : "原画面")
+                            }
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6).padding(.vertical, 3)
+                            .background(Capsule().fill(segment.pictureShowsReplaced
+                                ? Color.green.opacity(0.75) : Color.black.opacity(0.6)))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(6)
+                        .help("在原画面与 AI 替换画面之间切换")
+                    }
                 }
                 .overlay {
                     if segment.hasHardSubtitle {
@@ -1014,14 +1057,15 @@ struct SegmentInlinePlayer: View {
 
     private func progressWidth(in totalWidth: CGFloat) -> CGFloat {
         guard segmentDuration > 0 else { return 0 }
-        let elapsed = currentTime - segment.startTime
+        // 进度基准：替换版从 0 起（整段独立片），原版从源 startTime 起。
+        let elapsed = currentTime - segment.effectivePicture.startTime
         return totalWidth * max(0, min(1, elapsed / segmentDuration))
     }
 
     @ViewBuilder
     private var thumbnailView: some View {
         Group {
-            if let thumbPath = segment.thumbnailPath,
+            if let thumbPath = segment.effectivePicture.thumbnailPath,
                let image = ThumbnailCache.shared.image(for: thumbPath) {
                 Image(nsImage: image)
                     .resizable()
@@ -1041,18 +1085,22 @@ struct SegmentInlinePlayer: View {
         .clipped()
     }
 
-    private func play(from startTime: Double, to endTime: Double) {
+    private func play(from requestedStart: Double, to requestedEnd: Double) {
         stopPlayback()
 
-        guard let videoPath = segment.video?.localPath,
-              FileManager.default.fileExists(atPath: videoPath) else { return }
+        // 当前生效画面：替换版是整段独立片(0..duration)，忽略传入的源时间轴区间；原版用传入区间。
+        let ep = segment.effectivePicture
+        let startTime = ep.isReplaced ? ep.startTime : requestedStart
+        let endTime = ep.isReplaced ? ep.endTime : requestedEnd
+        let videoPath = ep.videoPath
+        guard !videoPath.isEmpty, FileManager.default.fileExists(atPath: videoPath) else { return }
 
         let item = AVPlayerItem(url: URL(fileURLWithPath: videoPath))
 
         // 半帧偏移：零容差 seek 会落到「pts ≤ 目标时间」的那一帧。若分镜起点 startTime
         // 比目标帧真实 pts 早哪怕几微秒（编码后帧 pts 常为非整值），就会掉到前一帧，
         // 开头多出上个镜头的尾帧。把目标时间挪到帧正中央 (startTime + 0.5/fps) 即可稳定命中目标帧。
-        let fps = segment.video?.fps ?? 0
+        let fps = ep.fps
         let halfFrame = fps > 0 ? 0.5 / fps : 0.01
 
         // 关键：让播放器在「本段最后一帧」处物理停住，绝不越过 endTime 冲进下一个镜头。

@@ -38,13 +38,15 @@ enum VariantExportInput {
             let key = seg.id.uuidString
             segByKey[key] = seg
             let stem = (video.name as NSString).deletingPathExtension
-            let variants: [VariantRef] = seg.effectiveDubVariants.map { dub in
+            // 只填"参与组合"的变体（combinationDubVariants），原版是否参与由 includeOriginal 决定
+            let variants: [VariantRef] = seg.combinationDubVariants.map { dub in
                 dubByKey[dub.id.uuidString] = dub
                 return VariantRef(dubKey: dub.id.uuidString, textVariantIndex: dub.textVariantIndex)
             }
             sources.append(SegmentExportSource(
                 segmentKey: key, sequenceNumber: numberProvider(seg),
-                videoName: stem, isVoiceLocked: seg.isVoiceLocked, variants: variants))
+                videoName: stem, isVoiceLocked: seg.isVoiceLocked,
+                includeOriginal: seg.originalParticipatesInCombination, variants: variants))
         }
 
         // 2) 展开
@@ -54,7 +56,9 @@ enum VariantExportInput {
         var jobs: [VariantExportJob] = []
         for item in items {
             guard let seg = segByKey[item.segmentKey], let video = seg.video else { continue }
-            let fps = video.fps > 0 ? video.fps : 30
+            // 走"当前生效画面"（替换版=合成片整段；原版=源视频帧区间）
+            let ep = seg.effectivePicture
+            let fps = ep.fps > 0 ? ep.fps : 30
             if let dubKey = item.dubKey, let dub = dubByKey[dubKey],
                let audioPath = dub.audioFilePath {
                 // BGM 切片源（整轨 bgm.wav），不存在则 nil（回退纯人声）
@@ -65,7 +69,7 @@ enum VariantExportInput {
                 }()
                 let caption = dub.rewrittenText.isEmpty ? seg.text : dub.rewrittenText
                 let spec = DubSegmentSpec(
-                    videoPath: video.localPath, startFrame: seg.startFrame, endFrame: seg.endFrame,
+                    videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
                     fps: fps, captionText: caption, hasHardSubtitle: seg.hasHardSubtitle,
                     maskStyleRaw: seg.maskStyleRaw, maskRect: seg.maskRect, isVoiceLocked: false,
                     dubAudioPath: audioPath, freezePadFrames: dub.freezePadFrames,
@@ -73,8 +77,8 @@ enum VariantExportInput {
                 jobs.append(.variant(spec: spec, videoWidth: video.width, videoHeight: video.height,
                                      fileName: item.fileName))
             } else {
-                jobs.append(.original(sourcePath: video.localPath, startTime: seg.startTime,
-                                      endTime: seg.endTime, fps: fps, fileName: item.fileName))
+                jobs.append(.original(sourcePath: ep.videoPath, startTime: ep.startTime,
+                                      endTime: ep.endTime, fps: fps, fileName: item.fileName))
             }
         }
         return jobs

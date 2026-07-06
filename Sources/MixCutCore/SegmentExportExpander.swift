@@ -16,13 +16,15 @@ public struct SegmentExportSource: Equatable, Sendable {
     public let sequenceNumber: Int
     public let videoName: String      // 不含扩展名
     public let isVoiceLocked: Bool
-    public let variants: [VariantRef] // 仅含已生成音频的变体
+    public let includeOriginal: Bool  // 原版是否参与（锁定时视为 true）
+    public let variants: [VariantRef] // 仅含"参与组合"且已生成音频的变体
     public init(segmentKey: String, sequenceNumber: Int, videoName: String,
-                isVoiceLocked: Bool, variants: [VariantRef]) {
+                isVoiceLocked: Bool, includeOriginal: Bool, variants: [VariantRef]) {
         self.segmentKey = segmentKey
         self.sequenceNumber = sequenceNumber
         self.videoName = videoName
         self.isVoiceLocked = isVoiceLocked
+        self.includeOriginal = includeOriginal
         self.variants = variants
     }
 }
@@ -45,11 +47,15 @@ public enum SegmentExportExpander {
     public static func expand(_ sources: [SegmentExportSource]) -> [SegmentExportPlanItem] {
         var out: [SegmentExportPlanItem] = []
         for s in sources {
-            out.append(SegmentExportPlanItem(
-                segmentKey: s.segmentKey, dubKey: nil,
-                fileName: "\(s.sequenceNumber)_\(s.videoName).mp4"))
-            guard !s.isVoiceLocked else { continue }
-            for v in s.variants.sorted(by: { $0.textVariantIndex < $1.textVariantIndex }) {
+            let variantItems = s.isVoiceLocked ? [] : s.variants.sorted(by: { $0.textVariantIndex < $1.textVariantIndex })
+            let wantOriginal = s.isVoiceLocked || s.includeOriginal
+            // 兜底：既不含原版也无变体 → 仅原版
+            if wantOriginal || variantItems.isEmpty {
+                out.append(SegmentExportPlanItem(
+                    segmentKey: s.segmentKey, dubKey: nil,
+                    fileName: "\(s.sequenceNumber)_\(s.videoName).mp4"))
+            }
+            for v in variantItems {
                 let letter = letter(for: v.textVariantIndex)
                 out.append(SegmentExportPlanItem(
                     segmentKey: s.segmentKey, dubKey: v.dubKey,

@@ -3,57 +3,52 @@ import Testing
 
 @Suite("SegmentExportExpander")
 struct SegmentExportExpanderTests {
+    private func src(_ locked: Bool, _ orig: Bool, _ variants: [VariantRef], seq: Int = 1, name: String = "v") -> SegmentExportSource {
+        SegmentExportSource(segmentKey: "s\(seq)", sequenceNumber: seq, videoName: name,
+                            isVoiceLocked: locked, includeOriginal: orig, variants: variants)
+    }
+    private let a = VariantRef(dubKey: "a", textVariantIndex: 0)
+    private let b = VariantRef(dubKey: "b", textVariantIndex: 1)
 
-    @Test("非锁定分镜：1 原版 + 2 变体，命名正确")
-    func nonLockedWithTwoVariants() {
-        let src = SegmentExportSource(
-            segmentKey: "seg1", sequenceNumber: 2, videoName: "clip", isVoiceLocked: false,
-            variants: [VariantRef(dubKey: "a", textVariantIndex: 0),
-                       VariantRef(dubKey: "b", textVariantIndex: 1)])
-        let out = SegmentExportExpander.expand([src])
-        #expect(out.count == 3)
-        #expect(out[0].dubKey == nil)
-        #expect(out[0].fileName == "2_clip.mp4")
-        #expect(out[1].dubKey == "a")
-        #expect(out[1].fileName == "2_clip_A.mp4")
-        #expect(out[2].dubKey == "b")
-        #expect(out[2].fileName == "2_clip_B.mp4")
+    @Test("原版参与 + 2 变体 → 3 条，命名正确")
+    func originalPlusTwo() {
+        let out = SegmentExportExpander.expand([src(false, true, [a, b], seq: 2, name: "clip")])
+        #expect(out.map(\.fileName) == ["2_clip.mp4", "2_clip_A.mp4", "2_clip_B.mp4"])
+        #expect(out.map(\.dubKey) == [nil, "a", "b"])
     }
 
-    @Test("锁定原声分镜：只产原版，忽略变体")
-    func lockedProducesOnlyOriginal() {
-        let src = SegmentExportSource(
-            segmentKey: "s", sequenceNumber: 1, videoName: "v", isVoiceLocked: true,
-            variants: [VariantRef(dubKey: "a", textVariantIndex: 0)])
-        let out = SegmentExportExpander.expand([src])
+    @Test("仅变体不含原版 → 只出变体")
+    func variantsOnly() {
+        let out = SegmentExportExpander.expand([src(false, false, [a, b])])
+        #expect(out.map(\.dubKey) == ["a", "b"])
+        #expect(out.allSatisfy { $0.dubKey != nil })
+    }
+
+    @Test("不含原版且无变体 → 兜底仅原版")
+    func fallbackOriginal() {
+        let out = SegmentExportExpander.expand([src(false, false, [])])
         #expect(out.count == 1)
         #expect(out[0].dubKey == nil)
-        #expect(out[0].fileName == "1_v.mp4")
     }
 
-    @Test("变体乱序输入按 textVariantIndex 升序产出 A/B")
-    func variantsSortedByIndex() {
-        let src = SegmentExportSource(
-            segmentKey: "s", sequenceNumber: 3, videoName: "v", isVoiceLocked: false,
-            variants: [VariantRef(dubKey: "second", textVariantIndex: 1),
-                       VariantRef(dubKey: "first", textVariantIndex: 0)])
-        let out = SegmentExportExpander.expand([src])
+    @Test("锁定 → 仅原版，忽略 includeOriginal/变体")
+    func lockedOnlyOriginal() {
+        let out = SegmentExportExpander.expand([src(true, false, [a])])
+        #expect(out.count == 1)
+        #expect(out[0].dubKey == nil)
+    }
+
+    @Test("变体乱序按 textVariantIndex 升序产出 A/B")
+    func sorted() {
+        let out = SegmentExportExpander.expand([src(false, true,
+            [VariantRef(dubKey: "second", textVariantIndex: 1),
+             VariantRef(dubKey: "first", textVariantIndex: 0)], seq: 3)])
         #expect(out.map(\.fileName) == ["3_v.mp4", "3_v_A.mp4", "3_v_B.mp4"])
-        #expect(out[1].dubKey == "first")
-        #expect(out[2].dubKey == "second")
+        #expect(out.map(\.dubKey) == [nil, "first", "second"])
     }
 
-    @Test("无变体分镜只产原版")
-    func noVariants() {
-        let src = SegmentExportSource(
-            segmentKey: "s", sequenceNumber: 5, videoName: "v", isVoiceLocked: false, variants: [])
-        #expect(SegmentExportExpander.expand([src]).count == 1)
-    }
-
-    @Test("字母映射")
-    func letterMapping() {
+    @Test("字母映射") func letterMapping() {
         #expect(SegmentExportExpander.letter(for: 0) == "A")
-        #expect(SegmentExportExpander.letter(for: 2) == "C")
-        #expect(SegmentExportExpander.letter(for: 26) == "V26")  // 越界回退
+        #expect(SegmentExportExpander.letter(for: 26) == "V26")
     }
 }

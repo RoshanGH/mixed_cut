@@ -69,6 +69,57 @@ enum FileHelper {
         return dir.appendingPathComponent("\(voiceId)-v\(textVariantIndex).m4a")
     }
 
+    // MARK: - 分镜头 AI 编辑变体存储
+
+    /// 分镜头变体视频：AppSupport/MixCut/ShotVariants/{videoHash}/{shotId}/{variantId}.mp4
+    static func shotVariantURL(videoHash: String, shotId: UUID, variantId: UUID) -> URL {
+        let dir = appSupportDirectory
+            .appendingPathComponent("ShotVariants", isDirectory: true)
+            .appendingPathComponent(videoHash, isDirectory: true)
+            .appendingPathComponent(shotId.uuidString, isDirectory: true)
+        ensureDirectory(at: dir)
+        return dir.appendingPathComponent("\(variantId.uuidString).mp4")
+    }
+
+    /// 分镜头变体缩略图（与变体视频同目录，后缀 .jpg）
+    static func shotVariantThumbnailURL(videoHash: String, shotId: UUID, variantId: UUID) -> URL {
+        let dir = appSupportDirectory
+            .appendingPathComponent("ShotVariants", isDirectory: true)
+            .appendingPathComponent(videoHash, isDirectory: true)
+            .appendingPathComponent(shotId.uuidString, isDirectory: true)
+        ensureDirectory(at: dir)
+        return dir.appendingPathComponent("\(variantId.uuidString).jpg")
+    }
+
+    /// 分镜头首帧缩略图：AppSupport/MixCut/ShotThumbnails/{videoHash}/{shotId}.jpg
+    static func shotThumbnailURL(videoHash: String, shotId: UUID) -> URL {
+        let dir = appSupportDirectory
+            .appendingPathComponent("ShotThumbnails", isDirectory: true)
+            .appendingPathComponent(videoHash, isDirectory: true)
+        ensureDirectory(at: dir)
+        return dir.appendingPathComponent("\(shotId.uuidString).jpg")
+    }
+
+    // MARK: - 就地画面替换产物存储
+
+    /// 替换画面视频：AppSupport/MixCut/ReplacedPictures/{videoHash}/{segmentId}.mp4
+    static func replacedPictureURL(videoHash: String, segmentId: UUID) -> URL {
+        let dir = appSupportDirectory
+            .appendingPathComponent("ReplacedPictures", isDirectory: true)
+            .appendingPathComponent(videoHash, isDirectory: true)
+        ensureDirectory(at: dir)
+        return dir.appendingPathComponent("\(segmentId.uuidString).mp4")
+    }
+
+    /// 替换画面缩略图（与替换视频同目录，后缀 .jpg）
+    static func replacedPictureThumbnailURL(videoHash: String, segmentId: UUID) -> URL {
+        let dir = appSupportDirectory
+            .appendingPathComponent("ReplacedPictures", isDirectory: true)
+            .appendingPathComponent(videoHash, isDirectory: true)
+        ensureDirectory(at: dir)
+        return dir.appendingPathComponent("\(segmentId.uuidString).jpg")
+    }
+
     // MARK: - 人声分离（demucs）模型与产物
 
     /// demucs GGML 模型存储目录（AppSupport，理由同 Whisper：不能放 Caches 被系统清理）。
@@ -210,6 +261,37 @@ enum FileHelper {
         // 缩略图：Thumbnails/xxx
         if let thumbs = try? fm.contentsOfDirectory(at: globalThumbnailDirectory, includingPropertiesForKeys: nil) {
             onDisk.append(contentsOf: thumbs.map(\.path))
+        }
+        // 就地替换画面：ReplacedPictures/{hash}/xxx.mp4|.jpg（两级）
+        let replacedDir = appSupportDirectory.appendingPathComponent("ReplacedPictures", isDirectory: true)
+        if let hashDirs = try? fm.contentsOfDirectory(at: replacedDir, includingPropertiesForKeys: nil) {
+            for hashDir in hashDirs {
+                if let files = try? fm.contentsOfDirectory(at: hashDir, includingPropertiesForKeys: nil) {
+                    onDisk.append(contentsOf: files.map(\.path))
+                }
+            }
+        }
+        // 分镜头缩略图：ShotThumbnails/{hash}/xxx.jpg（两级）
+        let shotThumbDir = appSupportDirectory.appendingPathComponent("ShotThumbnails", isDirectory: true)
+        if let hashDirs = try? fm.contentsOfDirectory(at: shotThumbDir, includingPropertiesForKeys: nil) {
+            for hashDir in hashDirs {
+                if let files = try? fm.contentsOfDirectory(at: hashDir, includingPropertiesForKeys: nil) {
+                    onDisk.append(contentsOf: files.map(\.path))
+                }
+            }
+        }
+        // 分镜头变体产物：ShotVariants/{hash}/{shotId}/xxx.mp4|.jpg（三级）
+        let shotVarDir = appSupportDirectory.appendingPathComponent("ShotVariants", isDirectory: true)
+        if let hashDirs = try? fm.contentsOfDirectory(at: shotVarDir, includingPropertiesForKeys: nil) {
+            for hashDir in hashDirs {
+                if let shotDirs = try? fm.contentsOfDirectory(at: hashDir, includingPropertiesForKeys: nil) {
+                    for shotDir in shotDirs {
+                        if let files = try? fm.contentsOfDirectory(at: shotDir, includingPropertiesForKeys: nil) {
+                            onDisk.append(contentsOf: files.map(\.path))
+                        }
+                    }
+                }
+            }
         }
 
         let orphans = OrphanFileFinder.orphanFiles(onDisk: onDisk, referenced: referencedPaths)

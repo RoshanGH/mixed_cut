@@ -26,6 +26,10 @@ struct SegmentVariantInspector: View {
     private func dub(textVariant t: Int, voiceId v: String) -> SegmentDub? {
         segment.segmentDubs.first { $0.textVariantIndex == t && $0.voiceId == v }
     }
+    /// 该改写版参与组合用的"有效变体"（已生成音频、去重后那条）
+    private func effectiveDub(_ t: Int) -> SegmentDub? {
+        segment.effectiveDubVariants.first { $0.textVariantIndex == t }
+    }
     private func f(_ x: Double) -> String { String(format: "%.1f", x) }
 
     /// 提示基准 = 原分镜台词字数。比原台词多很多才算「偏多」（阈值：+20% 且至少 +5 字）。
@@ -87,6 +91,20 @@ struct SegmentVariantInspector: View {
             }
             Text("分镜 #\(segment.segmentIndex) · 时长 \(String(format: "%.1f", segment.duration))s")
                 .font(.caption).foregroundStyle(.secondary)
+            if !segment.isVoiceLocked {
+                HStack(spacing: 8) {
+                    Toggle(isOn: Binding(
+                        get: { segment.originalParticipatesInCombination },
+                        set: { segment.originalParticipatesInCombination = $0; try? modelContext.save() }
+                    )) { Text("原版参与组合").font(.caption2) }
+                    .toggleStyle(.checkbox)
+                    .help("勾选后原版参与导出排列组合；与各改写版的「参与组合」共同决定组合数")
+                    Spacer()
+                    Text("参与 \(segment.combinationSlotCount) 档")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                .padding(.top, 2)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -198,6 +216,18 @@ struct SegmentVariantInspector: View {
                     .background(Color.accentColor)
                     .clipShape(Capsule())
                 charHint(count: editing ? draftText.count : text.count)
+                // 参与导出组合勾选（仅该版已生成音频时显示；锁定原声时禁用）
+                if let ed = effectiveDub(t) {
+                    Toggle(isOn: Binding(
+                        get: { ed.participatesInCombination },
+                        set: { ed.participatesInCombination = $0; try? modelContext.save() }
+                    )) {
+                        Text("参与组合").font(.caption2)
+                    }
+                    .toggleStyle(.checkbox)
+                    .disabled(segment.isVoiceLocked)
+                    .help(segment.isVoiceLocked ? "已锁原声，不参与组合" : "勾选后此改写版参与导出排列组合")
+                }
                 Spacer()
                 if editing {
                     Button { editingVariant = nil } label: {

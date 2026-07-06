@@ -46,9 +46,11 @@ enum DebugSelfTest {
         // —— G3 组合数学（真实数据，纯逻辑，不落库）——
         lines.append("\n## G3 笛卡尔积组合(每模板≤8)")
         let slots: [SlotOptions] = segs.map { s in
-            SlotOptions(isLocked: s.isVoiceLocked, dubIds: s.effectiveDubVariants.map(\.id))
+            SlotOptions(isLocked: s.isVoiceLocked,
+                        includeOriginal: s.isVoiceLocked ? true : s.originalParticipatesInCombination,
+                        dubIds: s.isVoiceLocked ? [] : s.combinationDubVariants.map(\.id))
         }
-        let combo = VariantCombinationGenerator.generate(slots: slots, limit: 256, includeOriginal: true)
+        let combo = VariantCombinationGenerator.generate(slots: slots, limit: 256)
         lines.append("可行组合总数(feasible)=\(combo.feasibleCount)，实取=\(combo.combinations.count)，截断=\(combo.truncated)")
 
         // —— G2 变体导出（真实 App 层链路）——
@@ -120,7 +122,7 @@ enum DebugSelfTest {
                 if let sc = st.orderedSchemes.first {
                     let factors = sc.orderedSegments.map { ss -> Int in
                         guard let seg = ss.segment else { return 1 }
-                        return seg.isVoiceLocked ? 1 : 1 + seg.effectiveDubVariants.count
+                        return seg.combinationSlotCount
                     }
                     r.append("    样例方案「\(sc.name)」组合数=\(factors.reduce(1,*)) (\(factors.map(String.init).joined(separator: "×")))")
                 }

@@ -79,7 +79,7 @@ struct SegmentCardCompact: View {
 
     @ViewBuilder
     private var thumbnail: some View {
-        if let path = segment.thumbnailPath,
+        if let path = segment.effectivePicture.thumbnailPath,
            let image = ThumbnailCache.shared.image(for: path) {
             Image(nsImage: image)
                 .resizable()
