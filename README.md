@@ -22,6 +22,18 @@
   <img src="docs/screenshots/library.png" width="880" alt="MixCut 分镜素材库" />
 </div>
 
+<div align="center">
+
+### 📺 完整演示视频
+
+<a href="https://www.bilibili.com/video/BV1Uz5i6pE6q/" target="_blank">
+  <img src="docs/screenshots/demo-video.jpg" width="720" alt="观看 MixCut 完整演示视频（哔哩哔哩）" />
+</a>
+
+**[▶ 点击观看完整演示 →](https://www.bilibili.com/video/BV1Uz5i6pE6q/)** · 约 45 分钟 · 哔哩哔哩
+
+</div>
+
 ---
 
 ## 这是什么
