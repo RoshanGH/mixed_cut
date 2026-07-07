@@ -53,26 +53,22 @@
 
 ### 🎬 AI 智能混剪
 
-<img src="docs/screenshots/schemes.png" width="720" align="right" alt="混剪方案" />
-
 - **AI 语义切分** —— 自动识别 11 种语义类型（噱头引入 / 痛点 / 产品方案 / 效果展示 / 信任背书 / 价格对比 / 活动福利 / 行动号召 / 产品定位 / 产品使用教育 / 过渡）
 - **两步生成方案** —— ① AI 出策略（风格 / 受众 / 叙事结构）② AI 按策略排列分镜组合
 - **变体组合** —— 一个策略可展开成多个变体组合（如 `1×2×2×1`），批量出片
 - **本地语音识别** —— 内置 whisper.cpp，完全离线，输出字级时间戳；识别不准时可用阿里 `paraformer` 云端**重识别单条分镜**纠正台词
 - **多 AI 提供商** —— 千问 / MiniMax / DeepSeek / Claude / 国内转发网关 / 自定义 OpenAI 兼容
 
-<br clear="right" />
+<div align="center"><img src="docs/screenshots/schemes.png" width="820" alt="混剪方案：AI 策略 + 叙事结构 + 变体组合" /></div>
 
 ### 🖼️ 分镜头 AI 画面替换（v0.7.0 新增）
-
-<img src="docs/screenshots/shot-edit.png" width="720" align="right" alt="分镜头 AI 画面替换" />
 
 - **物理镜头切分** —— 把一个逻辑分镜按画面变化度切成多个实质镜头，可**合并 / 拆分 / 拖动微调边界**（总时长恒等于原分镜）
 - **提示词替换画面** —— 对单个镜头输入提示词（如「把可乐换成雪碧，手和背景不变」），AI 替换画面，**进多少秒出多少秒**、零帧漂移
 - **就地替换、可恢复** —— 合成结果直接替换原分镜画面（不新增分镜、不打乱排列组合），音频 / 台词 / 字幕参数全部保留，随时切回原画面
 - **悬停即播** —— 每个镜头、每个变体都能悬停播放，切得对不对一眼看清
 
-<br clear="right" />
+<div align="center"><img src="docs/screenshots/shot-edit.png" width="820" alt="分镜头 AI 画面替换工作区" /></div>
 
 ### 🗣️ AI 配音 / 口播替换
 
@@ -85,14 +81,12 @@
 
 ### 🎞️ 视频处理与导出
 
-<img src="docs/screenshots/export.png" width="720" align="right" alt="批量导出" />
-
 - **硬件加速导出** —— 默认 H.264 VideoToolbox 硬件编码，Apple Silicon 5–10× 软件编码速度
 - **分镜批量导出** —— 多选分镜 → 单独 MP4，文件命名 `{编号}_{原视频名}.mp4`
 - **第一帧无黑屏** —— trim filter + setpts 精确切片，QuickTime 立即显示画面
 - **视频全局共享** —— 同一视频（SHA-256 哈希）跨项目共享，分镜修改全局同步；导入已分析视频秒级完成
 
-<br clear="right" />
+<div align="center"><img src="docs/screenshots/export.png" width="820" alt="批量导出：导出概览 + 方案清单 + 硬件加速编码器" /></div>
 
 ### ⌨️ 顺手的体验
 
