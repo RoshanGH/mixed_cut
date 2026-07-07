@@ -1,218 +1,203 @@
-# MixCut - AI 广告视频混剪工具
+<div align="center">
 
-> macOS 原生桌面应用 | SwiftUI + SwiftData | 本地 AI 驱动 | 开箱即用
+<img src="docs/screenshots/logo.png" width="128" alt="MixCut" />
 
-MixCut 面向广告投放团队，两条主线能力：
+# MixCut
 
-- **智能混剪** — 导入广告素材 → AI 自动按语义切分分镜 → 智能排列组合 → 一键批量导出多条差异化广告
-- **AI 配音 / 口播替换** — 一键改写台词 → 克隆原声音色 → 合成配音 → 保留原 BGM → 烧录新字幕 → 批量出多版
+**AI 广告视频混剪工具 · macOS 原生 · 开箱即用**
 
-视频内容、API Key 全部本地处理，AI 调用只发送结构化文本、**不发视频**。FFmpeg / Whisper / 人声分离模型全部内置，**双击即用，无需安装任何依赖**。
+一堆投放素材丢进去，AI 自动切分镜、排列组合、改写口播、克隆原声、烧录字幕，一键批量出几十条差异化广告。
 
-> Windows 版（C# + WPF + .NET 8）：[RoshanGH/mixcut-windows](https://github.com/RoshanGH/mixcut-windows)
+[![Release](https://img.shields.io/github/v/release/RoshanGH/mixed_cut?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC&color=6E56CF)](https://github.com/RoshanGH/mixed_cut/releases)
+[![Downloads](https://img.shields.io/github/downloads/RoshanGH/mixed_cut/total?label=%E4%B8%8B%E8%BD%BD%E9%87%8F&color=2EA043)](https://github.com/RoshanGH/mixed_cut/releases)
+[![Platform](https://img.shields.io/badge/macOS-14.0%2B%20Universal-000000?logo=apple)](https://github.com/RoshanGH/mixed_cut/releases)
+[![Stars](https://img.shields.io/github/stars/RoshanGH/mixed_cut?style=flat&color=E3B341)](https://github.com/RoshanGH/mixed_cut/stargazers)
+[![License](https://img.shields.io/github/license/RoshanGH/mixed_cut?color=blue)](./LICENSE)
 
-## 下载
+[**⬇️ 下载**](#-下载) · [**✨ 功能**](#-功能亮点) · [**🚀 快速开始**](#-快速开始) · [**🛠 开发者**](#-开发者--技术架构) · [Gitee 镜像（国内）](https://gitee.com/jinxiushanhehao/mixed_cut/releases)
 
-| 平台 | 链接 |
-|------|------|
-| GitHub | [Releases](https://github.com/RoshanGH/mixed_cut/releases) |
-| Gitee（国内）| [Releases](https://gitee.com/jinxiushanhehao/mixed_cut/releases) |
+</div>
 
-最新版本：**v0.6.0**
+<div align="center">
+  <img src="docs/screenshots/library.png" width="880" alt="MixCut 分镜素材库" />
+</div>
 
-## 功能亮点
+---
 
-### AI 智能流水线
-- **AI 语义切分** — 自动识别 11 种语义类型（噱头引入 / 痛点 / 产品方案 / 效果展示 / 信任背书 / 价格对比 / 活动福利 / 行动号召 / 产品定位 / 产品使用教育 / 过渡）
-- **本地语音识别** — 内置 whisper.cpp（`ggml-large-v3-turbo` 模型，首次启动自动下载），完全离线，输出字级时间戳
-- **单分镜重识别** — whisper 识别不准时，用阿里 `paraformer-realtime` 云端重识别单条分镜（不传视频，仅传该段音频）纠正台词
-- **AI 混剪方案** — 两步生成：① AI 出策略（风格 / 受众 / 叙事结构）② AI 按策略排列分镜组合
-- **多 AI 提供商** — 千问 / MiniMax / DeepSeek / Claude 原生 / 国内转发网关（Claude/Gemini/OpenAI 三平台）/ 自定义 OpenAI 兼容
+## 这是什么
 
-### AI 配音 / 口播替换
-- **一键改写** — AI 按多种广告风格，一次为每条分镜改写出 K 套差异化台词
-- **原声克隆** — 内置 demucs 分离出纯人声 → 用千问 `qwen-vc` 克隆原视频说话人音色，自动克隆原声（无需手动选音色），换 API Key 自动重克隆
-- **人声 / BGM 分离** — 内置 demucs（分离模型已随包内置，离线、无需下载），配音时保留原视频背景音乐
-- **配音合成 + 时长对齐** — TTS 合成后按分镜时长对齐（变速），克隆配音 + 原 BGM 混音
-- **烧录字幕（v0.6.0）** — 字号无级可调（滑条，占画面宽 3%~8.5%，**随分辨率自适应**）；**所见即所得**：示例字幕叠在分镜真实画面上、居中落在遮挡区、跟随遮挡框、拖动实时变化；**导出 = 预览**（贴字圆角胶囊底衬）；烧录时标点转空格但**保留 9.9 / 1,000 / 8:00 等数字**
-- **字幕遮挡** — 三种处理：直接烧录 / 模糊虚化 / 纯色遮挡（盖住原片旧字幕再烧新字幕）
-- **变体批量导出** — 每条分镜「原版 + 全部配音变体」一键导出多个 MP4
+**MixCut 是一款面向广告投放团队的 macOS 桌面应用。** 你把广告素材视频导进来，它用本地信号提取 + 云端 AI 语义决策，把视频拆成一个个带类型标注的分镜，再帮你：
 
-### 视频处理
-- **硬件加速导出** — 默认 H.264 VideoToolbox 硬件编码，Apple Silicon 5-10× 软件编码速度
-- **分镜批量导出** — 多选分镜 → 单独 MP4，文件命名 `{编号}_{原视频名}.mp4`
-- **第一帧无黑屏** — 用 trim filter + setpts 精确切片，QuickTime 立即显示画面
-- **视频全局共享** — 同一视频（SHA-256 哈希）跨项目共享，分镜修改全局同步
+- 🎬 **智能混剪** —— AI 出策略 → 按策略排列分镜组合 → 一键批量导出多条差异化广告
+- 🗣️ **AI 配音 / 口播替换** —— 一键改写台词 → 克隆原视频说话人音色 → 合成配音 → 保留原 BGM → 烧录新字幕
+- 🖼️ **分镜头 AI 画面替换**（v0.7.0）—— 把一个分镜切成物理镜头，对单个镜头用提示词替换画面（换背景 / 换主体 / 换颜色）
 
-### 体验
-- **键盘快捷键** — `⌘N` 新建项目 / `⌘1~5` 切换工作区 / `⌘B` 显隐侧边栏 / `⌘/` 快捷键面板 / 多选模式 `⌘A`/`⌘D`/`⌘0`/`Esc`
-- **强制浅色外观** — 不跟随系统夜间模式
-- **Toast + Skeleton + InlineBanner** — 完整的反馈 / 加载 / 错误展示体系
-- **应用启动恢复上次项目** + **应用内更新检查**
+> 🔒 视频内容和 API Key **全部本地处理**，AI 调用只发送结构化文本、**从不上传你的视频**。
+> 📦 FFmpeg / Whisper / 人声分离模型**全部内置**，像剪映一样**双击即用、零依赖**。
+> 💻 **Apple Silicon 与 Intel Mac 都原生支持**（Universal 二进制）。
 
-### 容错与稳定性
-- **AI JSON 4 层防御** — 预清洗 / 截断修复 / 错误位置救援 / 失败 JSON 落盘
-- **每步独立容错** — 导入流水线每步失败不阻塞后续（元数据 / 缩略图 / ASR / AI 分析各自 try-catch）
-- **国内网络友好** — 运行时下载的模型走国内镜像优先 + 超时重试；人声分离模型已内置根治超时
-- **二进制路径调用时解析** — FFmpeg 路径运行时动态解析 + 系统回退，长任务中途也不误报「组件未找到」
+---
 
-## 系统要求
+## 📥 下载
 
-- macOS 14.0 (Sonoma) 或更高
-- **Apple Silicon 与 Intel Mac 均原生支持**（Universal 二进制，主程序 + 内置 ffmpeg/whisper/demucs 都含 arm64 + x86_64）
-- 首次启动下载 Whisper 模型 ~1.5 GB（仅一次）；人声分离模型已内置无需下载
+| 平台 | 链接 | 说明 |
+|------|------|------|
+| **GitHub** | [**下载最新版 →**](https://github.com/RoshanGH/mixed_cut/releases/latest) | 全球，附带 DMG |
+| **Gitee（国内）** | [**下载最新版 →**](https://gitee.com/jinxiushanhehao/mixed_cut/releases) | 国内下载更快 |
 
-## 用户使用（普通用户）
+下载 `.dmg` → 拖进 **Applications** → 首次启动如提示「无法打开」，**右键 → 打开** 即可。无需安装 Homebrew / FFmpeg / Whisper 等任何东西。
 
-直接下载 [Releases](https://github.com/RoshanGH/mixed_cut/releases) 的 DMG，拖到 Applications 即可。首次启动如提示「无法打开」，**右键 → 打开**。
+---
 
-### 配置 AI Key
-首次启动会有引导。在 **设置 → AI 配置** 中填入 API Key：
+## ✨ 功能亮点
+
+### 🎬 AI 智能混剪
+
+<img src="docs/screenshots/schemes.png" width="720" align="right" alt="混剪方案" />
+
+- **AI 语义切分** —— 自动识别 11 种语义类型（噱头引入 / 痛点 / 产品方案 / 效果展示 / 信任背书 / 价格对比 / 活动福利 / 行动号召 / 产品定位 / 产品使用教育 / 过渡）
+- **两步生成方案** —— ① AI 出策略（风格 / 受众 / 叙事结构）② AI 按策略排列分镜组合
+- **变体组合** —— 一个策略可展开成多个变体组合（如 `1×2×2×1`），批量出片
+- **本地语音识别** —— 内置 whisper.cpp，完全离线，输出字级时间戳；识别不准时可用阿里 `paraformer` 云端**重识别单条分镜**纠正台词
+- **多 AI 提供商** —— 千问 / MiniMax / DeepSeek / Claude / 国内转发网关 / 自定义 OpenAI 兼容
+
+<br clear="right" />
+
+### 🖼️ 分镜头 AI 画面替换（v0.7.0 新增）
+
+<img src="docs/screenshots/shot-edit.png" width="720" align="right" alt="分镜头 AI 画面替换" />
+
+- **物理镜头切分** —— 把一个逻辑分镜按画面变化度切成多个实质镜头，可**合并 / 拆分 / 拖动微调边界**（总时长恒等于原分镜）
+- **提示词替换画面** —— 对单个镜头输入提示词（如「把可乐换成雪碧，手和背景不变」），AI 替换画面，**进多少秒出多少秒**、零帧漂移
+- **就地替换、可恢复** —— 合成结果直接替换原分镜画面（不新增分镜、不打乱排列组合），音频 / 台词 / 字幕参数全部保留，随时切回原画面
+- **悬停即播** —— 每个镜头、每个变体都能悬停播放，切得对不对一眼看清
+
+<br clear="right" />
+
+### 🗣️ AI 配音 / 口播替换
+
+- **一键改写** —— AI 按多种广告风格，一次为每条分镜改写出多套差异化台词
+- **原声克隆** —— 内置 demucs 分离纯人声 → 用千问 `qwen-vc` 克隆原视频说话人音色，**自动克隆、无需手动选音色**
+- **人声 / BGM 分离** —— 分离模型已随包内置（离线、无需下载），配音时保留原视频背景音乐
+- **配音合成 + 时长对齐** —— TTS 合成后按分镜时长对齐（变速），克隆配音 + 原 BGM 混音
+- **烧录字幕** —— 字号无级可调、随分辨率自适应；**所见即所得**（示例字幕叠在真实画面上、导出 = 预览）；三种字幕处理：直接烧录 / 模糊虚化 / 纯色遮挡（盖住旧字幕再烧新字幕）
+- **变体批量导出** —— 每条分镜「原版 + 勾选的配音变体」一键批量出多个 MP4；逐项「参与组合」开关，精确控制导出条数、不爆炸
+
+### 🎞️ 视频处理与导出
+
+<img src="docs/screenshots/export.png" width="720" align="right" alt="批量导出" />
+
+- **硬件加速导出** —— 默认 H.264 VideoToolbox 硬件编码，Apple Silicon 5–10× 软件编码速度
+- **分镜批量导出** —— 多选分镜 → 单独 MP4，文件命名 `{编号}_{原视频名}.mp4`
+- **第一帧无黑屏** —— trim filter + setpts 精确切片，QuickTime 立即显示画面
+- **视频全局共享** —— 同一视频（SHA-256 哈希）跨项目共享，分镜修改全局同步；导入已分析视频秒级完成
+
+<br clear="right" />
+
+### ⌨️ 顺手的体验
+
+键盘快捷键（`⌘N` 新建 / `⌘1~5` 切工作区 / `⌘B` 侧边栏 / `⌘/` 快捷键面板）· 应用启动恢复上次项目 · 应用内更新检查 · Toast / Skeleton / 错误横幅完整反馈体系 · 强制浅色外观。
+
+---
+
+## 🖥️ 界面一览
+
+| 项目概览 | 分镜素材库 |
+|:---:|:---:|
+| <img src="docs/screenshots/overview.png" width="420" /> | <img src="docs/screenshots/library.png" width="420" /> |
+| **混剪方案** | **分镜头替换 / 批量导出** |
+| <img src="docs/screenshots/schemes.png" width="420" /> | <img src="docs/screenshots/shot-edit.png" width="420" /> |
+
+> 所有视频素材统一 **9:16 竖屏**（面向手机端信息流广告）。
+
+---
+
+## 🚀 快速开始
+
+1. 从 [Releases](https://github.com/RoshanGH/mixed_cut/releases/latest) 下载 DMG，拖进 **Applications**（首次启动右键 → 打开）。
+2. 打开 **设置 → AI 配置**，填入 API Key：
 
 | 提供商 | 说明 |
 |--------|------|
-| **千问 (Qwen)** | 阿里通义千问；配音的原声克隆 / TTS / 单分镜重识别也走千问（DashScope） |
-| **MiniMax** | MiniMax M2.7 / abab 系列 |
-| **DeepSeek** | DeepSeek-V4 系列 |
+| **千问 (Qwen)** | 阿里通义千问；配音的原声克隆 / TTS / 单分镜重识别 / 画面替换也走千问（DashScope） |
+| **MiniMax** | MiniMax 系列 |
+| **DeepSeek** | DeepSeek 系列 |
 | **Claude** | Anthropic 官方 API |
-| **国内转发网关** | 转发到 Claude / Gemini / OpenAI 三平台之一 |
+| **国内转发网关** | 转发到 Claude / Gemini / OpenAI 之一 |
 | **自定义** | 任意 OpenAI 兼容 API（自填地址 + 模型名） |
 
-> 配音功能（原声克隆 / TTS）依赖千问 DashScope，需开通 `qwen-voice-enrollment` 与 `qwen3-tts-vc`，并保证账户有可用额度。
+> 配音（原声克隆 / TTS）与分镜头画面替换依赖千问 DashScope，需开通对应能力并保证账户有可用额度。
 
-## 开发者构建
+3. **系统要求**：macOS 14.0 (Sonoma) 及以上；首次启动自动下载 Whisper 模型（仅一次），人声分离模型已内置无需下载。
+
+---
+
+## 🛠 开发者 & 技术架构
+
+MixCut 是纯 **SwiftUI + SwiftData** 原生应用，无第三方 SPM 依赖。设计上把「精确信号提取」和「语义决策」分开——所有视觉/音频信号由本地 FFmpeg / Whisper 精确提取成结构化数据，再交给 AI 做语义决策，**不把视频喂给 AI**。
+
+**技术看点**
+
+- 🧩 **本地 AI 流水线** —— FFmpeg 场景/静音/I-frame 检测 + whisper.cpp ASR + 四阶段边界优化，AI 只收结构化文本
+- 🧪 **跨端可复用纯逻辑** —— `MixCutCore` 把字幕渲染/落位、变体组合、边界对齐、语速规划等抽成纯 Swift 模块，`swift test` 直接跑单测（无需 Xcode）
+- 💻 **Universal 二进制** —— 主程序 + 内置 ffmpeg / ffprobe / whisper / demucs 全部 arm64 + x86_64 静态自包含，Intel Mac 原生可用
+- 🔌 **多提供商抽象** —— `AIProvider` 协议统一 OpenAI 兼容调用，Settings 改动即时生效
+
+```
+SwiftUI Views  →  @Observable ViewModels (MainActor)  →  Service Layer (actor)
+                                                            ├─ SceneDetection / ASR(+paraformer) / AIAnalysis
+                                                            ├─ ScriptRewrite / SchemeGen / Export·DubExport
+                                                            └─ TTS(克隆/合成) / VocalSeparation(demucs) / Boundary
+MixCutCore（纯逻辑·可单测）  ·  SwiftData（8 个 @Model）  ·  内置 FFmpeg / whisper.cpp / demucs
+```
+
+**本地构建**
 
 ```bash
-# 1. 克隆
 git clone https://github.com/RoshanGH/mixed_cut.git
 cd mixed_cut
 
-# 2. 生成内置 universal 二进制到 Resources/bin/（静态自包含 arm64+x86_64，支持 Intel）
-#    下载静态 ffmpeg/ffprobe + 源码编 whisper/demucs + lipo 合并
+# 生成内置 universal 二进制到 Resources/bin/（静态自包含 arm64+x86_64）
 ./scripts/build_universal_binaries.sh
-python3 bundle_deps.py   # 校验四个二进制均为 universal
+python3 bundle_deps.py          # 校验四个二进制均为 universal
 
-# 3. 用 Xcode 打开
-open MixCut.xcodeproj
-
-# 或命令行编译
-xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build
+open MixCut.xcodeproj           # 用 Xcode 打开（SwiftData 宏依赖 Xcode 编译器）
 ```
 
-最低要求：Xcode 15.0+ / Swift 5.10+（SwiftData 宏依赖 Xcode 编译器，必须用 Xcode 构建）
+> 要求 Xcode 15.0+ / Swift 5.10+。更详细的架构、数据模型与开发规范见 [`CLAUDE.md`](./CLAUDE.md) 与 [`PRODUCT_SPEC.md`](./PRODUCT_SPEC.md)。
+>
+> 🪟 Windows 版（C# + WPF + .NET 8）：[RoshanGH/mixcut-windows](https://github.com/RoshanGH/mixcut-windows)
 
-## 技术架构
+---
 
-```
-┌─────────────────────────────────────────────────────┐
-│                    SwiftUI Views                     │
-│  Overview │ Import │ SegmentLibrary │ Schemes │ Export │
-│  + Dubbing（配音/字幕）+ Shared（Toast/Skeleton/...） │
-├─────────────────────────────────────────────────────┤
-│            @Observable ViewModels (MainActor)        │
-├─────────────────────────────────────────────────────┤
-│                  Service Layer (actor)               │
-│  SceneDetection │ ASR(+paraformer) │ AIAnalysis      │
-│  ScriptRewrite │ SchemeGen │ Export/DubExport        │
-│  TTS(克隆/合成) │ VocalSeparation(demucs) │ Boundary │
-├─────────────────────────────────────────────────────┤
-│         MixCutCore（跨端可复用纯逻辑，可单测）        │
-│  CaptionRenderer/Layout │ 变体组合 │ 对齐 │ 语速规划   │
-├─────────────────────────────────────────────────────┤
-│              Data Layer (SwiftData, 8 @Model)        │
-│  Project │ ProjectVideo │ Video │ Segment │ SegmentDub│
-│  MixStrategy │ MixScheme │ SchemeSegment             │
-├─────────────────────────────────────────────────────┤
-│                   Infrastructure                     │
-│  FFmpeg + ffprobe │ whisper.cpp │ demucs(+模型)（均内置）│
-│  AI API（千问/MiniMax/DeepSeek/Claude）│ AVKit        │
-└─────────────────────────────────────────────────────┘
-```
+## 🗺 Roadmap
 
-### 核心数据流
+**已完成**
 
-```
-视频导入
-  ↓ FFmpeg 元数据 / 缩略图
-  ↓ FFmpeg 场景检测 + 静音检测 + ffprobe I-frame 提取
-  ↓ Whisper 本地 ASR（字级时间戳，可用 paraformer 重识别单分镜）
-  ↓ AI 语义分析（仅发送结构化文本，不传视频）
-  ↓ 四阶段边界优化（句子吸附 → 场景对齐 → 静音吸附 → I-frame 对齐）
-  ↓ 分镜素材库
-  ├─ 混剪线：AI 方案（Step 1 策略 → Step 2 变体）→ FFmpeg 硬件加速导出
-  └─ 配音线：一键改写台词 → demucs 分离人声 → 克隆原声 → TTS 合成 + 对齐
-             → BGM 混音 → 烧录字幕（居中遮挡区 + 贴字胶囊）→ 变体批量导出
-```
+- [x] 素材导入 + AI 分析流水线（场景/静音/I-frame + Whisper + AI 语义切分 + 边界优化）
+- [x] 分镜素材库（11 类筛选、边界微调、多选、批量导出/删除）+ 单分镜重识别
+- [x] 混剪方案生成（两步 AI 流程 + 变体组合 + 4 层 JSON 容错）
+- [x] 硬件加速导出 + 分镜批量导出（编号命名、无开头黑屏）
+- [x] AI 配音（改写 + 原声克隆 + demucs 分离 + TTS 对齐 + BGM 混音）
+- [x] 烧录字幕系统（字号可调 + 所见即所得 + 三种字幕处理）
+- [x] **分镜头 AI 画面替换**（物理镜头切分 + 提示词替换 + 就地可恢复）
 
-### 数据模型
-
-```
-Project *──* Video 1──* Segment          (视频全局共享，通过 ProjectVideo 多对多)
-Segment 1──* SegmentDub                  (单分镜的多套配音变体)
-Project 1──* MixStrategy 1──* MixScheme 1──* SchemeSegment *──1 Segment
-```
-
-## 项目结构
-
-```
-MixCut/
-├── App/              MixCutApp / ContentView / 数据迁移
-├── Models/           8 个 SwiftData @Model（含 SegmentDub）
-├── ViewModels/       Project/Import/SegmentLibrary/Scheme/Export/Dubbing VM
-├── Services/
-│   ├── AI/           AIProvider 协议 + OpenAICompatibleClient + ScriptRewrite
-│   ├── ASR/          ASRService（whisper）+ QwenASRClient（paraformer 重识别）
-│   ├── TTS/          原声克隆 / TTS 合成 / demucs 人声分离 / 配音对齐
-│   ├── VideoProcessing/  FFmpegRunner
-│   ├── SceneDetection/   场景 / 静音 / I-frame
-│   ├── BoundaryOptimizer/ 四阶段边界优化
-│   ├── SchemeGeneration/  方案生成
-│   ├── Export/       全量 / 批量分镜 / 配音导出 / 变体批量导出
-│   └── UpdateChecker/    应用内更新检查
-├── Views/
-│   ├── Sidebar / Overview / Import / SegmentLibrary / Schemes / Export
-│   ├── Settings / Shared（Toast/Skeleton/InlineBanner/ThumbnailCache/...）
-├── Utilities/        KeychainHelper / FileHelper / DesignTokens
-├── Resources/
-│   ├── bin/          FFmpeg / ffprobe / whisper.cpp / demucs + 分离模型（内置）
-│   └── Prompts/      AI Prompt 模板 (.md)
-└── Assets.xcassets/  AppIcon + 颜色资源
-
-Sources/MixCutCore/   跨端可复用纯逻辑（字幕渲染/落位、变体组合、边界对齐、语速规划等，含单测）
-Tests/MixCutCoreTests/ MixCutCore 单元测试
-```
-
-## 开发状态
-
-**Phase 1 MVP + 配音（已完成）**
-
-- [x] 素材导入 + AI 分析流水线（场景检测 / 静音检测 / I-frame / Whisper / AI 语义切分 / 边界优化）
-- [x] 分镜素材库（11 类筛选、视频/列表两视图、边界微调、多选、批量导出、批量删除）
-- [x] 单分镜重识别（paraformer 纠正 whisper 不准）
-- [x] 混剪方案生成（两步 AI 流程 + 4 层 JSON 容错）
-- [x] 视频全局共享（跨项目去重）
-- [x] 硬件加速导出（H.264/H.265 VideoToolbox）+ 分镜批量导出（编号 + 命名规则 + 无开头黑屏）
-- [x] **AI 配音**：一键改写 + 原声克隆（demucs 分离 + qwen-vc）+ TTS 合成对齐 + BGM 混音 + 变体批量导出
-- [x] **烧录字幕系统**：字号可调 + 所见即所得预览 + 居中遮挡区 + 导出=预览 + 标点转空格保留数字
-- [x] 键盘快捷键体系 + 应用图标 + 应用内更新检查
-
-**Phase 2（规划中）**
+**规划中**
 
 - [ ] 项目模板与方案预设
 - [ ] 跨项目素材搜索
 - [ ] 多语言字幕 / 配音适配
 
-## 发版
+---
 
-每次发版双端同步（GitHub + Gitee，均含 DMG 附件）。开发者用 `release_gitee.sh` 同步 Gitee Release。
+## 📮 联系 & 反馈
 
-## 联系方式
+- **开发者**：MengGang · [@RoshanGH](https://github.com/RoshanGH)
+- **手机 / 微信**：13462890087
+- **问题反馈**：[GitHub Issues](https://github.com/RoshanGH/mixed_cut/issues)
 
-- **开发者**: MengGang
-- **手机/微信**: 13462890087
-- **GitHub**: [@RoshanGH](https://github.com/RoshanGH)
-- **Issues**: [GitHub Issues](https://github.com/RoshanGH/mixed_cut/issues)
+如果 MixCut 对你有帮助，欢迎点个 ⭐ Star 支持一下！
 
 ## License
 
-MIT License
+[MIT License](./LICENSE) © MengGang
