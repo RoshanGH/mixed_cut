@@ -12,7 +12,13 @@ import sys
 
 DEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MixCut", "Resources", "bin")
 BINARIES = ["ffmpeg", "ffprobe", "whisper", "demucs"]   # 需为 universal
-DATA = ["ggml-htdemucs-4s.bin"]                         # 架构无关（人声分离模型）
+# 架构无关的内置数据文件（模型）。内置后 App 完全自包含、无需运行时下载。
+DATA = ["ggml-htdemucs-4s.bin", "ggml-large-v3-turbo.bin"]
+# 最小体积下限（字节）——防止「下了半个/被截断」的模型蒙混过关（存在性检查拦不住）
+MIN_SIZE = {
+    "ggml-htdemucs-4s.bin": 80_000_000,          # 人声分离模型 ≈ 84MB
+    "ggml-large-v3-turbo.bin": 1_600_000_000,    # Whisper ASR 模型 ≈ 1.62GB
+}
 
 
 def archs(path):
@@ -39,8 +45,17 @@ def main():
             ok = False
     for name in DATA:
         p = os.path.join(DEST, name)
-        print(f"  {'✓' if os.path.isfile(p) else '✗'} {name}")
-        ok = ok and os.path.isfile(p)
+        if not os.path.isfile(p):
+            print(f"  ✗ 缺少 {name}")
+            ok = False
+            continue
+        size = os.path.getsize(p)
+        floor = MIN_SIZE.get(name, 0)
+        if size >= floor:
+            print(f"  ✓ {name}: {size / 1e6:.0f} MB")
+        else:
+            print(f"  ✗ {name} 体积异常: {size / 1e6:.0f} MB（应 ≥ {floor / 1e6:.0f} MB，疑似未下完/被截断）")
+            ok = False
 
     if not ok:
         print("\n内置二进制缺失或非 universal，请运行：\n  ./scripts/build_universal_binaries.sh")

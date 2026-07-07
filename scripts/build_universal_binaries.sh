@@ -72,4 +72,15 @@ if [ ! -f "$MODEL" ]; then
     || curl -sL "https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin" -o "$MODEL"
 fi
 
-echo "✅ 完成。全部为静态自包含 universal，无需 dylib。"
+# Whisper ASR 模型（架构无关，~1.62GB）：内置进包，App 完全自包含、无需运行时下载。
+# 缺失或体积不足（下了半个）则从国内镜像重新下载。国内镜像优先，超时/失败切原站。
+WMODEL="$DEST/ggml-large-v3-turbo.bin"
+WMIN=1600000000
+WSIZE=$([ -f "$WMODEL" ] && stat -f%z "$WMODEL" 2>/dev/null || echo 0)
+if [ "$WSIZE" -lt "$WMIN" ]; then
+  echo "==> 下载 Whisper 模型 ggml-large-v3-turbo (~1.62GB)"
+  curl -fL --retry 3 --retry-delay 2 "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" -o "$WMODEL" \
+    || curl -fL --retry 3 --retry-delay 2 "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" -o "$WMODEL"
+fi
+
+echo "✅ 完成。全部为静态自包含 universal（含内置 Whisper/demucs 模型），无需 dylib、无需运行时下载。"

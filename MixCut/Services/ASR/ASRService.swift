@@ -133,6 +133,17 @@ struct TranscriptionSentence: Sendable {
     var duration: Double { endTime - startTime }
 }
 
+/// 线程安全地累积子进程输出（readabilityHandler 在后台队列回调）
+private final class OutputBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    func append(_ chunk: Data) { lock.lock(); data.append(chunk); lock.unlock() }
+    func string() -> String {
+        lock.lock(); defer { lock.unlock() }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
 /// ASR 语音识别服务
 /// 支持 Python openai-whisper CLI 和 whisper.cpp
 actor ASRService {
@@ -367,6 +378,40 @@ actor ASRService {
             throw ASRError.modelNotFound
         }
 
+        // GPU(Metal) 优先跑（快）；部分机器的 Metal 后端会崩溃（ggml-metal 断言失败、产不出 json），
+        // 这时自动回退 --no-gpu(CPU) 重试，保证任何机器都能出结果。
+        var jsonData = try await runWhisperCppProcess(
+            whisperPath: whisperPath, modelPath: modelPath,
+            audioPath: audioPath, language: language, disableGPU: false
+        )
+        if jsonData == nil {
+            MixLog.error("Whisper GPU(Metal) 模式无输出（疑似 Metal 后端崩溃），回退 CPU(--no-gpu) 重试")
+            jsonData = try await runWhisperCppProcess(
+                whisperPath: whisperPath, modelPath: modelPath,
+                audioPath: audioPath, language: language, disableGPU: true
+            )
+        }
+
+        onProgress?(0.9)
+
+        guard let jsonData else {
+            MixLog.error("Whisper GPU/CPU 两种模式均无输出，返回空结果")
+            return .empty(language: language)
+        }
+
+        return try parseWhisperCppOutput(jsonData: jsonData, language: language)
+    }
+
+    /// 启动 whisper.cpp 进程一次，返回其生成的 JSON（无输出返回 nil）。
+    /// - Parameter disableGPU: true 时追加 `--no-gpu`，强制 CPU（绕开部分机器 Metal 后端崩溃）。
+    /// - 持续 drain stdout/stderr 防止管道写满阻塞；无 json 时把输出末尾记进日志（便于定位崩溃原因）。
+    private func runWhisperCppProcess(
+        whisperPath: String,
+        modelPath: String,
+        audioPath: String,
+        language: String,
+        disableGPU: Bool
+    ) async throws -> Data? {
         let outputPath = FileHelper.tempDirectory
             .appendingPathComponent("whisper_\(UUID().uuidString)").path
 
@@ -379,13 +424,17 @@ actor ASRService {
         // 正确做法：让 whisper 保持默认 30s 大段识别（最佳识别质量），
         // 然后依赖 TranscriptionResult.sentences 的二次切分逻辑（防御层 2）
         // 根据 words 时间戳重新切句子。
-        process.arguments = [
+        var arguments = [
             "-m", modelPath,
             "-f", audioPath,
             "-l", language,
             "--output-json-full",
             "-of", outputPath
         ]
+        if disableGPU {
+            arguments.append("--no-gpu")   // 强制 CPU，绕开 Metal 后端崩溃
+        }
+        process.arguments = arguments
         process.qualityOfService = .userInitiated
         let binDir = (whisperPath as NSString).deletingLastPathComponent
         process.environment = ["PATH": "\(binDir):/usr/bin:/bin", "HOME": NSHomeDirectory()]
@@ -394,18 +443,33 @@ actor ASRService {
         process.standardOutput = pipe
         process.standardError = pipe
 
+        // 持续读取输出：失败时能拿到 stderr 定位原因，也避免管道写满导致进程阻塞
+        let outputBox = OutputBox()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if !chunk.isEmpty { outputBox.append(chunk) }
+        }
+
+        let mode = disableGPU ? "CPU" : "GPU"
         let jsonData: Data? = try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
-                process.terminationHandler = { @Sendable _ in
+                process.terminationHandler = { @Sendable proc in
+                    pipe.fileHandleForReading.readabilityHandler = nil
                     let jsonPath = outputPath + ".json"
                     let data = FileManager.default.contents(atPath: jsonPath)
                     try? FileManager.default.removeItem(atPath: jsonPath)
+                    if data == nil {
+                        let output = outputBox.string()
+                        let tail = output.isEmpty ? "(无输出)" : String(output.suffix(800))
+                        MixLog.error("Whisper(\(mode)) 退出码=\(proc.terminationStatus) 未产出 json，输出末尾：\(tail)")
+                    }
                     continuation.resume(returning: data)
                 }
 
                 do {
                     try process.run()
                 } catch {
+                    pipe.fileHandleForReading.readabilityHandler = nil
                     continuation.resume(throwing: error)
                     return
                 }
@@ -426,13 +490,7 @@ actor ASRService {
             }
         })
 
-        onProgress?(0.9)
-
-        guard let jsonData else {
-            return .empty(language: language)
-        }
-
-        return try parseWhisperCppOutput(jsonData: jsonData, language: language)
+        return jsonData
     }
 
     /// 解析 whisper.cpp JSON 输出
