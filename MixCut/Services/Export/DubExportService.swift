@@ -6,7 +6,7 @@ struct DubSegmentSpec: Sendable {
     let startFrame: Int
     let endFrame: Int
     let fps: Double
-    let captionText: String
+    let captionLines: [CaptionLine]   // 逐句字幕（相对分镜起点秒）；空=不烧字幕
     let hasHardSubtitle: Bool
     let maskStyleRaw: String
     let maskRect: SubtitleMaskRect
@@ -55,16 +55,22 @@ struct DubExportInput: Sendable {
             if segment.isVoiceLocked || chosen == nil {
                 specs.append(DubSegmentSpec(
                     videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
-                    fps: fps, captionText: segment.text, hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
+                    fps: fps, captionLines: [], hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil))
             } else if let dub = chosen,
                       let audioPath = dub.audioFilePath,
                       FileManager.default.fileExists(atPath: audioPath) {
-                let caption = dub.rewrittenText.isEmpty ? segment.text : dub.rewrittenText
+                // 逐句字幕：优先用对齐好的 captionLines；旧数据无对齐 → 整段一条兜底（等价旧整段烧法，防止老数据丢字幕）
+                let capLines: [CaptionLine] = {
+                    let lines = dub.captionLines
+                    if !lines.isEmpty { return lines }
+                    let whole = dub.rewrittenText.isEmpty ? segment.text : dub.rewrittenText
+                    return whole.isEmpty ? [] : [CaptionLine(text: whole, start: 0, end: segment.duration)]
+                }()
                 specs.append(DubSegmentSpec(
                     videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
-                    fps: fps, captionText: caption, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
+                    fps: fps, captionLines: capLines, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
                     freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
                     bgmAudioPath: Self.bgmPath(for: video)))
@@ -75,7 +81,7 @@ struct DubExportInput: Sendable {
                 // 因此不能遮挡旧硬字幕（否则会把要保留的原字幕也遮掉）。勿改回 segment.hasHardSubtitle。
                 specs.append(DubSegmentSpec(
                     videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
-                    fps: fps, captionText: segment.text, hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
+                    fps: fps, captionLines: [], hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil))
             }
@@ -225,31 +231,33 @@ actor DubExportService {
         let maskPixel = PixelRect.from(spec.maskRect, outputWidth: outW, outputHeight: outH)
 
         // 输入按追加顺序编号：input 0 = 源视频，extraInputs 依次为 input 1..N。
-        var captionOrigin: (x: Int, y: Int)? = nil
-        var captionInputIndex = 1
+        // 逐句字幕：每句一张 PNG，全部先 append（占 input 1..K），dub/bgm 序号随之自动后移。
+        var captions: [CaptionOverlay] = []
         var dubAudioInputIndex = 1
         var bgmInputIndex: Int? = nil
         var extraInputs: [String] = []
 
         let keepOriginalAudio = spec.isVoiceLocked || spec.dubAudioPath == nil
 
-        // 烧录字幕：标点→空格；字号按成片宽度自适应（全局档位，避免小分辨率上字巨大）
-        let burnText = CaptionRenderer.stripPunctuation(spec.captionText)
-        if !spec.isVoiceLocked, !burnText.isEmpty {
-            // 字幕画布宽 = 遮挡区宽：文本在遮挡区内换行，配合 overlayOrigin 落在遮挡区正中。
-            // 下限 120px 防御：万一将来遮挡框宽可编辑到极窄，避免文本被逐字竖排成超高 PNG。
-            let canvasW = max(120, maskPixel.width)
+        // 烧录逐句字幕：标点→空格；字号按成片宽度自适应（全局档位）。锁定段不烧。
+        if !spec.isVoiceLocked, !spec.captionLines.isEmpty {
+            let canvasW = max(120, maskPixel.width)      // 字幕画布宽=遮挡区宽（下限 120px 防御逐字竖排）
             let fontSize = SubtitleFontSize.fontSize(forOutputWidth: outW)
             let withBackdrop = (mode != .solid)
-            let pngURL = workDir.appendingPathComponent(String(format: "cap_%03d.png", index))
-            let img = try CaptionRenderer.renderToFile(
-                text: burnText, canvasWidth: canvasW, withBackdrop: withBackdrop,
-                fontSize: fontSize, to: pngURL)
-            captionOrigin = CaptionLayout.overlayOrigin(
-                outputWidth: outW, outputHeight: outH, maskRect: spec.maskRect,
-                captionWidth: img.pixelWidth, captionHeight: img.pixelHeight)
-            extraInputs.append(pngURL.path)
-            captionInputIndex = extraInputs.count   // 1-based，与 ffmpeg 输入序号一致
+            for (li, line) in spec.captionLines.enumerated() {
+                let burnText = CaptionRenderer.stripPunctuation(line.text)
+                guard !burnText.isEmpty else { continue }
+                let pngURL = workDir.appendingPathComponent(String(format: "cap_%03d_%02d.png", index, li))
+                let img = try CaptionRenderer.renderToFile(
+                    text: burnText, canvasWidth: canvasW, withBackdrop: withBackdrop,
+                    fontSize: fontSize, to: pngURL)
+                let origin = CaptionLayout.overlayOrigin(
+                    outputWidth: outW, outputHeight: outH, maskRect: spec.maskRect,
+                    captionWidth: img.pixelWidth, captionHeight: img.pixelHeight)
+                extraInputs.append(pngURL.path)
+                captions.append(CaptionOverlay(inputIndex: extraInputs.count, x: origin.x, y: origin.y,
+                                               start: line.start, end: line.end))
+            }
         }
 
         if !keepOriginalAudio, let dubPath = spec.dubAudioPath {
@@ -266,8 +274,7 @@ actor DubExportService {
             startFrame: spec.startFrame, endFrame: spec.endFrame, fps: spec.fps,
             outputWidth: outW, outputHeight: outH,
             maskPixel: maskPixel,
-            captionOrigin: captionOrigin,
-            captionInputIndex: captionInputIndex,
+            captions: captions,
             keepOriginalAudio: keepOriginalAudio,
             dubAudioInputIndex: dubAudioInputIndex,
             freezePadFrames: spec.freezePadFrames,

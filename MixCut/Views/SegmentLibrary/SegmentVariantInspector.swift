@@ -10,6 +10,7 @@ struct SegmentVariantInspector: View {
     @State private var editingVariant: Int? = nil
     @State private var draftText = ""
     @State private var variantPendingDelete: Int? = nil
+    @State private var captionEditDub: SegmentDub? = nil
     @FocusState private var editorFocused: Bool
 
     private func variantLetter(_ t: Int) -> String { String(Character(UnicodeScalar(65 + t)!)) }
@@ -64,6 +65,9 @@ struct SegmentVariantInspector: View {
         }
         .frame(width: 340)
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(item: $captionEditDub) { d in
+            CaptionTimingEditorSheet(dub: d, dubVM: dubVM)
+        }
         .confirmationDialog("删除改写版？",
                             isPresented: Binding(get: { variantPendingDelete != nil },
                                                  set: { if !$0 { variantPendingDelete = nil } }),
@@ -227,6 +231,14 @@ struct SegmentVariantInspector: View {
                     .toggleStyle(.checkbox)
                     .disabled(segment.isVoiceLocked)
                     .help(segment.isVoiceLocked ? "已锁原声，不参与组合" : "勾选后此改写版参与导出排列组合")
+
+                    if ed.audioFilePath != nil {
+                        Button { captionEditDub = ed } label: {
+                            Image(systemName: "captions.bubble")
+                        }
+                        .buttonStyle(.borderless).controlSize(.small)
+                        .help("逐句字幕时间：让烧录字幕按配音每句实际说到的时间逐句出现")
+                    }
                 }
                 Spacer()
                 if editing {

@@ -67,10 +67,16 @@ enum VariantExportInput {
                     let p = FileHelper.stemsDirectory(videoHash: hash).appendingPathComponent("bgm.wav").path
                     return FileManager.default.fileExists(atPath: p) ? p : nil
                 }()
-                let caption = dub.rewrittenText.isEmpty ? seg.text : dub.rewrittenText
+                // 逐句字幕：优先 captionLines；旧数据无对齐 → 整段一条兜底（防丢字幕）
+                let capLines: [CaptionLine] = {
+                    let lines = dub.captionLines
+                    if !lines.isEmpty { return lines }
+                    let whole = dub.rewrittenText.isEmpty ? seg.text : dub.rewrittenText
+                    return whole.isEmpty ? [] : [CaptionLine(text: whole, start: 0, end: seg.duration)]
+                }()
                 let spec = DubSegmentSpec(
                     videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
-                    fps: fps, captionText: caption, hasHardSubtitle: seg.hasHardSubtitle,
+                    fps: fps, captionLines: capLines, hasHardSubtitle: seg.hasHardSubtitle,
                     maskStyleRaw: seg.maskStyleRaw, maskRect: seg.maskRect, isVoiceLocked: false,
                     dubAudioPath: audioPath, freezePadFrames: dub.freezePadFrames,
                     trailingSilence: dub.trailingSilence, bgmAudioPath: bgmPath)

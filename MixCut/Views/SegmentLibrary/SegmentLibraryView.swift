@@ -111,8 +111,7 @@ struct SegmentLibraryView: View {
             Image(systemName: "checkmark.square.fill")
                 .font(.system(size: 11))
                 .foregroundStyle(Color.accentColor)
-            let selectedDur = viewModel.selectedSegments.reduce(0.0) { $0 + $1.duration }
-            Text("已选 \(viewModel.selectedSegmentIDs.count) 个 · \(String(format: "%.1fs", selectedDur))")
+            Text("已选 \(viewModel.selectedSegmentIDs.count) 个 · \(String(format: "%.1fs", viewModel.selectedDuration))")
                 .font(.system(size: 12, weight: .semibold))
 
             Divider().frame(height: 12)

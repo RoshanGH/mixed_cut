@@ -59,6 +59,7 @@ final class DubbingViewModel {
     private let vocalSep = VocalSeparationService()
     private let cloneService = VoiceCloneService()
     private let finalizer = DubAudioFinalizer()
+    private let asrService = ASRService()   // 逐句字幕对齐用（对成品配音做 whisper ASR 测每句时间）
     private var auditionPlayer: AVAudioPlayer?
     private var playbackResetTask: Task<Void, Never>?
 
@@ -433,6 +434,8 @@ final class DubbingViewModel {
             dub.generatedForTextHash = DubStaleness.textHash(of: dub.rewrittenText)
             dub.status = .generated
             try? context.save()
+            // 配音落库后自动逐句对齐（whisper 对成品配音测每句时间；失败静默走比例兜底，不阻断配音成功）
+            await alignCaptions(for: dub, context: context)
             lastDubErrors[dub.id] = nil   // 成功后清掉旧失败原因
             return true
         } catch {
@@ -444,6 +447,28 @@ final class DubbingViewModel {
             if !silent { errorMessage = "配音生成失败：\(friendly)" }
             return false
         }
+    }
+
+    /// 对已生成配音的 dub 做逐句对齐，写回 captionLines。失败静默走比例兜底，绝不阻断配音成功。
+    /// ASR 跑成品 m4a（已 atempo，时间=分镜内 0 起）；ASRService 是 actor，await 期间不卡主线程。
+    func alignCaptions(for dub: SegmentDub, context: ModelContext) async {
+        guard let audio = dub.audioFilePath, FileManager.default.fileExists(atPath: audio) else { return }
+        guard let seg = dub.segment else { return }
+        let segDur = seg.duration
+        guard segDur > 0, !dub.rewrittenText.isEmpty else { return }
+        var words: [AlignWord] = []
+        var audioDur = dub.audioDuration
+        do {
+            let r = try await asrService.transcribe(videoPath: audio)
+            words = r.words.map { AlignWord(text: $0.word, start: $0.start, end: $0.end) }
+            if r.duration > 0 { audioDur = r.duration }
+        } catch {
+            MixLog.info("[Caption] 逐句对齐 ASR 失败，走比例兜底: \(error.localizedDescription)")
+        }
+        let lines = SentenceTimingAligner.align(text: dub.rewrittenText, words: words,
+                                                audioDuration: audioDur, segmentDuration: segDur)
+        dub.captionLines = lines
+        try? context.save()
     }
 
     /// 批量合成一组分镜下所有「还没音频」的变体（一键改写后自动调用）。

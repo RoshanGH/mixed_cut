@@ -139,7 +139,7 @@ struct OnboardingView: View {
             .background(.quaternary.opacity(0.2))
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
-            Text("💡 首次分析会自动下载约 1.6GB 的语音识别模型")
+            Text("💡 语音识别模型已内置，装完即用、无需联网下载")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
         }

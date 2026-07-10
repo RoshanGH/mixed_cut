@@ -174,6 +174,12 @@ final class SegmentLibraryViewModel {
         }
     }
 
+    /// 已选分镜总时长（秒）。仅求和，避开 selectedSegments 的建数组+排序+uuidString 分配
+    /// （多选工具栏常驻，任意重绘都会读它）。
+    var selectedDuration: Double {
+        segments.reduce(0.0) { selectedSegmentIDs.contains($1.id) ? $0 + $1.duration : $0 }
+    }
+
     /// 当前已选的分镜列表（按"勾选先后顺序"）
     /// **用途：组合为方案**（用户期望按勾选顺序拼接）
     var orderedSelectedSegments: [Segment] {

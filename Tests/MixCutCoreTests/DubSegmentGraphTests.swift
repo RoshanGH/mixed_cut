@@ -3,14 +3,17 @@ import Testing
 
 @Suite("DubSegmentGraph")
 struct DubSegmentGraphTests {
+    private func cap(_ idx: Int = 1, _ x: Int = 240, _ y: Int = 1601, _ s: Double = 0, _ e: Double = 2) -> CaptionOverlay {
+        CaptionOverlay(inputIndex: idx, x: x, y: y, start: s, end: e)
+    }
+
     private func blurDubbed() -> DubSegmentGraph {
         DubSegmentGraphBuilder.build(
             mode: .blur,
             startFrame: 15, endFrame: 75, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
-            captionOrigin: (x: 240, y: 1601),
-            captionInputIndex: 1,
+            captions: [cap()],
             keepOriginalAudio: false,
             dubAudioInputIndex: 2,
             freezePadFrames: 0,
@@ -42,10 +45,23 @@ struct DubSegmentGraphTests {
         #expect(g.filterComplex.contains("setsar=1,fps=30[base]"))
     }
 
-    @Test("叠加字幕 PNG（用 captionInputIndex 与 captionOrigin）")
+    @Test("逐句叠字幕 PNG：单句 overlay + enable=between")
     func overlaysCaption() {
         let g = blurDubbed()
-        #expect(g.filterComplex.contains("[masked][1:v]overlay=240:1601[capped]"))
+        #expect(g.filterComplex.contains("[masked][1:v]overlay=240:1601:enable='between(t,0.000,2.000)'[capped]"))
+    }
+
+    @Test("多句字幕：逐句 overlay 链式串联，各自 enable 时间窗")
+    func multipleCaptionsChained() {
+        let g = DubSegmentGraphBuilder.build(
+            mode: .none, startFrame: 0, endFrame: 60, fps: 30,
+            outputWidth: 1080, outputHeight: 1920,
+            maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
+            captions: [cap(1, 240, 1601, 0, 1), cap(2, 240, 1601, 1, 2)],
+            keepOriginalAudio: false, dubAudioInputIndex: 3,
+            freezePadFrames: 0, trailingSilence: 0)
+        #expect(g.filterComplex.contains("[masked][1:v]overlay=240:1601:enable='between(t,0.000,1.000)'[cap0]"))
+        #expect(g.filterComplex.contains("[cap0][2:v]overlay=240:1601:enable='between(t,1.000,2.000)'[capped]"))
     }
 
     @Test("非锁定段从 dubAudioInputIndex 取音轨 + trailingSilence 补静音")
@@ -61,7 +77,7 @@ struct DubSegmentGraphTests {
             mode: .solid, startFrame: 0, endFrame: 60, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
-            captionOrigin: (x: 240, y: 1601), captionInputIndex: 1,
+            captions: [cap()],
             keepOriginalAudio: false, dubAudioInputIndex: 2,
             freezePadFrames: 0, trailingSilence: 0)
         #expect(g.filterComplex.contains("drawbox=x=0:y=1536:w=1080:h=230:color=0x1A1A1A@1.0:t=fill[masked]"))
@@ -74,7 +90,7 @@ struct DubSegmentGraphTests {
             mode: .none, startFrame: 0, endFrame: 60, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
-            captionOrigin: (x: 240, y: 1601), captionInputIndex: 1,
+            captions: [cap()],
             keepOriginalAudio: false, dubAudioInputIndex: 2,
             freezePadFrames: 0, trailingSilence: 0)
         #expect(g.filterComplex.contains("[base]null[masked]"))
@@ -88,13 +104,13 @@ struct DubSegmentGraphTests {
             mode: .none, startFrame: 30, endFrame: 90, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
-            captionOrigin: nil, captionInputIndex: 1,
+            captions: [],
             keepOriginalAudio: true, dubAudioInputIndex: 2,
             freezePadFrames: 0, trailingSilence: 0)
         #expect(g.filterComplex.contains("[0:a]atrim=start=1.00000:end=3.00000"))
-        #expect(!g.filterComplex.contains("overlay=240"))     // 无字幕叠加
+        #expect(!g.filterComplex.contains("overlay=240"))
         #expect(g.filterComplex.contains("[masked]null[vout]"))
-        #expect(!g.filterComplex.contains("loudnorm"))        // 锁定段不做响度规范化
+        #expect(!g.filterComplex.contains("loudnorm"))
     }
 
     @Test("freezePadFrames>0 用 tpad 定格")
@@ -103,19 +119,19 @@ struct DubSegmentGraphTests {
             mode: .blur, startFrame: 0, endFrame: 60, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
-            captionOrigin: (x: 240, y: 1601), captionInputIndex: 1,
+            captions: [cap()],
             keepOriginalAudio: false, dubAudioInputIndex: 2,
             freezePadFrames: 9, trailingSilence: 0)
         #expect(g.filterComplex.contains("tpad=stop_mode=clone:stop_duration=0.300[vout]"))
     }
 
-    @Test("锁定段即使传了 captionOrigin 也不叠字幕")
-    func lockedIgnoresCaptionOrigin() {
+    @Test("锁定段即使传了 captions 也不叠字幕")
+    func lockedIgnoresCaptions() {
         let g = DubSegmentGraphBuilder.build(
             mode: .none, startFrame: 0, endFrame: 60, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
-            captionOrigin: (x: 240, y: 1601), captionInputIndex: 1,
+            captions: [cap()],
             keepOriginalAudio: true, dubAudioInputIndex: 2,
             freezePadFrames: 0, trailingSilence: 0)
         #expect(!g.filterComplex.contains("overlay=240:1601"))
@@ -128,7 +144,7 @@ struct DubSegmentGraphTests {
             mode: .dim, startFrame: 0, endFrame: 60, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 1536, width: 1080, height: 230),
-            captionOrigin: (x: 240, y: 1601), captionInputIndex: 1,
+            captions: [cap()],
             keepOriginalAudio: false, dubAudioInputIndex: 2,
             freezePadFrames: 0, trailingSilence: 0)
         #expect(g.filterComplex.contains("drawbox=x=0:y=1536:w=1080:h=230:color=0x000000@0.5:t=fill[masked]"))
@@ -144,7 +160,7 @@ struct DubSegmentGraphBGMTests {
             mode: .none, startFrame: 30, endFrame: 90, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 0, width: 0, height: 0),
-            captionOrigin: nil, captionInputIndex: 1,
+            captions: [],
             keepOriginalAudio: false, dubAudioInputIndex: 1,
             freezePadFrames: 0, trailingSilence: 0,
             bgmInputIndex: 2)
@@ -161,7 +177,7 @@ struct DubSegmentGraphBGMTests {
             mode: .none, startFrame: 30, endFrame: 90, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 0, width: 0, height: 0),
-            captionOrigin: nil, captionInputIndex: 1,
+            captions: [],
             keepOriginalAudio: false, dubAudioInputIndex: 1,
             freezePadFrames: 0, trailingSilence: 0)
         let fc = g.filterComplex
@@ -175,7 +191,7 @@ struct DubSegmentGraphBGMTests {
             mode: .none, startFrame: 0, endFrame: 60, fps: 30,
             outputWidth: 1080, outputHeight: 1920,
             maskPixel: PixelRect(x: 0, y: 0, width: 0, height: 0),
-            captionOrigin: nil, captionInputIndex: 1,
+            captions: [],
             keepOriginalAudio: false, dubAudioInputIndex: 1,
             freezePadFrames: 0, trailingSilence: 0.5,
             bgmInputIndex: 2)

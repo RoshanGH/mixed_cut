@@ -13,8 +13,22 @@ public struct DubSegmentGraph: Equatable, Sendable {
     }
 }
 
-/// 构建「切片 → 9:16 标准化 → 遮挡旧字幕 → 叠新字幕 → 换音轨 → 定格/补静音」滤镜图。
-/// 输入约定：input 0 = 源视频；caption PNG = captionInputIndex；dub m4a = dubAudioInputIndex。
+/// 一条逐句字幕 overlay：PNG 输入序号 + 落位 + 相对分镜起点的时间窗（enable=between 用）。
+public struct CaptionOverlay: Sendable, Equatable {
+    public let inputIndex: Int
+    public let x: Int
+    public let y: Int
+    public let start: Double
+    public let end: Double
+    public init(inputIndex: Int, x: Int, y: Int, start: Double, end: Double) {
+        self.inputIndex = inputIndex; self.x = x; self.y = y; self.start = start; self.end = end
+    }
+}
+
+/// 构建「切片 → 9:16 标准化 → 遮挡旧字幕 → 逐句叠新字幕 → 换音轨 → 定格/补静音」滤镜图。
+/// 输入约定：input 0 = 源视频；每条 caption PNG = 其 CaptionOverlay.inputIndex；dub m4a = dubAudioInputIndex。
+/// 逐句字幕：每句一个 overlay + `enable='between(t,起,止)'`（t=分镜内 0 起，由 trim/setpts 保证）。
+/// 旧数据/整段兜底：调用方传 1 条 [0, 分镜时长] 的 CaptionOverlay 即等价整段全程。
 public enum DubSegmentGraphBuilder {
     private static let loudnorm = "loudnorm=I=-16:TP=-1.5:LRA=11"
     /// trailingSilence 视为 0 的阈值（秒）
@@ -27,8 +41,7 @@ public enum DubSegmentGraphBuilder {
         startFrame: Int, endFrame: Int, fps: Double,
         outputWidth: Int, outputHeight: Int,
         maskPixel: PixelRect,
-        captionOrigin: (x: Int, y: Int)?,
-        captionInputIndex: Int,
+        captions: [CaptionOverlay],
         keepOriginalAudio: Bool,
         dubAudioInputIndex: Int,
         freezePadFrames: Int,
@@ -61,15 +74,23 @@ public enum DubSegmentGraphBuilder {
             parts.append("[base]drawbox=x=\(mx):y=\(my):w=\(mw):h=\(mh):color=0x000000@0.5:t=fill[masked]")
         }
 
-        // 3) 叠新字幕 PNG → [capped]（无字幕则透传 [masked]）
-        // 锁定段（保留原声）一律不叠字幕，即使调用方误传了 captionOrigin
-        let effectiveCaption = keepOriginalAudio ? nil : captionOrigin
+        // 3) 逐句叠新字幕 PNG → [capped]（每句一个 overlay + enable=between；无字幕则透传 [masked]）
+        // 锁定段（保留原声）一律不叠字幕，即使调用方误传了 captions
+        let effectiveCaptions = keepOriginalAudio ? [] : captions
         let videoBeforePad: String
-        if let origin = effectiveCaption {
-            parts.append("[masked][\(captionInputIndex):v]overlay=\(origin.x):\(origin.y)[capped]")
-            videoBeforePad = "capped"
-        } else {
+        if effectiveCaptions.isEmpty {
             videoBeforePad = "masked"
+        } else {
+            var prev = "masked"
+            for (i, c) in effectiveCaptions.enumerated() {
+                let out = (i == effectiveCaptions.count - 1) ? "capped" : "cap\(i)"
+                parts.append(
+                    "[\(prev)][\(c.inputIndex):v]overlay=\(c.x):\(c.y):" +
+                    "enable='between(t,\(String(format: "%.3f", c.start)),\(String(format: "%.3f", c.end)))'[\(out)]"
+                )
+                prev = out
+            }
+            videoBeforePad = "capped"
         }
 
         // 4) 末尾定格补帧 → [vout]

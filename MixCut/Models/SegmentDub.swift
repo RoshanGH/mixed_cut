@@ -27,9 +27,21 @@ final class SegmentDub {
     /// 是否参与导出组合（默认不参与，opt-in；勾选后才进方案笛卡尔积/单批量导出）
     var participatesInCombination: Bool = false
 
+    /// 逐句字幕行（含每句相对分镜起点的时间窗）。配音(重)生成后由 whisper 对齐自动写入；nil/空=尚未对齐。
+    var captionLinesData: Data?
+
     var status: SegmentDubStatus {
         get { SegmentDubStatus(rawValue: statusRaw) ?? .pending }
         set { statusRaw = newValue.rawValue }
+    }
+
+    /// [CaptionLine] 读写（Data?+JSON，与 keywords/asrWords 同款；CaptionLine 为 MixCutCore 同模块类型，无需 import）
+    var captionLines: [CaptionLine] {
+        get {
+            guard let d = captionLinesData else { return [] }
+            return (try? JSONDecoder().decode([CaptionLine].self, from: d)) ?? []
+        }
+        set { captionLinesData = try? JSONEncoder().encode(newValue) }
     }
 
     init(segment: Segment?, voiceId: String, voiceProvider: String = "qwen",

@@ -32,16 +32,7 @@ struct SegmentCardCompact: View {
                 .frame(width: cardWidth, height: imageHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                HStack(spacing: 3) {
-                    ForEach(Array(segment.semanticTypes.prefix(2)), id: \.self) { type in
-                        SemanticTypeTag(type: type)
-                    }
-                    if segment.semanticTypes.count > 2 {
-                        Text("+\(segment.semanticTypes.count - 2)")
-                            .font(.system(size: 8))
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                semanticTags
 
                 Text(segment.text.isEmpty ? "—" : segment.text)
                     .font(.system(size: 10))
@@ -75,6 +66,21 @@ struct SegmentCardCompact: View {
             }
         }
         .help(isDisabled ? (disabledReason ?? "已禁用") : segment.text)
+    }
+
+    /// 语义类型标签行（semanticTypes 只解码一次，避免同一卡片 body 内 3 次 JSON 解码）
+    private var semanticTags: some View {
+        let types = segment.semanticTypes
+        return HStack(spacing: 3) {
+            ForEach(Array(types.prefix(2)), id: \.self) { type in
+                SemanticTypeTag(type: type)
+            }
+            if types.count > 2 {
+                Text("+\(types.count - 2)")
+                    .font(.system(size: 8))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     @ViewBuilder

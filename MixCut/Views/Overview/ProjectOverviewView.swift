@@ -62,16 +62,14 @@ struct ProjectOverviewView: View {
                     StatCard(title: "视频", value: "\(videoCount)", icon: "film", color: .blue) {
                         withAnimation(.easeOut(duration: 0.18)) { selectedNavItem = .importMedia }
                     }
-                    StatCard(title: "分镜", value: "\(segmentCount)", icon: "film.stack", color: .green) {
-                        if segmentCount > 0 {
-                            withAnimation(.easeOut(duration: 0.18)) { selectedNavItem = .segmentLibrary }
-                        }
-                    }
-                    StatCard(title: "方案", value: "\(schemeCount)", icon: "list.bullet.clipboard", color: .purple) {
-                        if schemeCount > 0 {
-                            withAnimation(.easeOut(duration: 0.18)) { selectedNavItem = .schemes }
-                        }
-                    }
+                    StatCard(title: "分镜", value: "\(segmentCount)", icon: "film.stack", color: .green,
+                             onTap: segmentCount > 0
+                             ? { withAnimation(.easeOut(duration: 0.18)) { selectedNavItem = .segmentLibrary } }
+                             : nil)
+                    StatCard(title: "方案", value: "\(schemeCount)", icon: "list.bullet.clipboard", color: .purple,
+                             onTap: schemeCount > 0
+                             ? { withAnimation(.easeOut(duration: 0.18)) { selectedNavItem = .schemes } }
+                             : nil)
                 }
 
                 // 快速操作
@@ -258,6 +256,8 @@ struct StatCard: View {
         .buttonStyle(.plain)
         .disabled(onTap == nil)
         .onHover { hovering in
+            // 计数为 0（onTap == nil，禁用态）不做 hover 高亮/放大，避免"假装可点"
+            guard onTap != nil else { return }
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovering = hovering
             }
@@ -305,7 +305,8 @@ struct VideoCard: View {
     @State private var isHovering = false
 
     private var videoAspectRatio: CGFloat {
-        guard video.width > 0, video.height > 0 else { return 16.0 / 9.0 }
+        // 元数据缺失时兜底 9:16 竖屏（信息流广告铁律，见 CLAUDE.md），与导入页 ImportedVideoCard 一致
+        guard video.width > 0, video.height > 0 else { return 9.0 / 16.0 }
         return CGFloat(video.width) / CGFloat(video.height)
     }
 

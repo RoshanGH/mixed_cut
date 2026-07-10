@@ -191,28 +191,11 @@ struct SchemeListView: View {
     // MARK: - 错误提示
 
     private func errorBanner(_ error: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundStyle(.orange)
-            Text(error)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(nil)
-                .textSelection(.enabled)
-            Spacer()
-            Button {
-                viewModel.errorMessage = nil
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-            }
-            .buttonStyle(.plain)
+        // 复用通用 InlineBanner（统一四态样式 + 更大的关闭点击区），消除各页自造错误条的样式漂移
+        InlineBanner(style: .warning, message: error) {
+            viewModel.errorMessage = nil
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(.orange.opacity(0.08))
     }
 
     // MARK: - 空状态
@@ -423,6 +406,9 @@ struct StrategySection: View {
     /// 叙事结构专用：点击"编辑"打开编辑器（非叙事结构传 nil 即不显示编辑入口）
     var onEdit: (() -> Void)? = nil
 
+    @State private var strategyToDelete: MixStrategy?
+    @State private var schemeToDelete: MixScheme?
+
     var body: some View {
         VStack(spacing: 0) {
             // 策略头部（可点击展开/折叠）
@@ -505,7 +491,7 @@ struct StrategySection: View {
                     Divider()
                 }
                 Button(strategy.isNarrativeTemplate ? "删除结构" : "删除策略", role: .destructive) {
-                    viewModel.deleteStrategy(strategy)
+                    strategyToDelete = strategy
                 }
                 .disabled(strategy.isCustomGroup)
             }
@@ -530,6 +516,31 @@ struct StrategySection: View {
             Divider()
                 .padding(.leading, 14)
         }
+        // 删除策略/变体二次确认（与删视频/项目/批量删分镜的确认模式一致，防误删不可恢复）
+        .confirmationDialog("删除该策略？", isPresented: Binding(
+            get: { strategyToDelete != nil },
+            set: { if !$0 { strategyToDelete = nil } }
+        ), presenting: strategyToDelete) { s in
+            Button("删除「\(s.name)」及其所有变体", role: .destructive) {
+                viewModel.deleteStrategy(s)
+                strategyToDelete = nil
+            }
+            Button("取消", role: .cancel) { strategyToDelete = nil }
+        } message: { _ in
+            Text("将删除该策略下的所有方案变体，不可恢复。")
+        }
+        .confirmationDialog("删除该变体？", isPresented: Binding(
+            get: { schemeToDelete != nil },
+            set: { if !$0 { schemeToDelete = nil } }
+        ), presenting: schemeToDelete) { s in
+            Button("删除「\(s.name)」", role: .destructive) {
+                viewModel.deleteScheme(s)
+                schemeToDelete = nil
+            }
+            Button("取消", role: .cancel) { schemeToDelete = nil }
+        } message: { _ in
+            Text("该变体将被删除，不可恢复。")
+        }
     }
 
     /// 单条方案行。
@@ -550,7 +561,7 @@ struct StrategySection: View {
             }
             Divider()
             Button("删除变体", role: .destructive) {
-                viewModel.deleteScheme(scheme)
+                schemeToDelete = scheme
             }
         }
     }
