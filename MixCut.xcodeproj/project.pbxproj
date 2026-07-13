@@ -114,6 +114,7 @@
 		E3ECCB0684CD1D391F8513A4 /* ShotSlicerService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 77CA28231685089542B82539 /* ShotSlicerService.swift */; };
 		E45A697280C04799918959ED /* CosyVoiceTTSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DD8F10E220C49CFB4D2DBDA /* CosyVoiceTTSClient.swift */; };
 		E69FFB15EE2531224CC4704F /* Wan25VideoEditClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C4AADB275716722B31E747 /* Wan25VideoEditClient.swift */; };
+		E6E77FFC3E9A199D12B55A22 /* WrapHStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8155CA3877983E82D2C4D0 /* WrapHStack.swift */; };
 		EAEBD3EFDDCE9AB391E64B89 /* SceneDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8283DE44DCA7A13D6A08B88E /* SceneDetectionService.swift */; };
 		EB80D04E1734C1921A33372B /* video_recombination_prompt.md in Resources */ = {isa = PBXBuildFile; fileRef = B70C8945D73934676D6D58BB /* video_recombination_prompt.md */; };
 		EBBCDD8B9B156B547FDCBC8F /* ModelContextExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33A42DE9B350BF619D35E08C /* ModelContextExtension.swift */; };
@@ -196,6 +197,7 @@
 		7FD46E94BBEB4B9A82B0714F /* SegmentExportExpander.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = SegmentExportExpander.swift; path = Sources/MixCutCore/SegmentExportExpander.swift; sourceTree = "<group>"; };
 		8125257167654959A82159EF /* VoiceCloneService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceCloneService.swift; sourceTree = "<group>"; };
 		8283DE44DCA7A13D6A08B88E /* SceneDetectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDetectionService.swift; sourceTree = "<group>"; };
+		8A8155CA3877983E82D2C4D0 /* WrapHStack.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = WrapHStack.swift; path = MixCut/Views/Shared/WrapHStack.swift; sourceTree = "<group>"; };
 		901C23DFF0236F31144F05FC /* ad_styles.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ad_styles.md; sourceTree = "<group>"; };
 		9035446AE8044D9B846BA19A /* QwenASRClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QwenASRClient.swift; sourceTree = "<group>"; };
 		90381051D2F94A9AB912BC86 /* DubAudioFinalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubAudioFinalizer.swift; sourceTree = "<group>"; };
@@ -390,6 +392,7 @@
 				447BA75BCCBEC31888890E33 /* MixCut.entitlements */,
 				BF7A2D27A78D590BDEF15AF2 /* Products */,
 				7DFBD2DFA4D61CB3A541A31D /* MixCutCore */,
+				8A8155CA3877983E82D2C4D0 /* WrapHStack.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -833,6 +836,7 @@
 				8B88DC997889BB54A62186D2 /* SentenceTimingAligner.swift in Sources */,
 				612D1CB218960CA1D5C930F6 /* CaptionTimingEditorSheet.swift in Sources */,
 				40545E19D3DAE813CE38DFC0 /* CaptionBoundaryEditor.swift in Sources */,
+				E6E77FFC3E9A199D12B55A22 /* WrapHStack.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -857,7 +861,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.8.0;
+				MARKETING_VERSION = 0.8.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -982,7 +986,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.8.0;
+				MARKETING_VERSION = 0.8.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

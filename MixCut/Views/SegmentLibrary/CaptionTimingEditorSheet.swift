@@ -15,6 +15,7 @@ struct CaptionTimingEditorSheet: View {
     @State private var stopToken = 0
     @State private var confirmRealign = false
     @State private var isRealigning = false
+    @State private var splittingIndex: Int?      // 正处于「拆分模式」的句子下标
 
     private var segDuration: Double { dub.segment?.duration ?? 0 }
     private let step = 0.1
@@ -80,9 +81,16 @@ struct CaptionTimingEditorSheet: View {
             .help("试听这句配音")
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(lines[i].text.isEmpty ? "（空）" : lines[i].text)
-                    .font(.callout).textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(alignment: .top, spacing: 8) {
+                    if splittingIndex == i {
+                        splitEditor(i)
+                    } else {
+                        Text(lines[i].text.isEmpty ? "（空）" : lines[i].text)
+                            .font(.callout).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    splitToggle(i)
+                }
                 HStack(spacing: 12) {
                     timeStepper("起", value: lines[i].start) { setStart(i, $0) }
                     timeStepper("止", value: lines[i].end) { setEnd(i, $0) }
@@ -104,6 +112,58 @@ struct CaptionTimingEditorSheet: View {
             Button { set(value + step) } label: { Image(systemName: "plus") }
                 .buttonStyle(.borderless).controlSize(.small)
         }
+    }
+
+    // MARK: - 手动拆分句子（剪刀模式）
+
+    /// ✂ 开关：进入/退出拆分模式。少于 2 字不能拆，按钮禁用。
+    private func splitToggle(_ i: Int) -> some View {
+        let canSplit = CaptionBoundaryEditor.charsOf(lines[i]).count >= 2
+        let active = splittingIndex == i
+        return Button {
+            splittingIndex = active ? nil : i
+        } label: {
+            Image(systemName: active ? "xmark.circle.fill" : "scissors")
+                .font(.system(size: 13))
+                .foregroundStyle(active ? Color.secondary : (canSplit ? Color.accentColor : Color.secondary.opacity(0.4)))
+        }
+        .buttonStyle(.borderless)
+        .disabled(!canSplit)
+        .help(active ? "退出拆分" : (canSplit ? "拆分这一句：点两字之间的竖线切开" : "只有一个字，无法拆分"))
+    }
+
+    /// 拆分模式：逐字块 + 字间可点竖线（点竖线 = 在该处拆成两句）。
+    private func splitEditor(_ i: Int) -> some View {
+        let cs = CaptionBoundaryEditor.charsOf(lines[i])
+        return WrapHStack(spacing: 2) {
+            ForEach(cs.indices, id: \.self) { k in
+                Text(cs[k].ch)
+                    .font(.callout)
+                    .padding(.vertical, 2).padding(.horizontal, 1)
+                // 字之间的分界（末字后不放，避免拆出空句）
+                if k < cs.count - 1 {
+                    Button { splitLine(i, afterCharIndex: k) } label: {
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(Color.accentColor)
+                            .frame(width: 3, height: 18)
+                            .padding(.horizontal, 2)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless)
+                    .help("在此拆成两句")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 执行拆分：在第 i 句第 k 字后切开，写库，退出拆分模式。
+    private func splitLine(_ i: Int, afterCharIndex k: Int) {
+        let next = CaptionBoundaryEditor.splitLine(lines, at: i, afterCharIndex: k)
+        guard next.count != lines.count else { splittingIndex = nil; return }
+        lines = next
+        splittingIndex = nil
+        persist()
     }
 
     private var footer: some View {

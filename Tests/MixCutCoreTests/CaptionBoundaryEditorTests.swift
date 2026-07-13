@@ -65,6 +65,48 @@ struct CaptionBoundaryEditorTests {
         #expect(CaptionBoundaryEditor.moveBoundary(src, after: -1, to: 1.5) == src)
     }
 
+    @Test("手动拆分：在第 k 字后一分为二，分界=该字时间")
+    func splitAfterChar() {
+        // 「你好世界」四字：你(0.5)好(1.0)世(1.5)界(2.0)，在第 1 字(好,k=1)后拆
+        let one = [CaptionLine(text: "你好世界", start: 0, end: 2, chars: [
+            TimedChar(ch: "你", end: 0.5), TimedChar(ch: "好", end: 1.0),
+            TimedChar(ch: "世", end: 1.5), TimedChar(ch: "界", end: 2.0),
+        ])]
+        let out = CaptionBoundaryEditor.splitLine(one, at: 0, afterCharIndex: 1)
+        #expect(out.count == 2)
+        #expect(out[0].text == "你好")
+        #expect(abs(out[0].start - 0.0) < 0.001)
+        #expect(abs(out[0].end - 1.0) < 0.001)     // 分界=好.end
+        #expect(out[1].text == "世界")
+        #expect(abs(out[1].start - 1.0) < 0.001)
+        #expect(abs(out[1].end - 2.0) < 0.001)
+        #expect(out[0].chars.count == 2 && out[1].chars.count == 2)
+    }
+
+    @Test("拆分越界/不足两字 → 原样返回")
+    func splitGuards() {
+        let two = twoLines()
+        #expect(CaptionBoundaryEditor.splitLine(two, at: 5, afterCharIndex: 0) == two)   // 句越界
+        // 单字句拆不出两句
+        let single = [CaptionLine(text: "好", start: 0, end: 1, chars: [TimedChar(ch: "好", end: 1)])]
+        #expect(CaptionBoundaryEditor.splitLine(single, at: 0, afterCharIndex: 0) == single)
+        // k 越界（最后一字后无法拆）
+        #expect(CaptionBoundaryEditor.splitLine(two, at: 0, afterCharIndex: 1) == two)   // 句"你好"只有k∈{0}
+    }
+
+    @Test("拆分后可再合并回去（往返一致）")
+    func splitThenMergeRoundTrip() {
+        let one = [CaptionLine(text: "你好世界", start: 0, end: 2, chars: [
+            TimedChar(ch: "你", end: 0.5), TimedChar(ch: "好", end: 1.0),
+            TimedChar(ch: "世", end: 1.5), TimedChar(ch: "界", end: 2.0),
+        ])]
+        let split = CaptionBoundaryEditor.splitLine(one, at: 0, afterCharIndex: 1)   // 你好 | 世界
+        // 把第 0 句止拉满 → 合并删除右句，恢复单句
+        let merged = CaptionBoundaryEditor.moveBoundary(split, after: 0, to: 2.0)
+        #expect(merged.count == 1)
+        #expect(merged[0].text == "你好世界")
+    }
+
     @Test("旧数据无 chars → 按整句均匀合成再重分")
     func legacyNoChars() {
         let l0 = CaptionLine(text: "你好", start: 0, end: 1)   // chars 空

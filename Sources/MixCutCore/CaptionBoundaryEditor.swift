@@ -16,6 +16,29 @@ public enum CaptionBoundaryEditor {
         }
     }
 
+    /// 把第 i 句在「第 k 个字之后」手动拆成两句（k 从 0 起，拆点落在 chars[k] 与 chars[k+1] 之间）。
+    /// 新分界时间 = 第 k 个字的结束时间（复用逐字时间，两句都精确非零）。字总量守恒、顺序不变。
+    /// 越界或该句不足 2 字（拆不出两句）→ 原样返回。
+    public static func splitLine(_ lines: [CaptionLine], at i: Int, afterCharIndex k: Int) -> [CaptionLine] {
+        guard i >= 0, i < lines.count else { return lines }
+        let cs = charsOf(lines[i])
+        guard cs.count >= 2, k >= 0, k < cs.count - 1 else { return lines }   // 保证左右都非空
+        let boundary = cs[k].end
+        let leftChars = Array(cs[0...k])
+        let rightChars = Array(cs[(k + 1)...])
+        var left = lines[i]
+        left.chars = leftChars
+        left.text = leftChars.map(\.ch).joined()
+        left.end = boundary
+        var right = lines[i]
+        right.chars = rightChars
+        right.text = rightChars.map(\.ch).joined()
+        right.start = boundary
+        var out = lines
+        out.replaceSubrange(i...i, with: [left, right])
+        return out
+    }
+
     /// 移动第 i 句与第 i+1 句之间的分界到时间 t，返回新分区（保持字总量不变、顺序不变）。
     public static func moveBoundary(_ lines: [CaptionLine], after i: Int, to t: Double, minGap: Double = 0.05) -> [CaptionLine] {
         guard i >= 0, i + 1 < lines.count else { return lines }

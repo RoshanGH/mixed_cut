@@ -378,39 +378,52 @@ actor ASRService {
             throw ASRError.modelNotFound
         }
 
-        // GPU(Metal) 优先跑（快）；部分机器的 Metal 后端会崩溃（ggml-metal 断言失败、产不出 json），
-        // 这时自动回退 --no-gpu(CPU) 重试，保证任何机器都能出结果。
+        // 兼容策略：先试 GPU 版二进制（新系统 Metal 加速，快）；产不出结果（老系统 dyld 加载期崩 /
+        // Metal init 崩 / 任何原因）→ 换 CPU 版二进制 whisper-cpu 重试（不链接 Metal，老系统必能加载）。
+        // ⚠️ 关键：必须换「另一个二进制」而非同一二进制加 --no-gpu——老系统是加载期就崩，运行期参数救不了。
+        // GPU 失败通常秒级（加载/init 崩）；CPU 是真跑大模型、慢，故超时放开到 1 小时，避免长视频被误杀。
         var jsonData = try await runWhisperCppProcess(
             whisperPath: whisperPath, modelPath: modelPath,
-            audioPath: audioPath, language: language, disableGPU: false
+            audioPath: audioPath, language: language,
+            timeoutSeconds: 600, label: "GPU"
         )
         if jsonData == nil {
-            MixLog.error("Whisper GPU(Metal) 模式无输出（疑似 Metal 后端崩溃），回退 CPU(--no-gpu) 重试")
-            jsonData = try await runWhisperCppProcess(
-                whisperPath: whisperPath, modelPath: modelPath,
-                audioPath: audioPath, language: language, disableGPU: true
-            )
+            if let cpuPath = Self.findCPUWhisperBinary() {
+                MixLog.error("Whisper GPU 版无输出，换 CPU 版二进制(whisper-cpu)重试（超时放开到 1 小时）")
+                jsonData = try await runWhisperCppProcess(
+                    whisperPath: cpuPath, modelPath: modelPath,
+                    audioPath: audioPath, language: language,
+                    timeoutSeconds: 3600, label: "CPU"
+                )
+            } else {
+                MixLog.error("未找到 CPU 兜底二进制 whisper-cpu，无法降级")
+            }
         }
 
         onProgress?(0.9)
 
         guard let jsonData else {
-            MixLog.error("Whisper GPU/CPU 两种模式均无输出，返回空结果")
-            return .empty(language: language)
+            // 明确失败：不再静默返回空。抛错让上层挂到 video.errorMessage，用户能看到「语音识别失败」而非无声跳过。
+            MixLog.error("Whisper GPU/CPU 两种二进制均无输出，语音识别失败")
+            throw ASRError.transcriptionFailed
         }
 
         return try parseWhisperCppOutput(jsonData: jsonData, language: language)
     }
 
     /// 启动 whisper.cpp 进程一次，返回其生成的 JSON（无输出返回 nil）。
-    /// - Parameter disableGPU: true 时追加 `--no-gpu`，强制 CPU（绕开部分机器 Metal 后端崩溃）。
+    /// - Parameters:
+    ///   - whisperPath: 用哪个二进制（GPU 版 whisper 或 CPU 版 whisper-cpu）。
+    ///   - timeoutSeconds: 超时上限。GPU 失败秒级、给短；CPU 真跑大模型、给长（1 小时）避免长视频误杀。
+    ///   - label: 日志标识（"GPU"/"CPU"）。
     /// - 持续 drain stdout/stderr 防止管道写满阻塞；无 json 时把输出末尾记进日志（便于定位崩溃原因）。
     private func runWhisperCppProcess(
         whisperPath: String,
         modelPath: String,
         audioPath: String,
         language: String,
-        disableGPU: Bool
+        timeoutSeconds: Double,
+        label: String
     ) async throws -> Data? {
         let outputPath = FileHelper.tempDirectory
             .appendingPathComponent("whisper_\(UUID().uuidString)").path
@@ -431,9 +444,7 @@ actor ASRService {
             "--output-json-full",
             "-of", outputPath
         ]
-        if disableGPU {
-            arguments.append("--no-gpu")   // 强制 CPU，绕开 Metal 后端崩溃
-        }
+        // 注：不再用 --no-gpu 参数区分 CPU——CPU 兜底走的是不链接 Metal 的独立二进制 whisper-cpu。
         process.arguments = arguments
         process.qualityOfService = .userInitiated
         let binDir = (whisperPath as NSString).deletingLastPathComponent
@@ -450,7 +461,7 @@ actor ASRService {
             if !chunk.isEmpty { outputBox.append(chunk) }
         }
 
-        let mode = disableGPU ? "CPU" : "GPU"
+        let mode = label
         let jsonData: Data? = try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
                 process.terminationHandler = { @Sendable proc in
@@ -474,10 +485,10 @@ actor ASRService {
                     return
                 }
 
-                // 超时保护：5 分钟后终止进程
-                DispatchQueue.global().asyncAfter(deadline: .now() + 300) {
+                // 超时保护：按传入上限终止进程（GPU 短、CPU 放开到 1 小时）
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeoutSeconds) {
                     if process.isRunning {
-                        MixLog.error("Whisper 进程超时（5分钟），强制终止")
+                        MixLog.error("Whisper(\(mode)) 进程超时（\(Int(timeoutSeconds))s），强制终止")
                         process.terminate()
                     }
                 }
@@ -641,6 +652,11 @@ actor ASRService {
             return bundledPath
         }
         return systemPath
+    }
+
+    /// 查找 CPU 版 whisper 二进制（whisper-cpu，不链接 Metal，老系统/GPU 失败兜底）。仅 bundle 内。
+    static func findCPUWhisperBinary() -> String? {
+        findBundledBinary("whisper-cpu")
     }
 
     /// 从 Bundle 中查找二进制（兼容 folder reference 和 resource group）
@@ -919,6 +935,7 @@ actor ASRService {
     enum ASRError: LocalizedError {
         case modelNotFound
         case whisperNotFound
+        case transcriptionFailed
 
         var errorDescription: String? {
             switch self {
@@ -926,6 +943,8 @@ actor ASRService {
                 return "Whisper 模型文件未找到，请在设置中下载模型"
             case .whisperNotFound:
                 return "语音识别组件未找到，请重新安装应用或安装 whisper-cpp (brew install whisper-cpp)"
+            case .transcriptionFailed:
+                return "语音识别失败：GPU 与 CPU 两种引擎均未能产出结果（可查看日志 ~/Library/Caches/com.mixcut.app/logs/mixcut.log），本视频暂无台词，可重试或更换视频"
             }
         }
     }

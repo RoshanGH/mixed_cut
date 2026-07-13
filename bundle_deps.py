@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 DEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MixCut", "Resources", "bin")
-BINARIES = ["ffmpeg", "ffprobe", "whisper", "demucs"]   # 需为 universal
+BINARIES = ["ffmpeg", "ffprobe", "whisper", "whisper-cpu", "demucs"]   # 需为 universal（whisper-cpu=老系统/GPU失败兜底）
 # 架构无关的内置数据文件（模型）。内置后 App 完全自包含、无需运行时下载。
 DATA = ["ggml-htdemucs-4s.bin", "ggml-large-v3-turbo.bin"]
 # 最小体积下限（字节）——防止「下了半个/被截断」的模型蒙混过关（存在性检查拦不住）
