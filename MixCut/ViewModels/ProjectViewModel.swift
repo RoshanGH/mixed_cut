@@ -113,14 +113,6 @@ final class ProjectViewModel {
         )
     }
 
-    /// 归档项目
-    func archiveProject(_ project: Project) {
-        project.status = .archived
-        project.updatedAt = Date()
-        modelContext?.safeSave()
-        fetchProjects()
-    }
-
     /// 重命名项目
     func renameProject(_ project: Project, to newName: String) {
         modelContext?.undoManager?.setActionName("重命名项目")

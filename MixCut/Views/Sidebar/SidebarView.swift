@@ -259,11 +259,6 @@ struct SidebarView: View {
                 renameText = project.name
                 renamingProjectID = project.id
             }
-            Button("归档") {
-                let name = project.name
-                projectVM.archiveProject(project)
-                ToastCenter.shared.show("已归档「\(name)」", icon: "archivebox.fill")
-            }
             Divider()
             Button("删除", role: .destructive) {
                 projectToDelete = project
