@@ -55,6 +55,9 @@ final class Video: Identifiable {
     /// 文件内容哈希（SHA-256），用于全局去重
     var contentHash: String?
 
+    /// true = 用户自建分镜的载体视频（分镜库「自建分镜」分类）。SwiftData 加字段，默认 false，旧数据自动为普通视频。
+    var isUserUploaded: Bool = false
+
     /// 缩略图路径
     var thumbnailPath: String?
 

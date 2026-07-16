@@ -10,11 +10,14 @@ struct SegmentFilter {
     var searchText: String = ""
 }
 
-/// 按视频分组的分镜
+/// 按视频分组的分镜；`video == nil` 表示「自建分镜」聚合组（多个自建载体视频合并为一组）
 struct VideoSegmentGroup: Identifiable {
-    let video: Video
+    let video: Video?
     let segments: [Segment]
-    var id: UUID { video.id }
+    var isSelfBuilt: Bool { video == nil }
+    /// 「自建分镜」聚合组的固定 id / 编号 key
+    static let selfBuiltID = UUID(uuidString: "5E1FBEE7-0000-0000-0000-000000000001")!
+    var id: UUID { video?.id ?? Self.selfBuiltID }
 }
 
 /// 分镜素材库 ViewModel
@@ -26,6 +29,8 @@ final class SegmentLibraryViewModel {
     var selectedSegment: Segment?
     /// 右键"分镜头替换"请求的分镜（驱动 ShotEditSheet 弹出）
     var shotEditRequestSegment: Segment?
+    /// 右键"拆分"请求的分镜（驱动 SplitSegmentSheet 弹出）
+    var splitRequestSegment: Segment?
     var filter = SegmentFilter()
     var sortByQuality = false
     var isGridView = true
@@ -54,6 +59,8 @@ final class SegmentLibraryViewModel {
     }
 
     private var modelContext: ModelContext?
+    private let ffmpeg = FFmpegRunner()
+    private var thumbRegenTask: Task<Void, Never>?
 
     func setModelContext(_ context: ModelContext) {
         self.modelContext = context
@@ -93,25 +100,31 @@ final class SegmentLibraryViewModel {
 
     /// 取得分镜在所属视频内的编号；找不到返回 0
     func number(for segment: Segment) -> Int {
-        guard let videoID = segment.video?.id else { return 0 }
-        return numberByVideo[videoID]?[segment.id] ?? 0
+        guard let video = segment.video else { return 0 }
+        let key = video.isUserUploaded ? VideoSegmentGroup.selfBuiltID : video.id
+        return numberByVideo[key]?[segment.id] ?? 0
     }
 
     /// 重新计算 numberByVideo（仅在 segments 变化时调用）
     private func recomputeNumberByVideo() {
         var result: [UUID: [UUID: Int]] = [:]
-        var byVideo: [UUID: [Segment]] = [:]
+        var byKey: [UUID: [Segment]] = [:]
         for seg in segments {
-            guard let videoID = seg.video?.id else { continue }
-            byVideo[videoID, default: []].append(seg)
+            guard let video = seg.video else { continue }
+            // 自建分镜统一归到「自建分镜」组的 key；其余按各自视频
+            let key = video.isUserUploaded ? VideoSegmentGroup.selfBuiltID : video.id
+            byKey[key, default: []].append(seg)
         }
-        for (videoID, segs) in byVideo {
-            let sorted = segs.sorted { $0.startTime < $1.startTime }
+        for (key, segs) in byKey {
+            // 自建分镜组按创建时间编号（整片 startTime 都是 0），其余按 startTime
+            let sorted = key == VideoSegmentGroup.selfBuiltID
+                ? segs.sorted { $0.createdAt < $1.createdAt }
+                : segs.sorted { $0.startTime < $1.startTime }
             var map: [UUID: Int] = [:]
             for (i, seg) in sorted.enumerated() {
                 map[seg.id] = i + 1
             }
-            result[videoID] = map
+            result[key] = map
         }
         numberByVideo = result
     }
@@ -215,20 +228,28 @@ final class SegmentLibraryViewModel {
     }
 
     private func recomputeGroupedSegments() {
+        var selfBuilt: [Segment] = []
         var videoMap: [UUID: (video: Video, segments: [Segment])] = [:]
         var videoOrder: [UUID] = []
         for seg in filteredSegments {
             guard let video = seg.video else { continue }
+            if video.isUserUploaded { selfBuilt.append(seg); continue }
             if videoMap[video.id] == nil {
                 videoMap[video.id] = (video: video, segments: [])
                 videoOrder.append(video.id)
             }
             videoMap[video.id]?.segments.append(seg)
         }
-        groupedSegments = videoOrder.compactMap { id in
+        var groups: [VideoSegmentGroup] = []
+        // 「自建分镜」聚合组置顶（组内按创建时间）
+        if !selfBuilt.isEmpty {
+            groups.append(VideoSegmentGroup(video: nil, segments: selfBuilt.sorted { $0.createdAt < $1.createdAt }))
+        }
+        groups += videoOrder.compactMap { id in
             guard let entry = videoMap[id] else { return nil }
             return VideoSegmentGroup(video: entry.video, segments: entry.segments)
         }
+        groupedSegments = groups
     }
 
     /// 应用筛选条件
@@ -313,6 +334,7 @@ final class SegmentLibraryViewModel {
         segment.setFrameRange(startFrame: newStart, endFrame: segment.endFrame, fps: fps)
         reExtractText(for: segment)
         modelContext?.safeSave()
+        scheduleStartThumbnailRegen(for: segment)   // 开始边界变了 → 首帧缩略图重生
 
         let toFrame = min(newStart + Int((2 * fps).rounded()), segment.endFrame)
         requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps))
@@ -356,6 +378,7 @@ final class SegmentLibraryViewModel {
         segment.setFrameRange(startFrame: clamped, endFrame: segment.endFrame, fps: fps)
         reExtractText(for: segment)
         modelContext?.safeSave()
+        scheduleStartThumbnailRegen(for: segment)   // 开始边界变了 → 首帧缩略图重生
         let toFrame = min(clamped + Int((2 * fps).rounded()), segment.endFrame)
         requestPlay(segment: segment, from: segment.startTime, to: FrameTime.seconds(frame: toFrame, fps: fps))
     }
@@ -372,6 +395,32 @@ final class SegmentLibraryViewModel {
         modelContext?.safeSave()
         let fromFrame = max(segment.startFrame, clamped - Int(fps.rounded()))
         requestPlay(segment: segment, from: FrameTime.seconds(frame: fromFrame, fps: fps), to: segment.endTime)
+    }
+
+    /// 调「开始」边界后重生成首帧缩略图（debounce，避免连点 ±帧时反复抽帧卡顿）。
+    /// 缩略图路径带 startFrame 保证唯一 → thumbnailPath 变化触发卡片重绘 + 缓存拿到新图。
+    private func scheduleStartThumbnailRegen(for segment: Segment) {
+        thumbRegenTask?.cancel()
+        thumbRegenTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.regenStartThumbnail(for: segment)
+        }
+    }
+
+    private func regenStartThumbnail(for segment: Segment) async {
+        guard let video = segment.video else { return }
+        let fps = video.fps > 0 ? video.fps : 30
+        let t = Double(segment.startFrame) / fps
+        let path = FileHelper.globalThumbnailDirectory
+            .appendingPathComponent("seg-\(segment.id.uuidString)-\(segment.startFrame).jpg").path
+        do {
+            try await ffmpeg.generateThumbnail(from: video.localPath, at: t, to: path)
+            segment.thumbnailPath = path
+            modelContext?.safeSave()
+        } catch {
+            MixLog.error("[Thumb] 边界调整后缩略图重生失败: \(error.localizedDescription)")
+        }
     }
 
     /// 删除分镜（延迟删除 + 撤销浮条：先隐藏，5 秒内可撤销，不撤才真删）

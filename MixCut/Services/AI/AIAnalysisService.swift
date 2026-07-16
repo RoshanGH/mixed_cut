@@ -183,6 +183,40 @@ actor AIAnalysisService {
         return result
     }
 
+    /// 「只打标不切分」：给一个**已切好的分镜**的台词，判定它的语义类型 / 位置 / 关键词。
+    /// 用于自建分镜（用户上传的成品分镜，不需要 AI 再切分），也可给拆分后的新分镜复用。
+    func tagSingleSegment(text: String) async throws -> (types: [SemanticType], position: PositionType, keywords: [String]) {
+        struct SegmentTags: Codable {
+            let semanticTypes: [String]
+            let position: String
+            let keywords: [String]
+        }
+        let typesDef = promptLoader.loadPrompt(named: "segment_types_definition") ?? ""
+        let safeText = text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "'")
+            .replacingOccurrences(of: "\n", with: " ")
+        let prompt = """
+        你将看到一个【已经切好的广告分镜】的台词。请只判定它的语义类型、位置、关键词——不要切分、不要拆句、不要改写台词。
+
+        【语义类型定义】
+        \(typesDef)
+
+        【分镜台词】
+        "\(safeText)"
+
+        只返回如下 JSON（不要任何多余文字）：
+        {"semanticTypes": ["痛点"], "position": "开头", "keywords": ["敏感肌","换季"]}
+        要求：semanticTypes 从上面定义的中文类型名里选，可多个但至少一个；position 只能是 开头/中间/结尾 之一；keywords 给 2~5 个。
+        """
+        let tags = try await aiProvider.generateJSON(prompt: prompt, responseType: SegmentTags.self)
+        let valid = Set(SemanticType.allCases.map(\.rawValue))
+        var types = tags.semanticTypes.filter { valid.contains($0) }.compactMap { SemanticType(rawValue: $0) }
+        if types.isEmpty { types = [.transition] }
+        let pos = PositionType(rawValue: tags.position) ?? .middle
+        return (types, pos, tags.keywords)
+    }
+
     /// 构建切分 prompt — 核心：本地数据驱动，AI 做语义决策
     private func buildSegmentationPrompt(
         videoId: String,

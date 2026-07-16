@@ -395,6 +395,80 @@ final class ImportViewModel {
         return (video, true)
     }
 
+    /// 上传自建分镜：每个文件 = 一个分镜（≤15s、不切分），只做 ASR 台词提取 + AI 只打标。
+    /// 处理态用载体视频的 status 驱动占位卡（transcribing/analyzing/completed）。见 PRD/TRD 05。
+    func importSelfSegments(urls: [URL], into project: Project, onUpdate: @escaping @MainActor () -> Void = {}) async {
+        guard let context = modelContext else { return }
+        var skippedLong: [String] = []
+        var skippedDup = 0
+        for url in urls {
+            // 1) 时长校验 ≤ 15s
+            let asset = AVURLAsset(url: url)
+            let dur = (try? await asset.load(.duration))?.seconds ?? 0
+            guard dur > 0 else { continue }
+            guard dur <= 15.0 else { skippedLong.append(url.lastPathComponent); continue }
+
+            // 2) 去重
+            let hash = Self.computeFileHash(path: url.path)
+            if let hash, findExistingVideo(hash: hash, context: context) != nil { skippedDup += 1; continue }
+
+            // 3) 落盘 + 建载体视频（打「自建」标记；status 作处理态）
+            guard let destURL = try? FileHelper.copyVideoToGlobal(from: url, contentHash: hash ?? UUID().uuidString) else { continue }
+            let video = Video(name: url.lastPathComponent, localPath: destURL.path)
+            video.contentHash = hash
+            video.isUserUploaded = true
+            video.status = .transcribing
+            context.insert(video)
+            context.insert(ProjectVideo(project: project, video: video))
+            context.safeSave()
+
+            // 4) 元数据 + 整片首帧缩略图（失败不阻塞）
+            try? await extractMetadata(for: video, at: destURL)
+            try? await generateVideoThumbnail(for: video)
+
+            // 5) 建「覆盖整片」的分镜
+            let fps = video.fps > 0 ? video.fps : 30
+            let endFrame = max(1, Int((video.duration * fps).rounded()))
+            let seg = Segment(segmentIndex: "seg_001", startTime: 0, endTime: video.duration,
+                              text: "", semanticTypes: [], positionType: .opening)
+            seg.video = video
+            seg.setFrameRange(startFrame: 0, endFrame: endFrame, fps: fps)
+            seg.thumbnailPath = video.thumbnailPath
+            context.insert(seg)
+            context.safeSave()
+            onUpdate()   // 占位卡「识别中…」出现
+
+            // 6) ASR 台词（whisper 整片；失败留空，可后续手填/重识别）
+            if let asr = try? await asrService.transcribe(videoPath: destURL.path) {
+                seg.text = asr.text
+                context.safeSave()
+            }
+
+            // 7) AI 只打标（不切分）；失败给默认「过渡」
+            video.status = .analyzing
+            context.safeSave()
+            onUpdate()   // 占位卡切「打标中…」
+            if !seg.text.isEmpty, let tags = try? await aiAnalysis.tagSingleSegment(text: seg.text) {
+                seg.semanticTypes = tags.types
+                seg.positionType = tags.position
+                seg.keywords = tags.keywords
+            } else if seg.semanticTypes.isEmpty {
+                seg.semanticTypes = [.transition]
+            }
+
+            // 8) 就绪
+            video.status = .completed
+            context.safeSave()
+            onUpdate()   // 占位卡转正常分镜卡
+        }
+        if !skippedLong.isEmpty {
+            ToastCenter.shared.show("\(skippedLong.count) 个文件超过 15 秒已跳过", icon: "exclamationmark.triangle.fill")
+        }
+        if skippedDup > 0 {
+            ToastCenter.shared.show("\(skippedDup) 个已存在，已跳过", icon: "info.circle.fill")
+        }
+    }
+
     /// 执行视频分析（场景检测 + ASR + AI 分析 + 边界优化）
     private func analyzeVideo(_ video: Video) async throws {
         guard let context = modelContext else { return }
@@ -923,5 +997,78 @@ final class ImportViewModel {
         }
         try? context.save()
         return (ok, fail)
+    }
+
+    // MARK: - 分镜拆分（PRD/TRD 06）
+
+    /// 把一个分镜在 `cutFrame` 处拆成前后两段：A 复用原 seg 缩为前段，B 新建后段。
+    /// 清空原分镜的衍生物（配音/字幕、画面替换、物理镜头变体），两段各自重抽缩略图 + 阿里重识别台词，
+    /// B 继承原语义标签。`onUpdate` 用于刷新分镜库。调用前须保证 `seg.schemeSegments` 为空（拦截见 UI）。
+    func splitSegment(_ seg: Segment, atFrame cutFrame: Int, onUpdate: @escaping @MainActor () -> Void = {}) async {
+        guard let context = modelContext, let video = seg.video else { return }
+        guard seg.schemeSegments.isEmpty else { return }   // 双保险：在方案里不拆
+        let fps = video.fps > 0 ? video.fps : 30
+        let origStart = seg.startFrame
+        let origEnd = seg.endFrame
+        guard cutFrame > origStart, cutFrame < origEnd else { return }
+
+        // 1) 清空原 seg（将成为 A 段）的衍生物 —— 两段视为全新分镜，不可恢复
+        for dub in seg.segmentDubs { context.delete(dub) }          // cascade 删逐句字幕
+        for shot in seg.physicalShots { context.delete(shot) }      // cascade 删 ShotVariant
+        seg.invalidateReplacedPicture()
+
+        // 2) A = 原 seg 缩为 [origStart, cutFrame]
+        seg.setFrameRange(startFrame: origStart, endFrame: cutFrame, fps: fps)
+
+        // 3) B = 新建后段 [cutFrame, origEnd]，继承标签
+        let b = Segment(segmentIndex: "\(seg.segmentIndex)_\(UUID().uuidString.prefix(4))",
+                        startTime: 0, endTime: 0, text: "",
+                        semanticTypes: seg.semanticTypes, positionType: seg.positionType,
+                        qualityScore: seg.qualityScore)
+        b.video = video
+        b.setFrameRange(startFrame: cutFrame, endFrame: origEnd, fps: fps)
+        b.keywords = seg.keywords
+        context.insert(b)
+        context.safeSave()
+        onUpdate()   // 两段先出现
+
+        // 4) 缩略图各自重生（各自首帧）
+        await regenSegmentThumbnail(seg, in: video, fps: fps)
+        await regenSegmentThumbnail(b, in: video, fps: fps)
+        context.safeSave(); onUpdate()
+
+        // 5) 各自阿里重识别台词（复用单段 ASR 模式）
+        await reASRSegment(seg, in: video, fps: fps)
+        await reASRSegment(b, in: video, fps: fps)
+        context.safeSave(); onUpdate()
+    }
+
+    /// 重抽某分镜首帧缩略图（拆分后 A/B 各自生成，用 seg.id 命名避免共用）
+    private func regenSegmentThumbnail(_ seg: Segment, in video: Video, fps: Double) async {
+        let t = Double(seg.startFrame) / fps
+        let path = FileHelper.globalThumbnailDirectory
+            .appendingPathComponent("seg-\(seg.id.uuidString).jpg").path
+        do {
+            try await ffmpeg.generateThumbnail(from: video.localPath, at: t, to: path)
+            seg.thumbnailPath = path
+        } catch {
+            MixLog.error("[Split] 缩略图重生失败 \(seg.segmentIndex): \(error.localizedDescription)")
+        }
+    }
+
+    /// 对某分镜按自己帧窗切音频 + 阿里 paraformer 重识别台词（失败保留原 text）
+    private func reASRSegment(_ seg: Segment, in video: Video, fps: Double) async {
+        let start = Double(seg.startFrame) / fps
+        let end = Double(seg.endFrame) / fps
+        let pcm = FileHelper.tempDirectory.appendingPathComponent("asrseg-\(UUID().uuidString).pcm")
+        defer { try? FileManager.default.removeItem(at: pcm) }
+        do {
+            try await ffmpeg.extractSegmentPCM(from: video.localPath, start: start, end: end, to: pcm.path)
+            let text = try await asrAliyun.transcribe(pcmPath: pcm.path)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { seg.text = text }
+        } catch {
+            MixLog.error("[Split] reASR 失败 \(seg.segmentIndex): \(error.localizedDescription)")
+        }
     }
 }

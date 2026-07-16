@@ -50,7 +50,7 @@ struct ImportView: View {
 
                     errorBanner
 
-                    if !project.videos.isEmpty {
+                    if project.videos.contains(where: { !$0.isUserUploaded }) {
                         videoListSection
                     }
                 }
@@ -165,7 +165,7 @@ struct ImportView: View {
 
     // MARK: - 已导入视频列表（网格并排）
     private var videoListSection: some View {
-        let videos = project.videos   // 一次性取出，避免多次访问 SwiftData 关系
+        let videos = project.videos.filter { !$0.isUserUploaded }   // 成片视频（自建分镜不在导入页/成片列表出现，只在分镜库）
         return VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("已导入视频")

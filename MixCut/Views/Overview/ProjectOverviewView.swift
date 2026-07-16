@@ -27,14 +27,15 @@ struct ProjectOverviewView: View {
             let t0 = Date()
             isLoading = true   // 每次切换都重置，确保 skeleton 显示 + 数据刷新
             // 一次性读取所有 SwiftData 关系字段
-            let videos = project.videos
-            let segCount = videos.reduce(0) { $0 + $1.segments.count }
-            videosCached = videos
-            videoCount = videos.count
+            let allVideos = project.videos
+            let realVideos = allVideos.filter { !$0.isUserUploaded }   // 成片视频（自建分镜不算「视频」，只在分镜库出现）
+            let segCount = allVideos.reduce(0) { $0 + $1.segments.count }   // 分镜计数含自建分镜
+            videosCached = realVideos
+            videoCount = realVideos.count
             segmentCount = segCount
             schemeCount = project.schemeCount
 
-            let thumbPaths = videos.compactMap(\.thumbnailPath)
+            let thumbPaths = realVideos.compactMap(\.thumbnailPath)
             ThumbnailCache.shared.prewarm(paths: thumbPaths)
             MixLog.info("[Perf] ProjectOverview: \(Int(Date().timeIntervalSince(t0) * 1000))ms / videos=\(videoCount) segs=\(segmentCount)")
             isLoading = false

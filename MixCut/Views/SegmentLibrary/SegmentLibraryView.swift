@@ -1,5 +1,7 @@
 import SwiftUI
 import AVKit
+import AppKit
+import UniformTypeIdentifiers
 
 struct SegmentLibraryView: View {
     let project: Project
@@ -11,6 +13,8 @@ struct SegmentLibraryView: View {
     @State private var showArrangeSheet = false
     @State private var isLoading = true
     @State private var dubVM = DubbingViewModel()
+    @State private var importVM = ImportViewModel()
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
@@ -22,6 +26,7 @@ struct SegmentLibraryView: View {
             }
         }
         .task(id: project.id) {
+            importVM.setModelContext(modelContext)
             let t0 = Date()
             isLoading = true
             // 退出多选模式 + 清空选中（避免不同项目的 ID 串到一起）
@@ -31,6 +36,23 @@ struct SegmentLibraryView: View {
             viewModel.loadSegments(for: project)
             MixLog.info("[Perf] SegmentLibrary: \(Int(Date().timeIntervalSince(t0) * 1000))ms / segs=\(viewModel.segments.count)")
             isLoading = false
+        }
+    }
+
+    /// 上传自建分镜：选 mp4/mov → 交给 ImportViewModel 处理（≤15s 校验/ASR/打标），进度回调刷新分镜库
+    private func presentSelfSegmentUpload() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [.mpeg4Movie, .quickTimeMovie, .movie]
+        panel.prompt = "上传"
+        panel.message = "选择要作为自建分镜上传的视频（单条 ≤ 15 秒）"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        let urls = panel.urls
+        Task { @MainActor in
+            await importVM.importSelfSegments(urls: urls, into: project) {
+                viewModel.loadSegments(for: project)
+            }
         }
     }
 
@@ -69,6 +91,11 @@ struct SegmentLibraryView: View {
         .navigationTitle("分镜素材库")
         .sheet(item: $viewModel.shotEditRequestSegment) { seg in
             ShotEditSheet(segment: seg)
+        }
+        .sheet(item: $viewModel.splitRequestSegment) { seg in
+            SplitSegmentSheet(segment: seg, importVM: importVM) {
+                viewModel.loadSegments(for: project)
+            }
         }
         .sheet(isPresented: $showBatchExportSheet) {
             BatchExportSheet(
@@ -283,6 +310,27 @@ struct SegmentLibraryView: View {
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
+
+                Spacer()
+
+                // 上传自建分镜（PRD 05）：分镜库工具栏右侧常驻
+                Button {
+                    presentSelfSegmentUpload()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("上传自建分镜")
+                            .font(.system(size: 12.5, weight: .semibold))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Color.accentColor)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .help("上传自己剪好的分镜（mp4/mov，单条 ≤ 15 秒）")
             }
 
             // 语义类型筛选芯片
@@ -357,45 +405,67 @@ struct SegmentLibraryView: View {
 
     private func videoSection(_ group: VideoSegmentGroup) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            // 视频标题栏
+            // 标题栏：自建分镜聚合组 vs 普通视频分组
             HStack(spacing: 10) {
-                if let thumbPath = group.video.thumbnailPath,
-                   let image = ThumbnailCache.shared.image(for: thumbPath) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 36, height: 28)
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 5)
-                                .stroke(.white.opacity(0.08), lineWidth: 1)
-                        )
-                } else {
+                if group.isSelfBuilt {
                     RoundedRectangle(cornerRadius: 5)
-                        .fill(.quaternary)
+                        .fill(Color.accentColor.opacity(0.12))
                         .frame(width: 36, height: 28)
                         .overlay {
-                            Image(systemName: "film")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.tertiary)
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Color.accentColor)
                         }
-                }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("自建分镜")
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Text("\(group.segments.count) 个分镜 · 我上传的")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    Spacer()
+                } else if let video = group.video {
+                    if let thumbPath = video.thumbnailPath,
+                       let image = ThumbnailCache.shared.image(for: thumbPath) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 36, height: 28)
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(.white.opacity(0.08), lineWidth: 1)
+                            )
+                    } else {
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(.quaternary)
+                            .frame(width: 36, height: 28)
+                            .overlay {
+                                Image(systemName: "film")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.tertiary)
+                            }
+                    }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(group.video.name)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                    Text("\(group.segments.count) 个分镜 · \(String(format: "%.0f", group.video.duration))s")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(video.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Text("\(group.segments.count) 个分镜 · \(String(format: "%.0f", video.duration))s")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
 
-                Spacer()
+                    Spacer()
+                }
             }
             .padding(.horizontal, 4)
 
-            // 该视频专属的「配音」栏（一键改写只改本视频；克隆按视频各自做）
-            DubSettingsBar(video: group.video, dubVM: dubVM)
+            // 视频专属「配音」栏（自建分镜组由多个载体视频组成，不显示视频级批量栏，逐卡各自配音）
+            if let video = group.video {
+                DubSettingsBar(video: video, dubVM: dubVM)
+            }
 
             // 分镜卡片/行
             // 性能关键：父视图在 ForEach 内一次性算 isChecked / sequenceNumber，
@@ -404,7 +474,7 @@ struct SegmentLibraryView: View {
             let selectionMode = viewModel.isSelectionMode
             let selectedIDs = viewModel.selectedSegmentIDs    // 读一次本地变量
             let selectedSegID = viewModel.selectedSegment?.id // 读一次：检视栏选中分镜
-            let numberMap = viewModel.numberByVideo
+            let numMap = viewModel.numberByVideo[group.id] ?? [:]   // group.id = 视频id 或 自建分镜组固定id
             if viewModel.isGridView {
                 LazyVGrid(columns: [
                     GridItem(.adaptive(minimum: 360, maximum: 460))
@@ -415,7 +485,7 @@ struct SegmentLibraryView: View {
                             isChecked: selectedIDs.contains(segment.id),
                             isSelectionMode: selectionMode,
                             isSelected: segment.id == selectedSegID,
-                            sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
+                            sequenceNumber: numMap[segment.id] ?? 0,
                             viewModel: viewModel
                         )
                         .equatable()
@@ -429,7 +499,7 @@ struct SegmentLibraryView: View {
                             isChecked: selectedIDs.contains(segment.id),
                             isSelectionMode: selectionMode,
                             isSelected: segment.id == selectedSegID,
-                            sequenceNumber: (segment.video?.id).flatMap { numberMap[$0]?[segment.id] } ?? 0,
+                            sequenceNumber: numMap[segment.id] ?? 0,
                             viewModel: viewModel
                         )
                         .equatable()
@@ -509,6 +579,8 @@ struct SegmentCard: View, Equatable {
             && lhs.segment.maskY == rhs.segment.maskY
             && lhs.segment.maskWidth == rhs.segment.maskWidth
             && lhs.segment.maskHeight == rhs.segment.maskHeight
+            && lhs.segment.video?.status == rhs.segment.video?.status   // 自建分镜处理态变化需重绘占位卡
+            && lhs.segment.thumbnailPath == rhs.segment.thumbnailPath   // 调开始边界后缩略图换路径需重绘
     }
 
     var body: some View {
@@ -556,6 +628,21 @@ struct SegmentCard: View, Equatable {
                         isSelected ? Color.accentColor.opacity(0.5) : .white.opacity(0.04),
                         lineWidth: isChecked ? 2 : 1)
         )
+        .overlay {
+            // 自建分镜处理态占位：识别中 → 打标中（就绪/失败则不显示）
+            if segment.video?.isUserUploaded == true,
+               let st = segment.video?.status, st != .completed, st != .failed {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(.black.opacity(0.38))
+                    .overlay {
+                        VStack(spacing: 8) {
+                            ProgressView().controlSize(.small).tint(.white)
+                            Text(st == .analyzing ? "打标中…" : "识别中…")
+                                .font(.system(size: 11)).foregroundStyle(.white)
+                        }
+                    }
+            }
+        }
         .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
@@ -592,6 +679,17 @@ struct SegmentCard: View, Equatable {
                 viewModel.shotEditRequestSegment = segment
             } label: {
                 Label("分镜头替换", systemImage: "wand.and.stars")
+            }
+
+            Button {
+                if segment.schemeSegments.isEmpty {
+                    viewModel.splitRequestSegment = segment
+                } else {
+                    ToastCenter.shared.show("该分镜已被 \(segment.schemeSegments.count) 个方案组合使用，请先在方案里移除对它的使用，再来拆分",
+                                            icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
+                }
+            } label: {
+                Label("拆分分镜", systemImage: "scissors")
             }
 
             if segment.replacedPictureVideoPath != nil {
