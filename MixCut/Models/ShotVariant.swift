@@ -7,7 +7,8 @@ enum ShotVariantStatus: String, Codable, CaseIterable {
     case uploading    // 正在准备/上传输入
     case generating   // DashScope 任务生成中
     case completed     // 生成完成，结果已落地
-    case failed       // 失败
+    case timedOut     // 本地轮询到点仍无结果，任务可能仍在云端跑（带 taskId，可「重试」只查旧任务）
+    case failed       // 失败（提交阶段失败=无 taskId 可重提；阿里 FAILED/过期=有 taskId 需重新生成）
 }
 
 /// 一个分镜头的一次 AI 提示词编辑产物（可多条）。

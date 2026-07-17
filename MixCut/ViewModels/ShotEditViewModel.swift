@@ -200,16 +200,12 @@ final class ShotEditViewModel {
 
     // MARK: - 生成变体
 
+    /// 首次生成：新建占位变体 → 提交拿 taskId 立即落库 → 轮询到终局。
     func generateVariant(shot: PhysicalShot, prompt: String, segment: Segment, modelContext: ModelContext) async {
         errorMessage = nil
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { errorMessage = "请输入提示词"; return }
-        guard let video = segment.video, video.fps > 0, let hash = video.contentHash else {
-            errorMessage = "缺少视频信息，无法生成"; return
-        }
-        guard isEditable(shot, fps: video.fps) else {
-            errorMessage = ineligibleReason(shot, fps: video.fps) ?? "该分镜头不可编辑"; return
-        }
+        guard let (video, hash) = validatedVideo(shot: shot, segment: segment) else { return }
 
         let variant = ShotVariant(prompt: trimmed)
         variant.status = .generating
@@ -217,13 +213,70 @@ final class ShotEditViewModel {
         modelContext.insert(variant)
         try? modelContext.save()
 
+        await runGenerate(variant: variant, shot: shot, video: video, hash: hash,
+                          prompt: trimmed, modelContext: modelContext)
+    }
+
+    /// 重新生成：复用同一个占位记录，发起**一次新任务**（会产生新 taskId、会计费）。
+    /// 用于「提交阶段失败(无 taskId，之前没扣费)」与「阿里 FAILED / 结果过期(有 taskId 但旧结果拿不回)」。
+    func regenerate(_ variant: ShotVariant, shot: PhysicalShot, segment: Segment, modelContext: ModelContext) async {
+        errorMessage = nil
+        guard !busyVariantIDs.contains(variant.id) else { return }
+        guard let (video, hash) = validatedVideo(shot: shot, segment: segment) else { return }
+
+        // 清掉旧任务痕迹：旧 taskId 已废（失败/过期），新任务从头来
+        variant.taskId = nil
+        variant.friendlyError = nil
+        variant.status = .generating
+        try? modelContext.save()
+
+        await runGenerate(variant: variant, shot: shot, video: video, hash: hash,
+                          prompt: variant.prompt, modelContext: modelContext)
+    }
+
+    /// 超时重试：**只用已有 taskId 查旧任务**，绝不重新提交、不扣费。
+    /// 查到仍在跑 → 自动续查到本轮上限；查到成功 → 直接下载落地。
+    func retryFetch(_ variant: ShotVariant, shot: PhysicalShot, segment: Segment, modelContext: ModelContext) async {
+        errorMessage = nil
+        guard !busyVariantIDs.contains(variant.id) else { return }
+        guard let taskId = variant.taskId, !taskId.isEmpty else {
+            // 理论不该发生（timedOut 一定有 taskId）；兜底提示
+            errorMessage = "该占位缺少任务号，无法查询，请重新生成"; return
+        }
+        guard let (video, hash) = validatedVideo(shot: shot, segment: segment) else { return }
+
+        let vid = variant.id
+        variant.status = .generating          // 展示「云端生成中」并自动续查
+        try? modelContext.save()
+        busyVariantIDs.insert(vid)
+        progress[vid] = "生成中"
+        defer { busyVariantIDs.remove(vid); progress[vid] = nil }
+
+        do {
+            let outcome = try await variantService.resume(
+                taskId: taskId, videoHash: hash, shotId: shot.id, variantId: vid,
+                onStatus: { [weak self] s in Task { @MainActor in self?.progress[vid] = s } }
+            )
+            apply(outcome, to: variant, modelContext: modelContext)
+        } catch {
+            // 网络抖动等：保持「已超时」，让用户可再次重试（taskId 仍在）
+            variant.status = .timedOut
+            try? modelContext.save()
+            errorMessage = "查询任务失败：\(APIErrorClassifier.friendly(error))"
+        }
+    }
+
+    // MARK: - 生成/重生成公共流程
+
+    private func runGenerate(variant: ShotVariant, shot: PhysicalShot,
+                             video: Video, hash: String, prompt: String, modelContext: ModelContext) async {
         let vid = variant.id
         busyVariantIDs.insert(vid)
         progress[vid] = "生成中"
         defer { busyVariantIDs.remove(vid); progress[vid] = nil }
 
         do {
-            let result = try await variantService.generate(
+            let outcome = try await variantService.generate(
                 sourceVideoPath: video.localPath,
                 videoHash: hash,
                 shotId: shot.id,
@@ -231,19 +284,62 @@ final class ShotEditViewModel {
                 startFrame: shot.startFrame,
                 endFrame: shot.endFrame,
                 fps: video.fps,
-                prompt: trimmed,
+                prompt: prompt,
+                // 提交成功即落库 taskId（此后超时/崩溃/退出都不丢，可凭它查回结果）
+                onTaskCreated: { [weak self] tid in Task { @MainActor in self?.persistTaskID(tid, variantID: vid, modelContext: modelContext) } },
                 onStatus: { [weak self] s in Task { @MainActor in self?.progress[vid] = s } }
             )
-            variant.resultVideoPath = result.resultVideoPath
-            variant.thumbnailPath = result.thumbnailPath
-            variant.status = .completed
-            try? modelContext.save()
+            apply(outcome, to: variant, modelContext: modelContext)
         } catch {
+            // 只有**提交阶段失败**（切片/提交 HTTP/缺 key）才会到这里：无 taskId、没扣费，可重试(=重新提交)
             variant.status = .failed
-            variant.friendlyError = APIErrorClassifier.friendly(error)
+            variant.friendlyError = "提交失败：\(APIErrorClassifier.friendly(error))"
             try? modelContext.save()
             errorMessage = variant.friendlyError
         }
+    }
+
+    /// 落库 taskId（提交成功即调用）。按 id 在当前 shots 中定位变体，避免跨隔离捕获 @Model。
+    private func persistTaskID(_ taskId: String, variantID: UUID, modelContext: ModelContext) {
+        for s in shots {
+            if let v = s.variants.first(where: { $0.id == variantID }) {
+                v.taskId = taskId
+                try? modelContext.save()
+                return
+            }
+        }
+    }
+
+    /// 把轮询终局落到变体状态 + 文案。
+    private func apply(_ outcome: ShotVariantService.Outcome, to variant: ShotVariant, modelContext: ModelContext) {
+        switch outcome {
+        case .completed(let r):
+            variant.resultVideoPath = r.resultVideoPath
+            variant.thumbnailPath = r.thumbnailPath
+            variant.status = .completed
+            variant.friendlyError = nil
+        case .timedOut:
+            variant.status = .timedOut
+            variant.friendlyError = "本地等待已超过 20 分钟，任务可能仍在云端生成。点「重试」重新获取结果，不会重复扣费。"
+        case .failed(let reason):
+            variant.status = .failed
+            variant.friendlyError = "生成失败：\(reason)"
+        case .expired:
+            variant.status = .failed
+            variant.friendlyError = "云端结果已过期（阿里仅保留 24 小时），需重新生成（会重新计费）。"
+        }
+        try? modelContext.save()
+    }
+
+    /// 校验并取出可用的 video + hash；缺信息/不可编辑时置 errorMessage 并返回 nil。
+    private func validatedVideo(shot: PhysicalShot, segment: Segment) -> (Video, String)? {
+        guard let video = segment.video, video.fps > 0, let hash = video.contentHash else {
+            errorMessage = "缺少视频信息，无法生成"; return nil
+        }
+        guard isEditable(shot, fps: video.fps) else {
+            errorMessage = ineligibleReason(shot, fps: video.fps) ?? "该分镜头不可编辑"; return nil
+        }
+        return (video, hash)
     }
 
     /// 删除一个变体（连带落盘文件）

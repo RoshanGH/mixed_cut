@@ -6,21 +6,29 @@ import Foundation
 /// → 轮询 `GET /tasks/{id}` 看 `output.task_status` → SUCCEEDED 取 `output.video_url`（24h 过期）。
 /// `media` 支持 Base64 内联（`data:video/mp4;base64,...`），无需 OSS 上传。
 /// 鉴权复用千问 DashScope key（`api_key_qwen`）。
+///
+/// 设计要点（防重复扣费）：提交与轮询**拆成两个独立方法**。调用方拿到 `submit()` 返回的
+/// taskId 后必须**立即落库**；此后任何「重试」都只用 taskId 走 `poll()` 查旧任务结果，
+/// 绝不重复提交（阿里按任务成功计费，重复提交 = 重复扣费）。
 actor Wan25VideoEditClient {
     enum ClientError: LocalizedError {
         case missingAPIKey
         case badResponse(String)
-        case taskFailed(String)
-        case timeout
 
         var errorDescription: String? {
             switch self {
             case .missingAPIKey: return "未配置千问(DashScope) API Key，请在设置中填写"
             case .badResponse(let s): return "接口返回异常：\(s)"
-            case .taskFailed(let s): return "生成失败：\(s)"
-            case .timeout: return "生成超时（超过 10 分钟）"
             }
         }
+    }
+
+    /// 单次轮询的结果（对应 DashScope `task_status`）。
+    enum PollOutcome: Sendable {
+        case succeeded(URL)      // SUCCEEDED，带结果视频地址
+        case running             // PENDING / RUNNING，仍在跑
+        case failed(String)      // FAILED / CANCELED，带原因
+        case expired             // UNKNOWN：任务不存在/已过期(超24h)/非本账户
     }
 
     private static let submitURL = URL(string: "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis")!
@@ -30,25 +38,19 @@ actor Wan25VideoEditClient {
     private static let model = "wan2.7-videoedit"
 
     private let apiKeyProvider: @Sendable () -> String?
-    private let pollInterval: UInt64
-    private let maxPolls: Int
 
-    init(apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.getAPIKey(for: .qwen) },
-         pollIntervalSeconds: UInt64 = 15,
-         maxPolls: Int = 40) {
+    init(apiKeyProvider: @escaping @Sendable () -> String? = { KeychainHelper.getAPIKey(for: .qwen) }) {
         self.apiKeyProvider = apiKeyProvider
-        self.pollInterval = pollIntervalSeconds * 1_000_000_000
-        self.maxPolls = maxPolls
     }
 
-    /// 提交一段视频 + 提示词做局部编辑，返回结果视频 URL（调用方负责下载）。
+    // MARK: - 提交（异步任务）
+
+    /// 提交一段视频 + 提示词做局部编辑，**返回 taskId**（不等待结果）。
+    /// 调用方拿到 taskId 后应立即落库，再用 `poll(taskId:)` 轮询。
     /// - Parameter videoFileURL: 本地分镜头切片（mp4），内部转 Base64 内联。
-    func edit(videoFileURL: URL,
-              prompt: String,
-              onStatus: @Sendable (String) -> Void = { _ in }) async throws -> URL {
+    func submit(videoFileURL: URL, prompt: String) async throws -> String {
         guard let key = apiKeyProvider(), !key.isEmpty else { throw ClientError.missingAPIKey }
 
-        // 1) 组请求体（Base64 内联 media）
         let data = try Data(contentsOf: videoFileURL)
         let b64 = data.base64EncodedString()
         let body: [String: Any] = [
@@ -77,29 +79,34 @@ actor Wan25VideoEditClient {
 
         let (respData, resp) = try await URLSession.shared.data(for: req)
         try Self.assertHTTPOK(resp, respData)
-        let taskId = try Self.parseTaskId(respData)
-        onStatus("生成中")
+        return try Self.parseTaskId(respData)
+    }
 
-        // 2) 轮询
-        for _ in 0..<maxPolls {
-            try Task.checkCancellation()
-            try await Task.sleep(nanoseconds: pollInterval)
-            var qreq = URLRequest(url: Self.taskURL(taskId))
-            qreq.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-            let (qdata, qresp) = try await URLSession.shared.data(for: qreq)
-            try Self.assertHTTPOK(qresp, qdata)
-            let (status, videoURL, msg) = try Self.parseTaskStatus(qdata)
-            switch status {
-            case "SUCCEEDED":
-                guard let u = videoURL else { throw ClientError.badResponse("成功但无 video_url") }
-                return Self.upgradedToHTTPS(u)
-            case "FAILED":
-                throw ClientError.taskFailed(msg ?? "task failed")
-            default:
-                onStatus("生成中")   // PENDING / RUNNING
-            }
+    // MARK: - 轮询（查一次）
+
+    /// 查询一次任务状态。**只读、幂等、不产生费用**，可安全重复调用。
+    func poll(taskId: String) async throws -> PollOutcome {
+        guard let key = apiKeyProvider(), !key.isEmpty else { throw ClientError.missingAPIKey }
+        var qreq = URLRequest(url: Self.taskURL(taskId))
+        qreq.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        let (qdata, qresp) = try await URLSession.shared.data(for: qreq)
+        try Self.assertHTTPOK(qresp, qdata)
+
+        let (status, videoURL, msg) = try Self.parseTaskStatus(qdata)
+        switch status {
+        case "SUCCEEDED":
+            guard let u = videoURL else { return .failed("任务成功但未返回结果视频地址") }
+            return .succeeded(Self.upgradedToHTTPS(u))
+        case "FAILED":
+            return .failed(msg ?? "task failed")
+        case "CANCELED":
+            return .failed(msg ?? "任务已取消")
+        case "UNKNOWN":
+            // 实测：不存在/过期(超24h)/非本账户的 taskId → HTTP 200 + task_status=UNKNOWN
+            return .expired
+        default:
+            return .running   // PENDING / RUNNING / 其它未知中间态
         }
-        throw ClientError.timeout
     }
 
     // MARK: - 解析

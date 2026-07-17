@@ -245,6 +245,8 @@ struct ShotVariantPicker: View {
     @Binding var promptText: String
     @Environment(\.modelContext) private var modelContext
 
+    @State private var confirmRegen: ShotVariant?   // 待二次确认「重新生成(会计费)」的变体
+
     private var fps: Double { segment.video?.fps ?? 30 }
     private var editable: Bool { vm.isEditable(shot, fps: fps) }
 
@@ -260,6 +262,19 @@ struct ShotVariantPicker: View {
                     }
                 }
                 .padding(.horizontal, 2)
+            }
+            .confirmationDialog(
+                "重新生成会发起一次新任务并按次计费，确定吗？",
+                isPresented: Binding(get: { confirmRegen != nil },
+                                     set: { if !$0 { confirmRegen = nil } }),
+                presenting: confirmRegen
+            ) { v in
+                Button("重新生成（计费）", role: .destructive) {
+                    Task { await vm.regenerate(v, shot: shot, segment: segment, modelContext: modelContext) }
+                }
+                Button("取消", role: .cancel) {}
+            } message: { v in
+                Text(v.friendlyError ?? "旧任务结果已无法获取，需要重新发起。")
             }
 
             Divider().padding(.vertical, 4)
@@ -315,20 +330,7 @@ struct ShotVariantPicker: View {
                         endTime: Double(shot.frameCount) / fps, fps: fps,
                         thumbnailPath: v.thumbnailPath, playID: v.id, playingID: $vm.playingID)
                 } else {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.85))
-                        if busy || v.status == .generating {
-                            VStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text(vm.progress[v.id] ?? "生成中").font(.caption2).foregroundStyle(.white.opacity(0.8))
-                            }
-                        } else if v.status == .failed {
-                            VStack(spacing: 4) {
-                                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                                Text("失败").font(.caption2).foregroundStyle(.white.opacity(0.8))
-                            }
-                        }
-                    }
+                    variantPlaceholder(v, busy: busy)
                 }
             }
             .frame(width: 90, height: 160)
@@ -342,6 +344,65 @@ struct ShotVariantPicker: View {
             if v.status == .completed {
                 Text(String(format: "%.1fs", Double(shot.frameCount) / fps) + " · 同原长")
                     .font(.caption2).foregroundStyle(.green)
+            }
+            variantActions(v, busy: busy)
+        }
+    }
+
+    /// 占位画面：生成中(转圈) / 已超时(琥珀感叹号) / 已失败(红感叹号)。感叹号 hover 出具体信息。
+    @ViewBuilder
+    private func variantPlaceholder(_ v: ShotVariant, busy: Bool) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.85))
+            if busy || v.status == .generating {
+                VStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(vm.progress[v.id] ?? "生成中").font(.caption2).foregroundStyle(.white.opacity(0.8))
+                }
+            } else if v.status == .timedOut {
+                VStack(spacing: 4) {
+                    Image(systemName: "clock.badge.exclamationmark.fill").foregroundStyle(.yellow)
+                    Text("已超时").font(.caption2).foregroundStyle(.white.opacity(0.85))
+                }
+                .help(v.friendlyError ?? "本地等待超时，任务可能仍在云端生成，点「重试」重新获取结果，不会重复扣费。")
+            } else if v.status == .failed {
+                VStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+                    Text("失败").font(.caption2).foregroundStyle(.white.opacity(0.85))
+                }
+                .help(v.friendlyError ?? "生成失败")
+            }
+        }
+    }
+
+    /// 卡片底部操作：按状态给「重试(查旧任务) / 重新生成(计费) / 无」+ 删除。
+    @ViewBuilder
+    private func variantActions(_ v: ShotVariant, busy: Bool) -> some View {
+        HStack(spacing: 6) {
+            switch v.status {
+            case .timedOut:
+                // 超时：只查旧任务，安全不扣费
+                Button("重试") {
+                    Task { await vm.retryFetch(v, shot: shot, segment: segment, modelContext: modelContext) }
+                }
+                .buttonStyle(.bordered).controlSize(.mini).disabled(busy)
+                .help("重新获取这次任务的结果，不会重复扣费")
+            case .failed:
+                if v.taskId == nil {
+                    // 提交阶段就失败：从没扣过费，重试=重新提交，无风险
+                    Button("重试") {
+                        Task { await vm.regenerate(v, shot: shot, segment: segment, modelContext: modelContext) }
+                    }
+                    .buttonStyle(.bordered).controlSize(.mini).disabled(busy)
+                    .help("上次没提交成功、未扣费，点此重新发起")
+                } else {
+                    // 阿里 FAILED / 结果过期：旧结果拿不回，只能新任务，会计费 → 二次确认
+                    Button("重新生成") { confirmRegen = v }
+                        .buttonStyle(.bordered).controlSize(.mini).disabled(busy)
+                        .help("旧任务结果已失效，将发起一次新任务并按次计费")
+                }
+            default:
+                EmptyView()
             }
             Button(role: .destructive) {
                 vm.deleteVariant(v, modelContext: modelContext)

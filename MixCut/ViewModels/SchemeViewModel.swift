@@ -159,6 +159,10 @@ final class SchemeViewModel {
         errorMessage = nil
         project.status = .generating
 
+        // 记录已成功落库的策略数：一旦 >0，即便后续步骤抛错，也说明「部分方案已存盘」，
+        // 不能在 catch 里当成彻底失败把它们藏起来（对齐 Windows 侧「已生成却误报失败」的加固）。
+        var persistedStrategyCount = 0
+
         do {
             let allSegments = project.videos.flatMap(\.segments)
             guard !allSegments.isEmpty else {
@@ -271,6 +275,7 @@ final class SchemeViewModel {
                 }
 
                 try context.save()
+                persistedStrategyCount += 1
                 MixLog.info(" 策略「\(strategyResult.name)」: \(compositions.count) 个方案")
             }
 
@@ -282,9 +287,21 @@ final class SchemeViewModel {
             generationProgress = "生成完成：\(strategies.count) 个策略，共 \(schemes.count) 个方案"
             ToastCenter.shared.show("已生成 \(strategies.count) 个策略 · \(schemes.count) 个方案", icon: "sparkles", style: .success)
         } catch {
-            errorMessage = "方案生成失败: \(error.localizedDescription)\n(\(String(describing: error).prefix(300)))"
-            project.status = .ready
-            context.safeSave()
+            // 已有策略成功落库 → 这是「部分成功后中断」，不能误报为彻底失败、也不能把已存盘的方案藏起来。
+            if persistedStrategyCount > 0 {
+                project.status = .completed
+                project.updatedAt = Date()
+                context.safeSave()
+                loadSchemes(for: project)
+                errorMessage = nil
+                MixLog.info(" 方案已部分落库(\(persistedStrategyCount) 个策略)，但生成中途中断: \(error)")
+                ToastCenter.shared.show("已生成 \(schemes.count) 个方案，但生成中途中断：\(error.localizedDescription)",
+                                        icon: "exclamationmark.triangle.fill", style: .warning, duration: 4)
+            } else {
+                errorMessage = "方案生成失败: \(error.localizedDescription)\n(\(String(describing: error).prefix(300)))"
+                project.status = .ready
+                context.safeSave()
+            }
         }
 
         isGenerating = false
