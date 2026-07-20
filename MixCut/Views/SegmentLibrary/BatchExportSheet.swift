@@ -25,6 +25,8 @@ struct BatchExportSheet: View {
     @State private var jobs: [VariantExportJob] = []
     /// 缺源视频、无法导出的分镜编号
     @State private var skippedNumbers: [Int] = []
+    /// 输出目录不可用时的说明（不可写 / 不存在）
+    @State private var directoryProblem: String?
 
     private var variantFileCount: Int {
         jobs.reduce(0) { acc, job in
@@ -126,6 +128,21 @@ struct BatchExportSheet: View {
                 .padding(8)
                 .background(.quaternary.opacity(DesignTokens.Palette.Alpha.medium))
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+
+            if let directoryProblem {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DesignTokens.Palette.Status.warning)
+                    Text(directoryProblem)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .font(DesignTokens.Typography.caption)
+                .padding(DesignTokens.Spacing.compact)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesignTokens.Palette.Status.warning.opacity(0.1),
+                            in: RoundedRectangle(cornerRadius: DesignTokens.Corner.small, style: .continuous))
             }
 
             // 被跳过的分镜必须说清楚，否则"选了 20 个却只导出 18 个"用户完全无从察觉
@@ -291,9 +308,15 @@ struct BatchExportSheet: View {
         if !lastDirPath.isEmpty {
             panel.directoryURL = URL(fileURLWithPath: lastDirPath)
         }
-        if panel.runModal() == .OK {
-            outputDirectory = panel.url
-            lastDirPath = panel.url?.path ?? ""
+        if panel.runModal() == .OK, let url = panel.url {
+            // 选目录的当下就校验，别等每条 ffmpeg 都跑完才逐条报同一个错
+            if let problem = ExportDestination.validate(directory: url) {
+                directoryProblem = problem
+                return
+            }
+            directoryProblem = nil
+            outputDirectory = url
+            lastDirPath = url.path
         }
     }
 

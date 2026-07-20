@@ -258,6 +258,40 @@ actor ExportService {
     }
 }
 
+/// 导出目标目录的预检。
+///
+/// 不做预检的话，目录不可写或磁盘不够时，每条视频都要完整跑一遍 ffmpeg 才失败，
+/// 20 条任务全跑完才在结果页列出 20 条同样的错误 —— 既浪费几十分钟，
+/// 报错也淹没在一堆重复条目里。选目录的当下就该说清楚。
+enum ExportDestination {
+
+    /// 校验目录可用；有问题返回**人话说明**，没问题返回 nil。
+    /// - Parameter estimatedBytes: 本次导出预计占用的字节数（可选，传了才做空间检查）。
+    static func validate(directory: URL, estimatedBytes: Int64? = nil) -> String? {
+        let fm = FileManager.default
+
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: directory.path, isDirectory: &isDir), isDir.boolValue else {
+            return "选择的位置不存在或不是文件夹，请重新选择。"
+        }
+        guard fm.isWritableFile(atPath: directory.path) else {
+            return "没有写入「\(directory.lastPathComponent)」的权限。请换一个目录（例如「桌面」或「下载」），或在「系统设置 → 隐私与安全性 → 文件与文件夹」里授予 MixCut 访问权限。"
+        }
+
+        if let estimatedBytes, estimatedBytes > 0 {
+            let available = (try? directory.resourceValues(
+                forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+            ).volumeAvailableCapacityForImportantUsage) ?? nil
+            if let available, available < estimatedBytes {
+                let need = ByteCountFormatter.string(fromByteCount: estimatedBytes, countStyle: .file)
+                let have = ByteCountFormatter.string(fromByteCount: available, countStyle: .file)
+                return "磁盘空间可能不足：本次导出预计需要约 \(need)，该磁盘当前可用 \(have)。请清理磁盘或换一个磁盘上的目录。"
+            }
+        }
+        return nil
+    }
+}
+
 /// 导出错误
 enum ExportError: LocalizedError {
     case noSegments

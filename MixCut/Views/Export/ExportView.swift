@@ -648,6 +648,13 @@ struct ExportView: View {
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
+            // 选目录当下就校验可写性：否则每条视频都要完整跑一遍 ffmpeg 才失败，
+            // 全部跑完才在结果页列出一堆同样的错误，白白浪费几十分钟。
+            if let problem = ExportDestination.validate(directory: url) {
+                errorMessage = problem
+                return
+            }
+            errorMessage = nil
 
             // ⚠️ 必须存进 exportTask。`stopExport()` 走的是 `exportTask?.cancel()`，
             // 这条路径以前用的是裸 Task，exportTask 恒为 nil ——
@@ -837,6 +844,13 @@ struct ExportView: View {
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
+            // 选目录当下就校验可写性：否则每条视频都要完整跑一遍 ffmpeg 才失败，
+            // 全部跑完才在结果页列出一堆同样的错误，白白浪费几十分钟。
+            if let problem = ExportDestination.validate(directory: url) {
+                errorMessage = problem
+                return
+            }
+            errorMessage = nil
             exportTask = Task { @MainActor in
                 isExporting = true
                 defer { isExporting = false; exportTask = nil }
