@@ -46,6 +46,19 @@ struct SegmentVariantInspector: View {
     private func dub(textVariant t: Int, voiceId v: String) -> SegmentDub? {
         segment.segmentDubs.first { $0.textVariantIndex == t && $0.voiceId == v }
     }
+
+    /// 用于**展示**某改写版的那条记录。
+    ///
+    /// ⚠️ 必须和导出走同一真源。原先卡片硬绑 `voices.first`（= 当前 clonedVoiceId），
+    /// 而导出走的 `effectiveDubVariants` 并不按 voiceId 过滤。
+    /// 于是换过一次 API Key 触发重克隆后：老变体的 voiceId 还是旧的 →
+    /// 检查器里台词显示「（无文本）」、音色格显示「—」，看着像空的、也没法试听，
+    /// **但导出时它照样会被用上** —— 所见与所得完全对不上。
+    private func displayDub(_ t: Int) -> SegmentDub? {
+        effectiveDub(t)
+            ?? dub(textVariant: t, voiceId: voices.first ?? "")
+            ?? segment.segmentDubs.first { $0.textVariantIndex == t }
+    }
     /// 该改写版参与组合用的"有效变体"（已生成音频、去重后那条）
     private func effectiveDub(_ t: Int) -> SegmentDub? {
         segment.effectiveDubVariants.first { $0.textVariantIndex == t }
@@ -232,7 +245,7 @@ struct SegmentVariantInspector: View {
     // MARK: - 单个改写版卡片
 
     private func versionCard(_ t: Int) -> some View {
-        let text = dub(textVariant: t, voiceId: voices.first ?? "")?.rewrittenText ?? ""
+        let text = displayDub(t)?.rewrittenText ?? ""
         let editing = editingVariant == t
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
@@ -353,7 +366,7 @@ struct SegmentVariantInspector: View {
     /// 台词多但仍被 atempo 加速塞进画面属正常，不报「超时」。
     @ViewBuilder
     private func variantAudioWarning(_ t: Int) -> some View {
-        if let d = dub(textVariant: t, voiceId: voices.first ?? ""),
+        if let d = displayDub(t),
            d.audioFilePath != nil, d.audioDuration > 0 {
             let target = segment.duration
             let count = d.rewrittenText.count
