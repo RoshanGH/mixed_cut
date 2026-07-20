@@ -49,8 +49,32 @@ final class DubbingViewModel {
         guard let id = videoID else { return "" }
         return videoProgress[id] ?? ""
     }
-    private func beginBusy(_ id: UUID?) { if let id { busyVideoIDs.insert(id) } }
-    private func endBusy(_ id: UUID?) { if let id { busyVideoIDs.remove(id); videoProgress[id] = nil } }
+    /// 忙碌**引用计数**。
+    ///
+    /// ⚠️ 不能只用 `busyVideoIDs` 这个 Set：同一视频上可能有两个任务并行
+    /// （例如整视频批量改写正在跑，同时用户在检查器里保存了某一版台词）。
+    /// 先结束的那个会把 id 从 Set 里移除，UI 于是认为已空闲、重新显示
+    /// 「重新改写本分镜」「手动添加一版」等按钮，用户可以再次触发付费链路，
+    /// 而前一个任务其实还在跑。改为计数，归零才真正解除忙碌。
+    private var busyRefCount: [UUID: Int] = [:]
+
+    private func beginBusy(_ id: UUID?) {
+        guard let id else { return }
+        busyRefCount[id, default: 0] += 1
+        busyVideoIDs.insert(id)
+    }
+
+    private func endBusy(_ id: UUID?) {
+        guard let id else { return }
+        let remaining = (busyRefCount[id] ?? 1) - 1
+        if remaining <= 0 {
+            busyRefCount[id] = nil
+            busyVideoIDs.remove(id)
+            videoProgress[id] = nil
+        } else {
+            busyRefCount[id] = remaining
+        }
+    }
     private func setProgress(_ id: UUID?, _ text: String) { if let id { videoProgress[id] = text } }
 
     private let rewriteService = ScriptRewriteService()

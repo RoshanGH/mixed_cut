@@ -13,6 +13,25 @@ struct SegmentVariantInspector: View {
     @State private var captionEditDub: SegmentDub? = nil
     @FocusState private var editorFocused: Bool
 
+    /// 本检查器发起的、仍在跑的付费任务（AI 改写 / TTS 合成）。
+    ///
+    /// ⚠️ DubbingViewModel 里写了 `Task.isCancelled` 检查（注释写明是为了「用户关掉界面就停手，
+    /// 不烧配额」），但这些任务原先是裸 `Task {}`，句柄一丢就**没有任何地方能 cancel 它们** ——
+    /// 那些检查全是死代码，用户切走后 API 照样跑完、照样计费。
+    @State private var runningTasks: [Task<Void, Never>] = []
+
+    /// 发起一个可被取消的付费任务
+    private func runCancellable(_ work: @escaping () async -> Void) {
+        let task = Task { await work() }
+        runningTasks.append(task)
+    }
+
+    /// 取消并清空所有在跑的任务（切分镜 / 关闭检查器时调用）
+    private func cancelRunningTasks() {
+        for task in runningTasks { task.cancel() }
+        runningTasks.removeAll()
+    }
+
     private func variantLetter(_ t: Int) -> String { String(Character(UnicodeScalar(65 + t)!)) }
 
     private var voices: [String] { segment.video?.selectedVoiceIds ?? [] }
@@ -65,6 +84,10 @@ struct SegmentVariantInspector: View {
         }
         .frame(width: 340)
         .background(Color(nsColor: .windowBackgroundColor))
+        // 换分镜 / 关掉检查器 → 取消还没跑完的付费任务，别继续烧配额。
+        // 已经跑到一半的 API 调用无法退款，但至少不会把后续步骤（多套改写 + 多段 TTS）全部做完。
+        .onChange(of: segment.id) { cancelRunningTasks() }
+        .onDisappear { cancelRunningTasks() }
         .sheet(item: $captionEditDub) { d in
             CaptionTimingEditorSheet(dub: d, dubVM: dubVM)
         }
@@ -189,7 +212,7 @@ struct SegmentVariantInspector: View {
                 }
             } else {
                 Button {
-                    Task { await dubVM.rewriteSegment(segment, context: modelContext) }
+                    runCancellable { await dubVM.rewriteSegment(segment, context: modelContext) }
                 } label: {
                     Label("重新改写本分镜", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption.weight(.medium))
@@ -377,7 +400,7 @@ struct SegmentVariantInspector: View {
                 generatedControls(d)
             } else if let d {
                 Button {
-                    Task { await dubVM.generateAudio(for: d, context: modelContext) }
+                    runCancellable { await dubVM.generateAudio(for: d, context: modelContext) }
                 } label: {
                     Label("生成", systemImage: "waveform").font(.caption2)
                 }
@@ -414,7 +437,7 @@ struct SegmentVariantInspector: View {
                 .help(playing ? "停止" : "试听这条配音")
 
                 Button {
-                    Task { await dubVM.generateAudio(for: d, context: modelContext) }
+                    runCancellable { await dubVM.generateAudio(for: d, context: modelContext) }
                 } label: {
                     Image(systemName: stale ? "exclamationmark.arrow.circlepath" : "arrow.clockwise")
                         .font(.caption)

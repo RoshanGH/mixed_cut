@@ -122,6 +122,10 @@ actor VariantBatchExportService {
         let total = jobs.count
 
         for (idx, job) in jobs.enumerated() {
+            // 取消检查放在**每个任务开始前**。原先只在任务跑完后检查，
+            // 用户点了取消还要再等一整条视频编码完，而且那条被 SIGTERM 打断的还会被记成「失败」。
+            if Task.isCancelled { break }
+
             await onProgress(VariantExportProgress(total: total, completed: idx,
                                                    currentName: job.fileName, failed: failed))
             let outURL = Self.uniqueDestination(directory: outputDirectory,
@@ -137,10 +141,19 @@ actor VariantBatchExportService {
                 }
                 succeeded += 1
             } catch {
-                failed.append((job.fileName, error.localizedDescription))
+                // ⚠️ 必须删掉半成品。取消时 ffmpeg 收到 SIGTERM 会优雅收尾、把 moov atom 写完，
+                // 于是用户目录里留下一个**双击能正常播放、但内容只有一半**的 mp4 ——
+                // 看不出异常，直到发出去才发现播一半就断了。
+                // outURL 由 uniqueDestination 生成，必然是本次导出新建的文件，删除是安全的。
+                try? FileManager.default.removeItem(at: outURL)
+
+                if Task.isCancelled {
+                    MixLog.info("[BatchExport] 已取消，清理半成品：\(outURL.lastPathComponent)")
+                    break   // 用户主动取消，不计为失败
+                }
+                failed.append((job.fileName, FriendlyError.reason(for: error)))
                 MixLog.error("变体导出失败 \(job.fileName): \(error)")
             }
-            if Task.isCancelled { break }
         }
 
         await onProgress(VariantExportProgress(total: total, completed: succeeded + failed.count,
