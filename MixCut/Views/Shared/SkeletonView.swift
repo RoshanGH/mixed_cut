@@ -12,7 +12,7 @@ struct SkeletonView: View {
     @State private var shimmer: CGFloat = -1
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.spacious) {
             switch layout {
             case .projectOverview:
                 projectOverviewSkeleton
@@ -39,9 +39,10 @@ struct SkeletonView: View {
             .padding(.bottom, 8)
 
         // 统计卡片
-        HStack(spacing: 12) {
+        HStack(spacing: DesignTokens.Spacing.normal) {
             ForEach(0..<3, id: \.self) { _ in
-                shimmerBlock(height: 92)
+                // 与重设计后的 StatCard 实际高度对齐，避免加载完成时整页跳动
+                shimmerBlock(height: 76)
             }
         }
 
@@ -49,9 +50,10 @@ struct SkeletonView: View {
             .padding(.top, 8)
 
         // 视频卡片
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 250))], spacing: 12) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 200, maximum: 250))], spacing: DesignTokens.Spacing.normal) {
             ForEach(0..<3, id: \.self) { _ in
-                shimmerBlock(height: 180)
+                // 真实卡片 = 9:16 缩略图 + 文件名 + 元信息；骨架必须同高，否则加载完成时布局大幅位移
+                shimmerBlock(height: DesignTokens.Size.videoHeight(forWidth: 225) + 44)
             }
         }
     }
@@ -63,7 +65,7 @@ struct SkeletonView: View {
         bar(width: 100, height: 12)
             .padding(.top, 8)
         // 视频卡片
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 380, maximum: 440))], spacing: 16) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 380, maximum: 440))], spacing: DesignTokens.Spacing.comfortable) {
             ForEach(0..<2, id: \.self) { _ in
                 shimmerBlock(height: 220)
             }
@@ -73,7 +75,7 @@ struct SkeletonView: View {
     @ViewBuilder
     private var segmentLibrarySkeleton: some View {
         // 工具栏
-        HStack(spacing: 12) {
+        HStack(spacing: DesignTokens.Spacing.normal) {
             shimmerBlock(height: 32).frame(width: 220)
             shimmerBlock(height: 32).frame(width: 80)
             shimmerBlock(height: 32).frame(width: 80)
@@ -89,9 +91,10 @@ struct SkeletonView: View {
             }
         }
         // 网格
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 360, maximum: 460))], spacing: 12) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 360, maximum: 460))], spacing: DesignTokens.Spacing.normal) {
             ForEach(0..<4, id: \.self) { _ in
-                shimmerBlock(height: 160)
+                // 分镜卡实测约 410 高（9:16 播放器 + 标签行 + 字幕控件），原来的 160 会造成明显跳动
+                shimmerBlock(height: 410)
             }
         }
     }
@@ -99,18 +102,18 @@ struct SkeletonView: View {
     // MARK: - 通用占位元素
 
     private func bar(width: CGFloat, height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 4)
+        RoundedRectangle(cornerRadius: 4, style: .continuous)
             .fill(.quaternary.opacity(0.5))
             .frame(width: width, height: height)
-            .overlay(shimmerOverlay.mask(RoundedRectangle(cornerRadius: 4)))
+            .overlay(shimmerOverlay.mask(RoundedRectangle(cornerRadius: 4, style: .continuous)))
     }
 
     private func shimmerBlock(height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 10)
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(.quaternary.opacity(0.4))
             .frame(maxWidth: .infinity)
             .frame(height: height)
-            .overlay(shimmerOverlay.mask(RoundedRectangle(cornerRadius: 10)))
+            .overlay(shimmerOverlay.mask(RoundedRectangle(cornerRadius: 10, style: .continuous)))
     }
 
     private var shimmerOverlay: some View {

@@ -46,6 +46,11 @@ final class Video: Identifiable {
     /// 配音选定音色 id（≤3），JSON 编码
     var selectedVoiceIdsData: Data?
 
+    // MARK: 解码缓存（不持久化，见 Segment.swift 末尾 `DecodedCache` 说明）
+    @Transient private var asrWordsCache = DecodedCache<[ASRWord]>()
+    @Transient private var asrSentencesCache = DecodedCache<[ASRSentence]>()
+    @Transient private var selectedVoiceIdsCache = DecodedCache<[String]>()
+
     /// 配音全局语速（CosyVoice rate，基准 1.0，范围 0.7~1.3）。SwiftData 加字段，默认 1.0。
     var dubSpeechRate: Double = 1.0
 
@@ -93,35 +98,58 @@ final class Video: Identifiable {
     var referenceCount: Int { projectVideos.count }
 
     /// 解码 ASR 字级时间戳
+    ///
+    /// ⚠️ 性能：ASR blob 可达 20KB+，逐句字幕 / 边界对齐等路径会反复访问；做惰性解码缓存。
     var asrWords: [ASRWord] {
         get {
-            guard let data = asrWordsData else { return [] }
-            return (try? JSONDecoder().decode([ASRWord].self, from: data)) ?? []
+            if let cached = asrWordsCache.value { return cached }
+            guard let data = asrWordsData else {
+                asrWordsCache.value = []
+                return []
+            }
+            let decoded = (try? JSONCoding.decoder.decode([ASRWord].self, from: data)) ?? []
+            asrWordsCache.value = decoded
+            return decoded
         }
         set {
-            asrWordsData = try? JSONEncoder().encode(newValue)
+            asrWordsData = try? JSONCoding.encoder.encode(newValue)
+            asrWordsCache.value = newValue
         }
     }
 
     /// 解码 Whisper 原生句子
     var asrSentences: [ASRSentence] {
         get {
-            guard let data = asrSentencesData else { return [] }
-            return (try? JSONDecoder().decode([ASRSentence].self, from: data)) ?? []
+            if let cached = asrSentencesCache.value { return cached }
+            guard let data = asrSentencesData else {
+                asrSentencesCache.value = []
+                return []
+            }
+            let decoded = (try? JSONCoding.decoder.decode([ASRSentence].self, from: data)) ?? []
+            asrSentencesCache.value = decoded
+            return decoded
         }
         set {
-            asrSentencesData = try? JSONEncoder().encode(newValue)
+            asrSentencesData = try? JSONCoding.encoder.encode(newValue)
+            asrSentencesCache.value = newValue
         }
     }
 
     /// 选定的 TTS 音色 id（≤3）
     var selectedVoiceIds: [String] {
         get {
-            guard let data = selectedVoiceIdsData else { return [] }
-            return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+            if let cached = selectedVoiceIdsCache.value { return cached }
+            guard let data = selectedVoiceIdsData else {
+                selectedVoiceIdsCache.value = []
+                return []
+            }
+            let decoded = (try? JSONCoding.decoder.decode([String].self, from: data)) ?? []
+            selectedVoiceIdsCache.value = decoded
+            return decoded
         }
         set {
-            selectedVoiceIdsData = try? JSONEncoder().encode(newValue)
+            selectedVoiceIdsData = try? JSONCoding.encoder.encode(newValue)
+            selectedVoiceIdsCache.value = newValue
         }
     }
 

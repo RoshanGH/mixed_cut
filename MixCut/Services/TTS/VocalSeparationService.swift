@@ -57,13 +57,18 @@ actor VocalSeparationService {
         // 1) 抽整轨音频为 44.1k 立体声 wav（demucs.cpp 输入要求）
         onProgress?("提取原始音频…")
         let inputWav = tmp.appendingPathComponent("sep-in-\(UUID().uuidString).wav")
+        // ⚠️ 中间产物很大（整轨 44.1k 立体声 wav + demucs 4 轨输出，长视频可达数百 MB）。
+        // 原来只在 happy path 末尾清理，中途任何一次 throw / 取消都会把它们永久留在磁盘上。
+        // 用 defer 保证无论从哪条路径退出都清理。
+        defer { try? fm.removeItem(at: inputWav) }
         _ = try await ff.run(arguments: ["-y", "-i", videoPath, "-ac", "2", "-ar", "44100",
-                                         "-c:a", "pcm_s16le", inputWav.path])
+                                         "-c:a", "pcm_s16le", inputWav.path], timeoutSeconds: 600)
 
         // 2) demucs 分离到临时目录（4 stems）
         onProgress?("AI 分离人声与背景音乐（较慢，请稍候）…")
         let outDir = tmp.appendingPathComponent("sep-out-\(UUID().uuidString)", isDirectory: true)
         try fm.createDirectory(at: outDir, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: outDir) }
         MixLog.info("[Sep] 开始 demucs 分离…")
         try await Self.runDemucs(binary: binary, model: model, input: inputWav.path, outDir: outDir.path)
         MixLog.info("[Sep] demucs 分离结束")
@@ -78,14 +83,11 @@ actor VocalSeparationService {
         onProgress?("合成背景音乐轨…")
         _ = try await ff.run(arguments: ["-y", "-i", drums, "-i", bass, "-i", other,
                                          "-filter_complex", "amix=inputs=3:normalize=0",
-                                         "-c:a", "pcm_s16le", bgm.path])
+                                         "-c:a", "pcm_s16le", bgm.path], timeoutSeconds: 600)
         try? fm.removeItem(at: vocals)
         try fm.copyItem(atPath: voc, toPath: vocals.path)
 
-        // 清理临时
-        try? fm.removeItem(at: inputWav)
-        try? fm.removeItem(at: outDir)
-
+        // 临时文件清理由上面的 defer 统一负责（覆盖所有退出路径）
         return SeparatedStems(vocalsPath: vocals.path, bgmPath: bgm.path)
     }
 
@@ -95,7 +97,7 @@ actor VocalSeparationService {
         let ff = FFmpegRunner()
         let out = FileHelper.tempDirectory.appendingPathComponent("clone-ref-\(UUID().uuidString).mp3")
         _ = try await ff.run(arguments: ["-y", "-i", vocalsPath, "-t", String(maxSeconds),
-                                         "-c:a", "libmp3lame", "-b:a", "128k", out.path])
+                                         "-c:a", "libmp3lame", "-b:a", "128k", out.path], timeoutSeconds: 600)
         return out.path
     }
 

@@ -15,6 +15,8 @@ struct DubSegmentSpec: Sendable {
     let freezePadFrames: Int
     let trailingSilence: Double
     let bgmAudioPath: String?      // 配音镜头的 BGM 源（整轨 bgm.wav）；nil = 不混 BGM
+    /// 该分镜自己的字幕字号比例（逐分镜独立，不再读全局设置）
+    let subtitleFontRatio: Double
 }
 
 /// 配音导出输入（整条成片）。
@@ -57,7 +59,8 @@ struct DubExportInput: Sendable {
                     videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
                     fps: fps, captionLines: [], hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
-                    freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil))
+                    freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
+                    subtitleFontRatio: segment.subtitleFontRatio))
             } else if let dub = chosen,
                       let audioPath = dub.audioFilePath,
                       FileManager.default.fileExists(atPath: audioPath) {
@@ -73,7 +76,8 @@ struct DubExportInput: Sendable {
                     fps: fps, captionLines: capLines, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
                     freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
-                    bgmAudioPath: Self.bgmPath(for: video)))
+                    bgmAudioPath: Self.bgmPath(for: video),
+                    subtitleFontRatio: segment.subtitleFontRatio))
             } else {
                 // 非锁定但无已生成配音 → 回退保留原声原字幕，保证导出不中断
                 MixLog.info("分镜 \(segment.segmentIndex) 无已生成配音，回退原声导出")
@@ -83,7 +87,8 @@ struct DubExportInput: Sendable {
                     videoPath: ep.videoPath, startFrame: ep.startFrame, endFrame: ep.endFrame,
                     fps: fps, captionLines: [], hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
-                    freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil))
+                    freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
+                    subtitleFontRatio: segment.subtitleFontRatio))
             }
         }
         guard !specs.isEmpty else { return nil }
@@ -239,10 +244,11 @@ actor DubExportService {
 
         let keepOriginalAudio = spec.isVoiceLocked || spec.dubAudioPath == nil
 
-        // 烧录逐句字幕：标点→空格；字号按成片宽度自适应（全局档位）。锁定段不烧。
+        // 烧录逐句字幕：标点→空格；字号 = 成片宽度 × 该分镜自己的比例。锁定段不烧。
         if !spec.isVoiceLocked, !spec.captionLines.isEmpty {
             let canvasW = max(120, maskPixel.width)      // 字幕画布宽=遮挡区宽（下限 120px 防御逐字竖排）
-            let fontSize = SubtitleFontSize.fontSize(forOutputWidth: outW)
+            // 用**该分镜自己的**字号比例（以前读的是全局设置，界面调了导出却不跟随）
+            let fontSize = max(12, Double(outW) * SubtitleFontSize.clamp(spec.subtitleFontRatio))
             let withBackdrop = (mode != .solid)
             for (li, line) in spec.captionLines.enumerated() {
                 let burnText = CaptionRenderer.stripPunctuation(line.text)

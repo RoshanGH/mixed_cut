@@ -134,6 +134,9 @@ final class SegmentLibraryViewModel {
     /// 给「组合为方案」用：用户期望按勾选顺序拼接，不是按视频+时间排序
     var selectionOrderedIDs: [UUID] = []
 
+    /// 最后一次单独勾选的分镜 —— ⇧+点击做范围多选时的锚点。
+    private var lastToggledID: UUID?
+
     func toggleSelection(_ segment: Segment) {
         if selectedSegmentIDs.contains(segment.id) {
             selectedSegmentIDs.remove(segment.id)
@@ -142,6 +145,33 @@ final class SegmentLibraryViewModel {
             selectedSegmentIDs.insert(segment.id)
             selectionOrderedIDs.append(segment.id)
         }
+        lastToggledID = segment.id
+    }
+
+    /// 界面上分镜的**视觉先后顺序**（按视频分组后拼接）。
+    /// ⚠️ 不能直接用 `filteredSegments` —— 它是筛选/排序后的**扁平**顺序，
+    /// 而界面是按视频分组渲染的，两者不一致会导致 ⇧+点击选到用户看不见的分镜。
+    private var visualOrder: [Segment] {
+        groupedSegments.flatMap(\.segments)
+    }
+
+    /// ⇧+点击：从上次勾选的分镜到当前分镜之间**整段选中**（Finder / 邮件同款手感）。
+    /// 范围按界面上看到的顺序取，所见即所得。没有锚点时退化为普通单选。
+    func extendSelection(to segment: Segment) {
+        let order = visualOrder
+        guard let anchorID = lastToggledID,
+              let anchorIdx = order.firstIndex(where: { $0.id == anchorID }),
+              let targetIdx = order.firstIndex(where: { $0.id == segment.id })
+        else {
+            toggleSelection(segment)
+            return
+        }
+        let range = anchorIdx <= targetIdx ? anchorIdx...targetIdx : targetIdx...anchorIdx
+        for seg in order[range] where !selectedSegmentIDs.contains(seg.id) {
+            selectedSegmentIDs.insert(seg.id)
+            selectionOrderedIDs.append(seg.id)
+        }
+        // 锚点保持不动，便于反复 ⇧+点击调整范围
     }
 
     /// 全选当前筛选后可见的所有分镜（顺序 = 当前 filteredSegments 渲染顺序）
@@ -163,6 +193,13 @@ final class SegmentLibraryViewModel {
     func clearSelection() {
         selectedSegmentIDs.removeAll()
         selectionOrderedIDs.removeAll()
+    }
+
+    /// 一键清除全部筛选条件（供「没有符合条件的分镜」空状态的出口按钮用）。
+    /// 只重置筛选，不动多选状态与已加载数据。
+    func clearFilters() {
+        filter = SegmentFilter()   // 搜索词也在 filter 里，一并重置
+        applyFilter()
     }
 
     /// 进入/退出多选模式（退出时自动清空已选）
@@ -513,8 +550,10 @@ final class SegmentLibraryViewModel {
                 return
             }
             segment.text = trimmed
-            try? context.save()
-            ToastCenter.shared.show("已用阿里 ASR 重提取台词", icon: "checkmark.circle.fill", style: .success)
+            // 保存失败时不能再报"成功"：台词要重新花钱识别一次，用户必须知道没存上
+            if context.saveOrWarn("台词") {
+                ToastCenter.shared.show("已用阿里 ASR 重提取台词", icon: "checkmark.circle.fill", style: .success)
+            }
         } catch {
             ToastCenter.shared.show("重提取失败：\(error.localizedDescription)", icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
         }

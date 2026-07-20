@@ -86,7 +86,7 @@ struct SegmentVariantInspector: View {
     // MARK: - 头部
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
             HStack(spacing: 6) {
                 Image(systemName: "waveform.circle.fill")
                     .font(.title3)
@@ -96,7 +96,7 @@ struct SegmentVariantInspector: View {
             Text("分镜 #\(segment.segmentIndex) · 时长 \(String(format: "%.1f", segment.duration))s")
                 .font(.caption).foregroundStyle(.secondary)
             if !segment.isVoiceLocked {
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.compact) {
                     Toggle(isOn: Binding(
                         get: { segment.originalParticipatesInCombination },
                         set: { segment.originalParticipatesInCombination = $0; try? modelContext.save() }
@@ -141,7 +141,7 @@ struct SegmentVariantInspector: View {
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(20)
+        .padding(DesignTokens.Padding.page)
     }
 
     private var matrix: some View {
@@ -203,7 +203,7 @@ struct SegmentVariantInspector: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     // MARK: - 单个改写版卡片
@@ -237,6 +237,7 @@ struct SegmentVariantInspector: View {
                             Image(systemName: "captions.bubble")
                         }
                         .buttonStyle(.borderless).controlSize(.small)
+                        .accessibilityLabel("编辑字幕时间")
                         .help("逐句字幕时间：让烧录字幕按配音每句实际说到的时间逐句出现")
                     }
                 }
@@ -244,10 +245,10 @@ struct SegmentVariantInspector: View {
                 if editing {
                     Button { editingVariant = nil } label: {
                         Image(systemName: "xmark.circle.fill")
-                    }.buttonStyle(.borderless).foregroundStyle(.secondary).help("取消")
+                    }.buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("取消编辑").help("取消")
                     Button { saveEditedVariant(t) } label: {
                         Image(systemName: "checkmark.circle.fill")
-                    }.buttonStyle(.borderless).foregroundStyle(.green).help("保存并重新生成配音（⌘↩）")
+                    }.buttonStyle(.borderless).foregroundStyle(.green).accessibilityLabel("保存台词").help("保存并重新生成配音（⌘↩）")
                 } else if !dubVM.isBusy(videoID: segment.video?.id) {
                     Button {
                         draftText = text
@@ -255,12 +256,12 @@ struct SegmentVariantInspector: View {
                         editorFocused = true
                     } label: {
                         Image(systemName: "square.and.pencil")
-                    }.buttonStyle(.borderless).foregroundStyle(.secondary).help("编辑这版台词")
+                    }.buttonStyle(.borderless).foregroundStyle(.secondary).accessibilityLabel("编辑台词").help("编辑这版台词")
                     Button {
                         variantPendingDelete = t
                     } label: {
                         Image(systemName: "trash")
-                    }.buttonStyle(.borderless).foregroundStyle(.red).help("删除这版（台词+配音）")
+                    }.buttonStyle(.borderless).foregroundStyle(.red).accessibilityLabel("删除该版本").help("删除这版（台词+配音）")
                 }
             }
 
@@ -272,7 +273,7 @@ struct SegmentVariantInspector: View {
                     .scrollContentBackground(.hidden)
                     .padding(6)
                     .background(Color(nsColor: .textBackgroundColor).opacity(0.6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor.opacity(0.5), lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous).stroke(Color.accentColor.opacity(0.5), lineWidth: 1))
                     .onKeyPress(.return, phases: .down) { press in
                         if press.modifiers.contains(.command) { saveEditedVariant(t); return .handled }
                         return .ignored
@@ -289,16 +290,16 @@ struct SegmentVariantInspector: View {
             variantAudioWarning(t)
 
             // 音色格：每列一个音色
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 ForEach(voices, id: \.self) { v in
                     cell(textVariant: t, voiceId: v)
                 }
             }
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.normal)
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(.separator, lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(.separator, lineWidth: 0.5))
     }
 
     /// 字数提示（基准=原分镜台词）：仅在比原台词「多很多」红字、「少很多」橙字；其余灰字不打扰。
@@ -388,7 +389,7 @@ struct SegmentVariantInspector: View {
         .frame(maxWidth: .infinity)
         .frame(height: 64)
         .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     /// 已生成音频：▶ 播放/⏹ 停止 + ↻ 重新生成（过期标橙）+ 对齐后时长
@@ -409,6 +410,7 @@ struct SegmentVariantInspector: View {
                         .foregroundStyle(playing ? .red : (stale ? .orange : .green))
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel(playing ? "停止试听" : "试听配音")
                 .help(playing ? "停止" : "试听这条配音")
 
                 Button {
@@ -419,11 +421,12 @@ struct SegmentVariantInspector: View {
                         .foregroundStyle(stale ? .orange : .secondary)
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel("重新配音")
                 .help(stale ? "分镜或台词已变，点重新生成" : "重新生成")
             }
             if d.audioDuration > 0 {
                 Text(String(format: "%.1fs", d.audioDuration))
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(DesignTokens.Typography.microMono)
                     .foregroundStyle(aligned ? .green : .orange)
                     .help("配音时长 \(String(format: "%.1f", d.audioDuration))s / 分镜 \(String(format: "%.1f", target))s")
             }

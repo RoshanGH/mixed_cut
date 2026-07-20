@@ -47,6 +47,29 @@ final class ImportViewModel {
         self.modelContext = context
     }
 
+    /// 用户主动停止导入。
+    ///
+    /// ⚠️ 这里**只做提示**，不直接改 isProcessing/phase —— 因为后台流程可能正跑在某一步，
+    /// 随后会把这些状态又写回"运行中"，造成"点了停止却还在转"的假象。
+    /// 真正的收尾统一由 `importVideos` 内部的取消检查点走 `finishAsCancelled` 完成。
+    func markCancelledByUser() {
+        progressDescription = "正在停止…"
+        ToastCenter.shared.show("正在停止导入，已完成的素材会保留", icon: "stop.circle.fill", style: .info)
+    }
+
+    /// 取消后的统一收尾：把状态收回闲置态，项目回到可用状态。
+    private func finishAsCancelled(project: Project, context: ModelContext) {
+        project.status = .ready
+        project.updatedAt = Date()
+        context.safeSave()
+        isProcessing = false
+        phase = .idle
+        progress = 0
+        progressDescription = ""
+        MixLog.info("[Import] 用户停止导入，已完成部分保留")
+        ToastCenter.shared.show("已停止导入，已完成的素材已保留", icon: "stop.circle.fill", style: .info)
+    }
+
     /// 导入视频文件列表（全局去重 + 共享引用）
     func importVideos(urls: [URL], to project: Project) async {
         isProcessing = true
@@ -101,6 +124,8 @@ final class ImportViewModel {
         // ========== 阶段 1：快速创建/关联视频实体 ==========
         var videosToAnalyze: [Video] = []
         for (index, url) in dedupedURLs.enumerated() {
+            // 用户点了「停止导入」：立刻停手，已导入的保留（停止 ≠ 删除）
+            if Task.isCancelled { finishAsCancelled(project: project, context: context); return }
             progressDescription = "导入第 \(index + 1)/\(dedupedURLs.count) 个视频..."
             progress = Double(index) / Double(dedupedURLs.count) * 0.2
 
@@ -113,7 +138,7 @@ final class ImportViewModel {
                 }
             } catch {
                 let prevError = errorMessage.map { $0 + "\n" } ?? ""
-                errorMessage = prevError + "导入 \(url.lastPathComponent) 失败: \(error.localizedDescription)"
+                errorMessage = prevError + "导入 \(url.lastPathComponent) 失败: \(FriendlyError.reason(for: error))"
             }
         }
 
@@ -139,7 +164,7 @@ final class ImportViewModel {
                 var videoIterator = videosToAnalyze.makeIterator()
                 var runningCount = 0
 
-                while runningCount < maxConcurrency, let video = videoIterator.next() {
+                while !Task.isCancelled, runningCount < maxConcurrency, let video = videoIterator.next() {
                     runningCount += 1
                     group.addTask { [weak self] in
                         guard let self else { return }
@@ -154,6 +179,7 @@ final class ImportViewModel {
                 }
 
                 for await _ in group {
+                    if Task.isCancelled { break }   // 已停止：不再补新任务，让已在跑的自然收尾
                     completedCount += 1
                     progress = 0.2 + Double(completedCount) / Double(totalVideos) * 0.8
                     progressDescription = "已完成 \(completedCount)/\(totalVideos) 个视频分析"
@@ -173,6 +199,8 @@ final class ImportViewModel {
                 }
             }
         }
+
+        if Task.isCancelled { finishAsCancelled(project: project, context: context); return }
 
         project.status = .ready
         project.updatedAt = Date()
@@ -243,7 +271,7 @@ final class ImportViewModel {
                 context.safeSave()
             } catch {
                 MixLog.error(" ASR 失败: \(error)")
-                video.errorMessage = "语音识别失败: \(error.localizedDescription)"
+                video.errorMessage = "语音识别失败: \(FriendlyError.reason(for: error))"
                 video.status = .imported
                 context.safeSave()
                 isProcessing = false
@@ -289,7 +317,7 @@ final class ImportViewModel {
                 localAnalysis: localAnalysis
             )
         } catch {
-            video.errorMessage = "AI 分析失败: \(error.localizedDescription)"
+            video.errorMessage = "AI 分析失败: \(FriendlyError.reason(for: error))"
             video.status = .imported
             context.safeSave()
             isProcessing = false
@@ -381,7 +409,7 @@ final class ImportViewModel {
         do {
             try await extractMetadata(for: video, at: destURL)
         } catch {
-            video.errorMessage = "元数据提取失败: \(error.localizedDescription)"
+            video.errorMessage = "元数据提取失败: \(FriendlyError.reason(for: error))"
         }
 
         // 生成视频缩略图（失败不阻塞）
@@ -395,25 +423,34 @@ final class ImportViewModel {
         return (video, true)
     }
 
-    /// 上传自建分镜：每个文件 = 一个分镜（≤15s、不切分），只做 ASR 台词提取 + AI 只打标。
+    /// 自建分镜单条时长上限（秒）。改这一个常量即可，文案会跟着走。
+    static let selfSegmentMaxDuration: Double = 30
+
+    /// 上传自建分镜：每个文件 = 一个分镜（不切分），只做 ASR 台词提取 + AI 只打标。
     /// 处理态用载体视频的 status 驱动占位卡（transcribing/analyzing/completed）。见 PRD/TRD 05。
     func importSelfSegments(urls: [URL], into project: Project, onUpdate: @escaping @MainActor () -> Void = {}) async {
         guard let context = modelContext else { return }
         var skippedLong: [String] = []
         var skippedDup = 0
+        // ⚠️ 以下两类失败以前是静默 `continue`，文件会**凭空消失**、用户毫无解释。
+        var failedUnreadable: [String] = []   // 读不出时长：文件损坏 / 格式不支持
+        var failedCopy: [String] = []         // 落盘失败：磁盘满 / 无权限 / 外接盘拔出
         for url in urls {
-            // 1) 时长校验 ≤ 15s
+            // 1) 时长校验（上限见 selfSegmentMaxDuration）
             let asset = AVURLAsset(url: url)
             let dur = (try? await asset.load(.duration))?.seconds ?? 0
-            guard dur > 0 else { continue }
-            guard dur <= 15.0 else { skippedLong.append(url.lastPathComponent); continue }
+            guard dur > 0 else { failedUnreadable.append(url.lastPathComponent); continue }
+            guard dur <= Self.selfSegmentMaxDuration else { skippedLong.append(url.lastPathComponent); continue }
 
             // 2) 去重
             let hash = Self.computeFileHash(path: url.path)
             if let hash, findExistingVideo(hash: hash, context: context) != nil { skippedDup += 1; continue }
 
             // 3) 落盘 + 建载体视频（打「自建」标记；status 作处理态）
-            guard let destURL = try? FileHelper.copyVideoToGlobal(from: url, contentHash: hash ?? UUID().uuidString) else { continue }
+            guard let destURL = try? FileHelper.copyVideoToGlobal(from: url, contentHash: hash ?? UUID().uuidString) else {
+                failedCopy.append(url.lastPathComponent)
+                continue
+            }
             let video = Video(name: url.lastPathComponent, localPath: destURL.path)
             video.contentHash = hash
             video.isUserUploaded = true
@@ -462,10 +499,19 @@ final class ImportViewModel {
             onUpdate()   // 占位卡转正常分镜卡
         }
         if !skippedLong.isEmpty {
-            ToastCenter.shared.show("\(skippedLong.count) 个文件超过 15 秒已跳过", icon: "exclamationmark.triangle.fill")
+            ToastCenter.shared.show("\(skippedLong.count) 个文件超过 \(Int(Self.selfSegmentMaxDuration)) 秒已跳过", icon: "exclamationmark.triangle.fill")
         }
         if skippedDup > 0 {
             ToastCenter.shared.show("\(skippedDup) 个已存在，已跳过", icon: "info.circle.fill")
+        }
+        // 真失败必须出声，且说明原因与下一步——不能让文件无声无息地消失
+        if !failedUnreadable.isEmpty {
+            ToastCenter.shared.show("\(failedUnreadable.count) 个文件无法读取（已损坏或格式不支持），未导入：\(failedUnreadable.prefix(3).joined(separator: "、"))",
+                                    icon: "exclamationmark.triangle.fill", style: .warning, duration: 5)
+        }
+        if !failedCopy.isEmpty {
+            ToastCenter.shared.show("\(failedCopy.count) 个文件保存失败（磁盘空间不足或无写入权限），未导入：\(failedCopy.prefix(3).joined(separator: "、"))",
+                                    icon: "exclamationmark.triangle.fill", style: .warning, duration: 5)
         }
     }
 
@@ -491,7 +537,7 @@ final class ImportViewModel {
                 fps: video.fps > 0 ? video.fps : 30
             )
         } catch {
-            video.errorMessage = (video.errorMessage ?? "") + "\n本地分析失败: \(error.localizedDescription)"
+            video.errorMessage = (video.errorMessage ?? "") + "\n本地分析失败: \(FriendlyError.reason(for: error))"
         }
 
         try checkCancelled(video)
@@ -507,7 +553,7 @@ final class ImportViewModel {
         } catch {
             let detail = "\(error)"
             MixLog.error("ASR 异常: \(detail)")
-            video.errorMessage = (video.errorMessage ?? "") + "\n语音识别失败: \(error.localizedDescription)"
+            video.errorMessage = (video.errorMessage ?? "") + "\n语音识别失败: \(FriendlyError.reason(for: error))"
         }
 
         video.transcript = asr.text
@@ -836,7 +882,7 @@ final class ImportViewModel {
             MixLog.error(" 兜底标记失败: video=\(video.name), error=\(detail)")
         }
         let prevError = errorMessage.map { $0 + "\n" } ?? ""
-        errorMessage = prevError + "分析 \(video.name) 失败: \(error.localizedDescription)"
+        errorMessage = prevError + "分析 \(video.name) 失败: \(FriendlyError.reason(for: error))"
     }
 
     private func checkCancelled(_ video: Video) throws {
@@ -902,6 +948,9 @@ final class ImportViewModel {
             for await (segID, path) in group {
                 if let path, let segment = segmentByID[segID] {
                     segment.thumbnailPath = path
+                    // 路径是固定的 seg_<uuid>.jpg：之前若因文件缺失被缓存记为「解码失败」，
+                    // 这里必须让它失效，否则新生成的缩略图永远显示不出来。
+                    ThumbnailCache.shared.invalidate(path: path)
                 }
             }
         }
@@ -963,22 +1012,27 @@ final class ImportViewModel {
         reidentifyingVideoIDs.insert(video.id)
         defer { reidentifyingVideoIDs.remove(video.id) }
 
-        let (ok, fail) = await reidentifySegmentTexts(video: video, context: context)
+        let (ok, fail, reason) = await reidentifySegmentTexts(video: video, context: context)
         if fail == 0 {
             ToastCenter.shared.show("已逐分镜用阿里重识别台词（\(ok) 段）", icon: "checkmark.circle.fill", style: .success)
         } else {
-            ToastCenter.shared.show("台词重识别：\(ok) 段成功 / \(fail) 段失败", icon: "exclamationmark.triangle.fill", style: .warning, duration: 3.5)
+            // 只报"X 成功 / Y 失败"等于没报——用户既不知道为什么失败，也不知道该怎么办。
+            // 把第一条真实原因带出来（同一批失败通常同因：欠费 / Key 无效 / 断网）。
+            let detail = reason.map { "：\($0)" } ?? ""
+            ToastCenter.shared.show("台词重识别 \(ok) 段成功、\(fail) 段失败\(detail)",
+                                    icon: "exclamationmark.triangle.fill", style: .warning, duration: 8)
         }
     }
 
     /// 逐分镜各自切音频独立 ASR，覆盖 segment.text（导入与重识别共用）。
     /// 每段按自己时间范围切音频、各自识别——单段短音频时间戳天生准，不受整片漂移影响。
-    /// 失败的分镜保留原 text。返回 (成功段数, 失败段数)。
+    /// 失败的分镜保留原 text。返回 (成功段数, 失败段数, 首个失败原因)。
     @discardableResult
-    func reidentifySegmentTexts(video: Video, context: ModelContext) async -> (ok: Int, fail: Int) {
+    func reidentifySegmentTexts(video: Video, context: ModelContext) async -> (ok: Int, fail: Int, reason: String?) {
         let fps = video.fps > 0 ? video.fps : 30
         let segs = video.segments.sorted { $0.startFrame < $1.startFrame }
         var ok = 0, fail = 0
+        var firstFailure: String?
         for seg in segs {
             if cancelledVideoIDs.contains(video.id) { break }
             let start = Double(seg.startFrame) / fps
@@ -988,15 +1042,23 @@ final class ImportViewModel {
                 try await ffmpeg.extractSegmentPCM(from: video.localPath, start: start, end: end, to: pcm.path)
                 let text = try await asrAliyun.transcribe(pcmPath: pcm.path)
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmed.isEmpty { seg.text = trimmed; ok += 1 } else { fail += 1 }
+                if !trimmed.isEmpty {
+                    seg.text = trimmed; ok += 1
+                } else {
+                    fail += 1
+                    if firstFailure == nil { firstFailure = "这段音频没有识别出任何文字（可能是纯画面、纯音乐或人声太轻）" }
+                }
             } catch {
                 fail += 1
-                MixLog.error("[ASR] 分镜 \(seg.segmentIndex) 重识别失败: \(error.localizedDescription)")
+                let reason = FriendlyError.reason(for: error)
+                if firstFailure == nil { firstFailure = reason }
+                MixLog.error("[ASR] 分镜 \(seg.segmentIndex) 重识别失败: \(reason)")
             }
             try? FileManager.default.removeItem(at: pcm)
         }
-        try? context.save()
-        return (ok, fail)
+        // 这一步覆盖整个视频所有分镜的台词，且是付费识别的结果，保存失败必须告知
+        context.saveOrWarn("重识别的台词")
+        return (ok, fail, firstFailure)
     }
 
     // MARK: - 分镜拆分（PRD/TRD 06）
@@ -1004,13 +1066,33 @@ final class ImportViewModel {
     /// 把一个分镜在 `cutFrame` 处拆成前后两段：A 复用原 seg 缩为前段，B 新建后段。
     /// 清空原分镜的衍生物（配音/字幕、画面替换、物理镜头变体），两段各自重抽缩略图 + 阿里重识别台词，
     /// B 继承原语义标签。`onUpdate` 用于刷新分镜库。调用前须保证 `seg.schemeSegments` 为空（拦截见 UI）。
-    func splitSegment(_ seg: Segment, atFrame cutFrame: Int, onUpdate: @escaping @MainActor () -> Void = {}) async {
-        guard let context = modelContext, let video = seg.video else { return }
-        guard seg.schemeSegments.isEmpty else { return }   // 双保险：在方案里不拆
+    /// 拆分结果。以前这个方法是 `async` 无返回值且有三处静默 `return`，
+    /// 调用方（SplitSegmentSheet）不管成败一律 `dismiss()` —— 用户看到「拆分中…」后弹窗正常关闭，
+    /// 但列表毫无变化，完全不知道发生了什么。现在把失败原因带回去，由 UI 如实展示。
+    enum SplitOutcome {
+        case success
+        /// 拆分本体成功，但后续台词重识别失败（台词仍是拆分前的旧内容，需要用户核对）
+        case successWithWarning(String)
+        case failed(reason: String)
+    }
+
+    @discardableResult
+    func splitSegment(_ seg: Segment, atFrame cutFrame: Int, onUpdate: @escaping @MainActor () -> Void = {}) async -> SplitOutcome {
+        guard let context = modelContext else {
+            return .failed(reason: "数据库尚未就绪，请稍后重试。")
+        }
+        guard let video = seg.video else {
+            return .failed(reason: "这个分镜找不到对应的源视频，可能视频已被删除。请重新导入素材。")
+        }
+        guard seg.schemeSegments.isEmpty else {
+            return .failed(reason: "这个分镜已经被混剪方案使用，不能再拆分。请先从方案中移除它，或复制一份再拆。")
+        }
         let fps = video.fps > 0 ? video.fps : 30
         let origStart = seg.startFrame
         let origEnd = seg.endFrame
-        guard cutFrame > origStart, cutFrame < origEnd else { return }
+        guard cutFrame > origStart, cutFrame < origEnd else {
+            return .failed(reason: "拆分点必须落在分镜内部。当前分镜太短或拆分位置在边缘，无法拆分。")
+        }
 
         // 1) 清空原 seg（将成为 A 段）的衍生物 —— 两段视为全新分镜，不可恢复
         for dub in seg.segmentDubs { context.delete(dub) }          // cascade 删逐句字幕
@@ -1038,9 +1120,17 @@ final class ImportViewModel {
         context.safeSave(); onUpdate()
 
         // 5) 各自阿里重识别台词（复用单段 ASR 模式）
-        await reASRSegment(seg, in: video, fps: fps)
-        await reASRSegment(b, in: video, fps: fps)
+        let okA = await reASRSegment(seg, in: video, fps: fps)
+        let okB = await reASRSegment(b, in: video, fps: fps)
         context.safeSave(); onUpdate()
+
+        // 台词重识别失败时**必须说出来**：拆分本体是成功的，但两段的台词还停留在拆分前的旧内容，
+        // 用户如果不知道，会拿着错误台词去配音、去导出。
+        if !okA || !okB {
+            let which = (!okA && !okB) ? "两段" : (okA ? "后一段" : "前一段")
+            return .successWithWarning("拆分已完成，但\(which)的台词重新识别失败，台词仍是拆分前的旧内容。请手动核对并编辑台词。")
+        }
+        return .success
     }
 
     /// 重抽某分镜首帧缩略图（拆分后 A/B 各自生成，用 seg.id 命名避免共用）
@@ -1051,13 +1141,18 @@ final class ImportViewModel {
         do {
             try await ffmpeg.generateThumbnail(from: video.localPath, at: t, to: path)
             seg.thumbnailPath = path
+            // ⚠️ 拆分后 seg.id 不变 → 路径不变但画面已经变了。
+            // 不清缓存的话，卡片会一直显示拆分前的旧首帧。
+            ThumbnailCache.shared.invalidate(path: path)
         } catch {
             MixLog.error("[Split] 缩略图重生失败 \(seg.segmentIndex): \(error.localizedDescription)")
         }
     }
 
-    /// 对某分镜按自己帧窗切音频 + 阿里 paraformer 重识别台词（失败保留原 text）
-    private func reASRSegment(_ seg: Segment, in video: Video, fps: Double) async {
+    /// 对某分镜按自己帧窗切音频 + 阿里 paraformer 重识别台词（失败保留原 text）。
+    /// 返回是否成功，供调用方决定要不要提醒用户「台词还是旧的」。
+    @discardableResult
+    private func reASRSegment(_ seg: Segment, in video: Video, fps: Double) async -> Bool {
         let start = Double(seg.startFrame) / fps
         let end = Double(seg.endFrame) / fps
         let pcm = FileHelper.tempDirectory.appendingPathComponent("asrseg-\(UUID().uuidString).pcm")
@@ -1067,8 +1162,10 @@ final class ImportViewModel {
             let text = try await asrAliyun.transcribe(pcmPath: pcm.path)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { seg.text = text }
+            return true
         } catch {
-            MixLog.error("[Split] reASR 失败 \(seg.segmentIndex): \(error.localizedDescription)")
+            MixLog.error("[Split] reASR 失败 \(seg.segmentIndex): \(FriendlyError.reason(for: error))")
+            return false
         }
     }
 }

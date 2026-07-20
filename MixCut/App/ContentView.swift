@@ -85,7 +85,7 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .mixCutNavigate)) { notification in
             if let item = notification.object as? NavigationItem {
-                withAnimation(.easeOut(duration: 0.18)) {
+                withAnimation(DesignTokens.Motion.transition) {
                     selectedNavItem = item
                 }
             }
@@ -102,7 +102,7 @@ struct ContentView: View {
         .background(
             VStack(spacing: 0) {
                 Button("") {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(DesignTokens.Motion.transition) {
                         sidebarVisible.toggle()
                     }
                 }

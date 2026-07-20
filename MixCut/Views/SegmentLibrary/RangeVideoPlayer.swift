@@ -20,13 +20,13 @@ struct RangeVideoPlayer: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(Color.black)
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black)
             if isActive, let player {
                 ShotPlayerLayerView(player: player)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else if let t = thumbnailPath, let img = ThumbnailCache.shared.image(for: t) {
                 Image(nsImage: img).resizable().scaledToFill()
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             } else {
                 Image(systemName: "film").font(.title3).foregroundStyle(.white.opacity(0.6))
             }

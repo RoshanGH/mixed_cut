@@ -23,7 +23,7 @@ final class ToastCenter {
         dismissTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(effectiveDuration * 1_000_000_000))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(DesignTokens.Motion.transition) {
                 self?.current = nil
             }
         }
@@ -32,7 +32,7 @@ final class ToastCenter {
     /// 立即清除当前 Toast（如用户点了操作按钮后）
     func dismiss() {
         dismissTask?.cancel()
-        withAnimation(.easeOut(duration: 0.2)) {
+        withAnimation(DesignTokens.Motion.transition) {
             current = nil
         }
     }
@@ -61,12 +61,12 @@ struct ToastOverlay: View {
     var body: some View {
         VStack {
             if let payload = toastCenter.current {
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.compact) {
                     Image(systemName: payload.icon)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DesignTokens.Typography.bodyEmphasis)
                         .foregroundStyle(payload.style.color)
                     Text(payload.text)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(DesignTokens.Typography.labelStrong)
                         .foregroundStyle(.primary.opacity(0.85))
 
                     if let actionTitle = payload.actionTitle {
@@ -77,7 +77,7 @@ struct ToastOverlay: View {
                             toastCenter.dismiss()
                         } label: {
                             Text(actionTitle)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(DesignTokens.Typography.labelEmphasis)
                                 .foregroundStyle(Color.accentColor)
                         }
                         .buttonStyle(.plain)

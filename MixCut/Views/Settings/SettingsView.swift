@@ -4,6 +4,9 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selectedProvider: AIProviderType = KeychainHelper.activeProvider
     @State private var apiKey: String = ""
+    @State private var isTestingConnection = false
+    /// 测试连接结果：(是否成功, 展示给用户的一句话)
+    @State private var connectionTestResult: (ok: Bool, message: String)?
     @State private var isAPIKeySaved = false
     @State private var showAPIKey = false
     @State private var selectedModel: String = ""
@@ -24,16 +27,17 @@ struct SettingsView: View {
             // 顶部标题栏 + 关闭按钮
             HStack {
                 Text("设置")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(DesignTokens.Typography.bodyLargeEmphasis)
                 Spacer()
                 Button {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)
-                        .font(.system(size: 18))
+                        .font(DesignTokens.Typography.headline)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("关闭设置")
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -74,11 +78,11 @@ struct SettingsView: View {
             }
 
             Section("\(selectedProvider.displayName) 配置") {
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.compact) {
                     if showAPIKey {
                         TextField("API Key", text: $apiKey)
                             .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(DesignTokens.Typography.labelMono)
                     } else {
                         SecureField("API Key", text: $apiKey)
                             .textFieldStyle(.roundedBorder)
@@ -97,29 +101,30 @@ struct SettingsView: View {
                         }
                     } label: {
                         Image(systemName: showAPIKey ? "eye.slash" : "eye")
-                            .font(.system(size: 12))
+                            .font(DesignTokens.Typography.label)
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(showAPIKey ? "隐藏密钥" : "显示密钥")
                 }
 
                 if selectedProvider == .custom {
                     TextField("API 地址", text: $customBaseURL, prompt: Text("https://api.openai.com/v1"))
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(DesignTokens.Typography.labelMono)
 
                     TextField("模型名称", text: $customModelName, prompt: Text("gpt-4o"))
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(DesignTokens.Typography.labelMono)
                 } else {
                     if selectedProvider == .claudeRelay {
                         TextField("网关地址", text: $relayBaseURL,
                                   prompt: Text("https://your-relay.example.com/v1"))
                             .textFieldStyle(.roundedBorder)
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(DesignTokens.Typography.labelMono)
 
                         Text("要求兼容 OpenAI 协议的转发网关地址")
-                            .font(.system(size: 10))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.tertiary)
 
                         Picker("平台", selection: $relayPlatform) {
@@ -145,14 +150,14 @@ struct SettingsView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.compact) {
                     if isAPIKeySaved {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12))
+                                .font(DesignTokens.Typography.label)
                                 .foregroundStyle(.green)
                             Text("已保存")
-                                .font(.system(size: 11))
+                                .font(DesignTokens.Typography.caption)
                                 .foregroundStyle(.green)
                         }
                     }
@@ -163,11 +168,28 @@ struct SettingsView: View {
                         saveAPIKey()
                     }
                     .controlSize(.small)
+                    // Key 已保存（显示为掩码）时**仍可保存**——因为接口地址 / 模型名是独立可改的。
+                    // 原先掩码态一律禁用，导致自定义提供商存过 Key 后再也改不了地址和模型名。
                     .disabled(
-                        apiKey.isEmpty || apiKey.starts(with: "•") ||
+                        (apiKey.isEmpty && !isAPIKeySaved) ||
                         (selectedProvider == .custom && (customBaseURL.isEmpty || customModelName.isEmpty)) ||
-                        (selectedProvider == .claudeRelay && relayBaseURL.isEmpty)
+                        (selectedProvider == .claudeRelay && relayBaseURL.isEmpty) ||
+                        endpointURLProblem != nil
                     )
+
+                    // 测试连接：Key 填错 / 过期 / 没开通模型权限，以前要等导入流水线跑到
+                    // 第 5 步 AI 分析（十几分钟后）才暴露。这里花 1 秒当场验明。
+                    Button {
+                        Task { await testConnection() }
+                    } label: {
+                        if isTestingConnection {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("测试连接")
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(isTestingConnection || !isAPIKeySaved)
 
                     if isAPIKeySaved {
                         Button("清除", role: .destructive) {
@@ -176,10 +198,51 @@ struct SettingsView: View {
                         .controlSize(.small)
                     }
                 }
+
+                // 地址填错时**当场说明为什么不能保存**，而不是把保存按钮灰掉让用户干瞪眼
+                if let problem = endpointURLProblem {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(DesignTokens.Palette.Status.warning)
+                        Text(problem)
+                            .font(DesignTokens.Typography.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                    }
+                }
+
+                if let result = connectionTestResult {
+                    HStack(spacing: 6) {
+                        Image(systemName: result.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .foregroundStyle(result.ok ? DesignTokens.Palette.Status.success : DesignTokens.Palette.Status.warning)
+                        Text(result.message)
+                            .font(DesignTokens.Typography.caption)
+                            .foregroundStyle(result.ok ? .secondary : .primary)
+                            .textSelection(.enabled)
+                        Spacer()
+                    }
+                }
             }
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    /// 发一次最小请求验证 Key 是否真的可用，把错误提前到"填 Key 的当下"。
+    private func testConnection() async {
+        isTestingConnection = true
+        connectionTestResult = nil
+        defer { isTestingConnection = false }
+
+        let started = Date()
+        do {
+            let provider = AIProviderManager.createProvider(for: selectedProvider)
+            _ = try await provider.generateText(prompt: "ping")
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            connectionTestResult = (true, "连接正常 · \(selectedProvider.displayName) · \(ms)ms")
+        } catch {
+            connectionTestResult = (false, FriendlyError.reason(for: error))
+        }
     }
 
     // MARK: - 通用设置
@@ -200,15 +263,15 @@ struct SettingsView: View {
 
                 LabeledContent("语音模型") {
                     if whisperModelReady {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 12))
+                                .font(DesignTokens.Typography.label)
                                 .foregroundStyle(.green)
                             Text("已就绪")
-                                .font(.system(size: 12))
+                                .font(DesignTokens.Typography.label)
                         }
                     } else if isDownloadingModel {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
                             if let p = downloadProgress, p.totalBytes > 0 {
                                 ProgressView(value: p.fraction)
                                     .controlSize(.small)
@@ -217,18 +280,18 @@ struct SettingsView: View {
                                     Text(String(format: "%.1f%%", p.fraction * 100))
                                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                     Text("\(formatBytes(p.receivedBytes)) / \(formatBytes(p.totalBytes))")
-                                        .font(.system(size: 10, design: .monospaced))
+                                        .font(DesignTokens.Typography.microMono)
                                         .foregroundStyle(.secondary)
                                     if p.bytesPerSecond > 0 {
                                         Text("• \(formatBytes(Int64(p.bytesPerSecond)))/s")
-                                            .font(.system(size: 10, design: .monospaced))
+                                            .font(DesignTokens.Typography.microMono)
                                             .foregroundStyle(.secondary)
                                     }
                                 }
                             } else {
-                                HStack(spacing: 4) {
+                                HStack(spacing: DesignTokens.Spacing.tight) {
                                     ProgressView().controlSize(.small)
-                                    Text("连接中…").font(.system(size: 12)).foregroundStyle(.secondary)
+                                    Text("连接中…").font(DesignTokens.Typography.label).foregroundStyle(.secondary)
                                 }
                             }
                             Button("取消") {
@@ -237,13 +300,13 @@ struct SettingsView: View {
                             .controlSize(.small)
                         }
                     } else {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 4) {
+                        VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
+                            HStack(spacing: DesignTokens.Spacing.tight) {
                                 Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 10))
+                                    .font(DesignTokens.Typography.microRegular)
                                     .foregroundStyle(.orange)
                                 Text("语音识别需要先下载模型")
-                                    .font(.system(size: 11))
+                                    .font(DesignTokens.Typography.caption)
                                     .foregroundStyle(.secondary)
                             }
                             Button("下载模型 (~1.6GB)") {
@@ -252,7 +315,7 @@ struct SettingsView: View {
                             .controlSize(.small)
                             if let error = modelDownloadError {
                                 Text(error)
-                                    .font(.system(size: 10))
+                                    .font(DesignTokens.Typography.microRegular)
                                     .foregroundStyle(.red)
                                     .lineLimit(3)
                             }
@@ -273,11 +336,11 @@ struct SettingsView: View {
                 Button {
                     NSWorkspace.shared.open(FileHelper.appSupportDirectory)
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: "folder")
-                            .font(.system(size: 11))
+                            .font(DesignTokens.Typography.caption)
                         Text("在 Finder 中打开")
-                            .font(.system(size: 12))
+                            .font(DesignTokens.Typography.label)
                     }
                 }
                 .controlSize(.small)
@@ -288,53 +351,53 @@ struct SettingsView: View {
 
                 LabeledContent("芯片型号") {
                     Text(hw.chipDisplayName)
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
                 LabeledContent("CPU 核心数") {
                     if hw.isAppleSilicon && hw.performanceCores > 0 && hw.performanceCores < hw.physicalCores {
                         Text("\(hw.physicalCores) 核（\(hw.performanceCores) 性能 + \(hw.physicalCores - hw.performanceCores) 效率）")
-                            .font(.system(size: 12))
+                            .font(DesignTokens.Typography.label)
                     } else {
                         Text("\(hw.physicalCores) 核")
-                            .font(.system(size: 12))
+                            .font(DesignTokens.Typography.label)
                     }
                 }
                 LabeledContent("内存") {
                     Text("\(hw.memoryGB) GB")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
                 LabeledContent("Media Engine") {
                     Text(hw.mediaEngineDescription)
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
                 LabeledContent("GPU 编码加速") {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: hw.videoToolboxAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
                             .foregroundStyle(hw.videoToolboxAvailable ? .green : .red)
                         Text(hw.videoToolboxAvailable ? "VideoToolbox" : "无")
-                            .font(.system(size: 12))
+                            .font(DesignTokens.Typography.label)
                     }
                 }
                 LabeledContent("Whisper 后端") {
                     Text(hw.whisperBackend)
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
             }
 
             Section("并发策略") {
                 LabeledContent("同时分析视频数") {
                     Text(ConcurrencyPolicy.explainAnalyze())
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("同时导出视频数") {
                     Text(ConcurrencyPolicy.explainExport())
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("同时 ASR 数") {
                     Text(ConcurrencyPolicy.explainASR())
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -342,7 +405,7 @@ struct SettingsView: View {
             Section("版本") {
                 LabeledContent("应用版本") {
                     Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -353,11 +416,11 @@ struct SettingsView: View {
                         hasCompletedOnboarding = false
                         dismiss()
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
                             Image(systemName: "questionmark.circle")
-                                .font(.system(size: 11))
+                                .font(DesignTokens.Typography.caption)
                             Text("重新查看")
-                                .font(.system(size: 12))
+                                .font(DesignTokens.Typography.label)
                         }
                     }
                     .controlSize(.small)
@@ -371,11 +434,11 @@ struct SettingsView: View {
                             NotificationCenter.default.post(name: .mixCutShowShortcuts, object: nil)
                         }
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
                             Image(systemName: "keyboard")
-                                .font(.system(size: 11))
+                                .font(DesignTokens.Typography.caption)
                             Text("查看")
-                                .font(.system(size: 12))
+                                .font(DesignTokens.Typography.label)
                         }
                     }
                     .controlSize(.small)
@@ -383,16 +446,16 @@ struct SettingsView: View {
 
                 LabeledContent("开发者") {
                     Text("MengGang")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
                 LabeledContent("微信") {
                     Text("13462890087")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .textSelection(.enabled)
                 }
                 LabeledContent("GitHub") {
                     Link("RoshanGH/mixed_cut", destination: URL(string: "https://github.com/RoshanGH/mixed_cut")!)
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
             }
         }
@@ -403,17 +466,17 @@ struct SettingsView: View {
     @ViewBuilder
     private func dependencyStatus(installed: Bool, installHint: String) -> some View {
         if installed {
-            HStack(spacing: 4) {
+            HStack(spacing: DesignTokens.Spacing.tight) {
                 Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.green)
                 Text("已安装")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
             }
         } else {
-            HStack(spacing: 4) {
+            HStack(spacing: DesignTokens.Spacing.tight) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.red)
                 Text(installHint)
                     .font(.system(size: 11, design: .monospaced))
@@ -450,29 +513,70 @@ struct SettingsView: View {
         }
     }
 
+    /// 接口地址填得不对时的具体说明；没问题返回 nil。
+    ///
+    /// 在**保存前**就拦下来。否则地址错了要等到导入流水线跑到 AI 分析那步才炸，
+    /// 报错还只是一句"连接失败，请检查网络"，把排查方向完全带偏。
+    private var endpointURLProblem: String? {
+        let raw: String
+        switch selectedProvider {
+        case .custom:      raw = customBaseURL
+        case .claudeRelay: raw = relayBaseURL
+        default:           return nil
+        }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }   // 空由 disabled 条件另行处理
+
+        guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else {
+            return "接口地址需要以 https:// 开头（例如 https://api.example.com/v1）"
+        }
+        guard let url = URL(string: trimmed), url.host?.isEmpty == false else {
+            return "接口地址格式不合法，请检查是否有多余的空格或中文字符"
+        }
+        if trimmed.hasSuffix("/chat/completions") || trimmed.hasSuffix("/messages") {
+            return "这里只填根地址（通常以 /v1 结尾），不要带 /chat/completions 或 /messages"
+        }
+        return nil
+    }
+
     private func saveAPIKey() {
-        guard !apiKey.isEmpty, !apiKey.starts(with: "•") else { return }
+        // ⚠️ 必须 trim：从网页复制 Key 极易带上尾部空格或换行，
+        // 存进去之后每一次 AI 调用都会 401，而错误信息只会说"Key 无效"，
+        // 用户肉眼看输入框里的 Key 明明是对的，根本查不出问题。
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 接口地址与模型名即使不改 Key 也要能单独保存（见下方 saveEndpointConfig 的说明）
+        saveEndpointConfig()
+
+        guard !trimmedKey.isEmpty, !trimmedKey.starts(with: "•") else { return }
         do {
-            try KeychainHelper.saveAPIKey(apiKey, for: selectedProvider)
-
-            // 自定义提供商额外保存 Base URL 和模型名
-            if selectedProvider == .custom {
-                KeychainHelper.customBaseURL = customBaseURL
-                KeychainHelper.customModelName = customModelName
-                KeychainHelper.setSelectedModel(customModelName, for: .custom)
-            }
-
-            // 国内转发网关额外保存网关地址 + 平台
-            if selectedProvider == .claudeRelay {
-                KeychainHelper.relayBaseURL = relayBaseURL
-                KeychainHelper.relayPlatform = relayPlatform
-            }
-
+            try KeychainHelper.saveAPIKey(trimmedKey, for: selectedProvider)
             isAPIKeySaved = true
             MixLog.info("API Key 已保存: provider=\(selectedProvider.displayName)")
             apiKey = "••••••••••••••••••••"
+            connectionTestResult = nil
         } catch {
-            MixLog.error("保存 API Key 失败: \(error)")
+            // 保存失败以前只写日志，界面上「已保存」的绿标不出现但没有任何原因
+            connectionTestResult = (false, "保存失败：\(FriendlyError.reason(for: error))")
+        }
+    }
+
+    /// 保存接口地址 / 模型名 / 网关平台。
+    ///
+    /// ⚠️ 必须与 Key 的保存**解耦**。原先这些只在 `saveAPIKey` 里落盘，而保存成功后
+    /// `apiKey` 会变成掩码 `••••`，`saveAPIKey` 开头又 `guard !starts(with:"•")` 直接返回 ——
+    /// 于是用「自定义 / 转发网关」的用户存过 Key 之后就**再也改不了接口地址和模型名**，
+    /// 只能先清除 Key 再重新粘贴一遍。
+    private func saveEndpointConfig() {
+        if selectedProvider == .custom {
+            KeychainHelper.customBaseURL = customBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let model = customModelName.trimmingCharacters(in: .whitespacesAndNewlines)
+            KeychainHelper.customModelName = model
+            KeychainHelper.setSelectedModel(model, for: .custom)
+        }
+        if selectedProvider == .claudeRelay {
+            KeychainHelper.relayBaseURL = relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            KeychainHelper.relayPlatform = relayPlatform
         }
     }
 

@@ -16,6 +16,8 @@ struct ImportView: View {
     @State private var isDragTargeted = false
     @State private var showingFilePicker = false
     @State private var isLoading = true
+    /// 导入任务句柄，用于「停止导入」取消
+    @State private var importTask: Task<Void, Never>?
 
     var body: some View {
         // ⚠️ .task(id: project.id) 必须在 body 最外层，不能放进子分支（见 CLAUDE.md）
@@ -45,7 +47,7 @@ struct ImportView: View {
             }
 
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(spacing: DesignTokens.Spacing.spacious) {
                     importDropZone
 
                     errorBanner
@@ -54,7 +56,7 @@ struct ImportView: View {
                         videoListSection
                     }
                 }
-                .padding(24)
+                .padding(DesignTokens.Padding.page)
             }
         }
         .navigationTitle("素材导入")
@@ -76,7 +78,7 @@ struct ImportView: View {
                     for url in accessedURLs { url.stopAccessingSecurityScopedResource() }
                     return
                 }
-                Task {
+                importTask = Task {
                     await importVM.importVideos(urls: videoURLs, to: project)
                     for url in accessedURLs { url.stopAccessingSecurityScopedResource() }
                 }
@@ -88,37 +90,46 @@ struct ImportView: View {
 
     // MARK: - 处理进度
     private var processingBanner: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DesignTokens.Spacing.normal) {
             ProgressView()
                 .controlSize(.small)
             VStack(alignment: .leading, spacing: 2) {
                 Text(importVM.phase.rawValue)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignTokens.Typography.captionEmphasis)
                 Text(importVM.progressDescription)
-                    .font(.system(size: 10))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             ProgressView(value: importVM.progress)
                 .frame(width: 120)
+            // 以前想中止导入，唯一办法是把素材删掉 —— 用户得先毁掉自己的文件才能停下来。
+            // 「停止导入」只中断后续分析，已导入的素材原样保留。
+            Button("停止导入") {
+                importTask?.cancel()
+                importTask = nil
+                importVM.markCancelledByUser()
+            }
+            .controlSize(.small)
+            .help("停止后续分析，已导入的素材会保留")
         }
-        .padding(12)
-        .background(.blue.opacity(0.06))
+        .padding(DesignTokens.Spacing.normal)
+        .background(Color.accentColor.opacity(DesignTokens.Palette.Alpha.subtle))
     }
 
     // MARK: - 拖拽导入区域
     private var importDropZone: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: DesignTokens.Spacing.comfortable) {
             Image(systemName: "arrow.down.doc.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(isDragTargeted ? Color.accentColor : Color.secondary)
                 .scaleEffect(isDragTargeted ? 1.15 : 1.0)
                 .animation(.spring(response: 0.35, dampingFraction: 0.65), value: isDragTargeted)
             Text(isDragTargeted ? "松开手即可导入" : "拖拽视频文件到此处")
-                .font(.system(size: 16, weight: .semibold))
+                .font(DesignTokens.Typography.title)
                 .foregroundStyle(isDragTargeted ? Color.accentColor : Color.primary)
             Text("支持 MP4, MOV, AVI 格式")
-                .font(.system(size: 12))
+                .font(DesignTokens.Typography.label)
                 .foregroundStyle(.secondary)
             Button("选择文件") {
                 showingFilePicker = true
@@ -128,17 +139,17 @@ struct ImportView: View {
         .frame(maxWidth: .infinity)
         .padding(40)
         .background(
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
                     isDragTargeted ? Color.accentColor : Color.secondary.opacity(0.3),
                     style: StrokeStyle(lineWidth: 2, dash: [8])
                 )
                 .background(
-                    RoundedRectangle(cornerRadius: 16)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(isDragTargeted ? Color.accentColor.opacity(0.08) : .clear)
                 )
         )
-        .animation(.easeOut(duration: 0.2), value: isDragTargeted)
+        .animation(DesignTokens.Motion.transition, value: isDragTargeted)
         .dropDestination(for: URL.self) { urls, _ in
             var accessedURLs: [URL] = []
             var securedURLs: [URL] = []
@@ -153,7 +164,7 @@ struct ImportView: View {
                 for url in securedURLs { url.stopAccessingSecurityScopedResource() }
                 return false
             }
-            Task {
+            importTask = Task {
                 await importVM.importVideos(urls: videoURLs, to: project)
                 for url in securedURLs { url.stopAccessingSecurityScopedResource() }
             }
@@ -166,18 +177,18 @@ struct ImportView: View {
     // MARK: - 已导入视频列表（网格并排）
     private var videoListSection: some View {
         let videos = project.videos.filter { !$0.isUserUploaded }   // 成片视频（自建分镜不在导入页/成片列表出现，只在分镜库）
-        return VStack(alignment: .leading, spacing: 16) {
+        return VStack(alignment: .leading, spacing: DesignTokens.Spacing.comfortable) {
             HStack {
                 Text("已导入视频")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignTokens.Typography.bodyEmphasis)
                 Spacer()
                 Text("\(videos.count) 个视频")
-                    .font(.system(size: 11))
+                    .font(DesignTokens.Typography.caption)
                     .foregroundStyle(.secondary)
             }
 
             // 每张卡片固定宽度约 400px (190*2 + 分隔线 + padding)，可并排
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 380, maximum: 440))], alignment: .leading, spacing: 16) {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 380, maximum: 440))], alignment: .leading, spacing: DesignTokens.Spacing.comfortable) {
                 ForEach(videos) { video in
                     ImportedVideoCard(video: video, onDelete: {
                         importVM.deleteVideo(video, from: project)
@@ -209,7 +220,7 @@ struct ImportView: View {
     private var errorBanner: some View {
         if let error = importVM.errorMessage, !error.isEmpty {
             InlineBanner(style: .warning, message: error) {
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(DesignTokens.Motion.transition) {
                     importVM.errorMessage = nil
                 }
             }
@@ -408,6 +419,8 @@ struct ImportedVideoCard: View {
 
             Divider()
 
+            Divider()
+
             Button(role: .destructive) {
                 showDeleteConfirm = true
             } label: {
@@ -431,13 +444,13 @@ struct ImportedVideoCard: View {
                 onDelete?()
             }
         } message: {
-            Text("确定要删除「\(video.name)」吗？视频和相关分镜数据都将被删除，此操作不可恢复。")
+            Text("将删除「\(video.name)」及其全部分镜数据。删除后 5 秒内可点「撤销」找回。")
         }
     }
 
     // MARK: - 左侧面板
     private var leftPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
             // 视频播放器
             ZStack {
                 if !isProcessing && video.status != .failed {
@@ -452,23 +465,23 @@ struct ImportedVideoCard: View {
 
                 if isProcessing {
                     Color.black.opacity(0.55)
-                    VStack(spacing: 8) {
+                    VStack(spacing: DesignTokens.Spacing.compact) {
                         ProgressView()
                             .controlSize(.regular)
                             .tint(.white)
                         Text(processingLabel)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignTokens.Typography.captionEmphasis)
                             .foregroundStyle(.white)
                     }
                 }
 
                 if video.status == .failed {
                     Color.red.opacity(0.4)
-                    VStack(spacing: 4) {
+                    VStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 20))
                         Text("处理失败")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(DesignTokens.Typography.captionEmphasis)
                     }
                     .foregroundStyle(.white)
                 }
@@ -489,14 +502,14 @@ struct ImportedVideoCard: View {
                     Label(video.resolution, systemImage: "rectangle.on.rectangle")
                 }
             }
-            .font(.system(size: 9))
+            .font(DesignTokens.Typography.microRegular)
             .foregroundStyle(.secondary)
 
             // 流水线
             pipelineRow
 
             // 状态 + 操作
-            HStack(spacing: 4) {
+            HStack(spacing: DesignTokens.Spacing.tight) {
                 VideoStatusBadge(status: video.status)
                 Spacer()
 
@@ -515,17 +528,17 @@ struct ImportedVideoCard: View {
                             Image(systemName: "arrow.clockwise")
                             Text(video.errorMessage != nil ? "重试" : "AI分析")
                         }
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(DesignTokens.Typography.microEmphasis)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.mini)
                 }
 
                 if isRetrying {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
                         ProgressView().controlSize(.mini)
                         Text("分析中…")
-                            .font(.system(size: 10))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.blue)
                     }
                 }
@@ -536,10 +549,10 @@ struct ImportedVideoCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 3) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 9))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.orange)
                         Text(errorMsg)
-                            .font(.system(size: 9))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.secondary)
                             .lineLimit(nil)
                             .textSelection(.enabled)
@@ -561,15 +574,15 @@ struct ImportedVideoCard: View {
             // 标题
             HStack(spacing: 5) {
                 Image(systemName: "text.quote")
-                    .font(.system(size: 9))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.secondary)
                 Text("台词")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(DesignTokens.Typography.microEmphasis)
                     .foregroundStyle(.secondary)
 
                 if let transcript = video.transcript, !transcript.isEmpty {
                     Text("\(transcript.count)字")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(DesignTokens.Typography.microMono)
                         .foregroundStyle(.secondary.opacity(0.6))
                 }
 
@@ -582,9 +595,9 @@ struct ImportedVideoCard: View {
                     } label: {
                         HStack(spacing: 2) {
                             Image(systemName: "doc.on.doc")
-                                .font(.system(size: 8, weight: .bold))
+                                .font(DesignTokens.Typography.microBold)
                             Text("复制台词")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(DesignTokens.Typography.micro)
                         }
                         .foregroundStyle(Color.accentColor)
                         .padding(.horizontal, 5)
@@ -603,9 +616,10 @@ struct ImportedVideoCard: View {
                     } label: {
                         HStack(spacing: 2) {
                             Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 8, weight: .bold))
-                            Text("重做")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(DesignTokens.Typography.microBold)
+                            // 全 App 统一措辞：失败后重跑一律叫「重试」，不再混用「重做」
+                            Text("重试")
+                                .font(DesignTokens.Typography.micro)
                         }
                         .foregroundStyle(.orange)
                         .padding(.horizontal, 5)
@@ -625,7 +639,7 @@ struct ImportedVideoCard: View {
                                 ProgressView().controlSize(.mini)
                             } else {
                                 Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(DesignTokens.Typography.microBold)
                             }
                         }
                         .foregroundStyle(.purple)
@@ -637,6 +651,7 @@ struct ImportedVideoCard: View {
                     .fixedSize()
                     .disabled(isReidentifying)
                     .help("AI 重识别台词：用阿里云 ASR 重新识别整片，逐分镜刷新台词（不改分镜边界）")
+                    .accessibilityLabel("重新识别台词")
                 }
             }
             .padding(.horizontal, 10)
@@ -645,12 +660,12 @@ struct ImportedVideoCard: View {
 
             // 异常提示条
             if cachedIsASRAbnormal {
-                HStack(spacing: 4) {
+                HStack(spacing: DesignTokens.Spacing.tight) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 8))
+                        .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.orange)
                     Text("分句较粗，可点击右上「重做」或下方「拆分」")
-                        .font(.system(size: 9))
+                        .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                 }
@@ -662,10 +677,10 @@ struct ImportedVideoCard: View {
             if cachedSentences.isEmpty {
                 VStack(spacing: 6) {
                     Image(systemName: "waveform.slash")
-                        .font(.system(size: 18))
+                        .font(DesignTokens.Typography.headline)
                         .foregroundStyle(.tertiary)
                     Text("暂无台词")
-                        .font(.system(size: 11))
+                        .font(DesignTokens.Typography.caption)
                         .foregroundStyle(.tertiary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -730,7 +745,7 @@ struct ImportedVideoCard: View {
                 isActive: video.status == .detectingScenes
             )
             Image(systemName: "chevron.right")
-                .font(.system(size: 6))
+                .font(DesignTokens.Typography.microRegular)
                 .foregroundStyle(.secondary.opacity(0.4))
             pipelineChip(
                 label: "ASR",
@@ -738,7 +753,7 @@ struct ImportedVideoCard: View {
                 isActive: video.status == .transcribing
             )
             Image(systemName: "chevron.right")
-                .font(.system(size: 6))
+                .font(DesignTokens.Typography.microRegular)
                 .foregroundStyle(.secondary.opacity(0.4))
             pipelineChip(
                 label: "AI",
@@ -756,11 +771,11 @@ struct ImportedVideoCard: View {
                     .frame(width: 8, height: 8)
             } else {
                 Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 8))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(isDone ? Color.green : Color.secondary.opacity(0.3))
             }
             Text(label)
-                .font(.system(size: 9, weight: isDone || isActive ? .bold : .regular))
+                .font(.system(size: 10, weight: isDone || isActive ? .bold : .regular))
                 .foregroundStyle(isDone || isActive ? Color.primary : Color.secondary.opacity(0.6))
         }
         .padding(.horizontal, 5)
@@ -777,27 +792,34 @@ struct ImportedVideoCard: View {
         }
         let sorted = typeCounts.sorted { $0.value > $1.value }
 
-        return HStack(spacing: 4) {
+        // ⚠️ 这里原本是 HStack：卡片文字列只有 ~200pt 宽，5 个标签塞不下时 SwiftUI 会把每个
+        // Text 压到最窄，导致「效果展示」被换行成**竖排单字**，非常难看。
+        // 改用 FlowLayout 自动换行，并给每个标签 lineLimit(1) + fixedSize 明确"宁可换行、不许压扁"。
+        return FlowLayout(spacing: DesignTokens.Spacing.tight) {
             ForEach(sorted.prefix(5), id: \.key) { type, count in
-                HStack(spacing: 1) {
+                HStack(spacing: 2) {
                     Text(type.rawValue)
-                        .font(.system(size: 9))
+                        .font(DesignTokens.Typography.micro)
                     if count > 1 {
                         Text("\(count)")
-                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
                     }
                 }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 5)
                 .padding(.vertical, 2)
-                .background(SemanticTypeTag.color(for: type).opacity(0.1))
+                .background(SemanticTypeTag.color(for: type).opacity(DesignTokens.Palette.Alpha.light))
                 .foregroundStyle(SemanticTypeTag.color(for: type))
                 .clipShape(Capsule())
             }
 
             if sorted.count > 5 {
                 Text("+\(sorted.count - 5)")
-                    .font(.system(size: 8))
-                    .foregroundStyle(.secondary.opacity(0.6))
+                    .font(DesignTokens.Typography.micro)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }
@@ -823,9 +845,11 @@ struct EditableSentenceRow: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             Text(time)
-                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                .font(DesignTokens.Typography.microMonoStrong)
                 .foregroundStyle(.secondary.opacity(0.4))
-                .frame(width: 26, alignment: .trailing)
+                .frame(width: 40, alignment: .trailing)
+                .lineLimit(1)
+                .monospacedDigit()
                 .padding(.trailing, 4)
 
             // 点击即可编辑，文字随时可选中复制（AppKit NSTextField 原生能力）
@@ -839,12 +863,13 @@ struct EditableSentenceRow: View {
                     splitSentence()
                 } label: {
                     Image(systemName: "scissors")
-                        .font(.system(size: 9))
+                        .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.blue.opacity(0.7))
                         .padding(2)
                 }
                 .buttonStyle(.plain)
                 .help("从中点拆分为两句")
+                .accessibilityLabel("拆分句子")
             }
         }
         .padding(.vertical, 3)
@@ -990,7 +1015,7 @@ struct VideoStatusBadge: View {
             Image(systemName: statusIcon)
             Text(statusText)
         }
-        .font(.system(size: 10, weight: .bold))
+        .font(DesignTokens.Typography.microBold)
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(statusColor.opacity(0.12))

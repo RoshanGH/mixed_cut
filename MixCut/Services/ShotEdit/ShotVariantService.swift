@@ -63,8 +63,10 @@ actor ShotVariantService {
         let start = Double(startFrame) / fps
         let end = Double(endFrame) / fps
         onStatus("准备切片")
-        try await ffmpeg.cutSegment(from: sourceVideoPath, start: start, end: end, fps: fps, to: clipURL.path)
+        // ⚠️ defer 必须注册在 cutSegment **之前**：切片失败/取消时文件可能已部分写出，
+        // 若 defer 写在后面就不会执行，切片会永久留在临时目录。
         defer { try? FileManager.default.removeItem(at: clipURL) }
+        try await ffmpeg.cutSegment(from: sourceVideoPath, start: start, end: end, fps: fps, to: clipURL.path)
 
         // 2) 提交拿 taskId —— 成功即回调落库（此后断电/超时/崩溃都不丢）
         onStatus("上传中")

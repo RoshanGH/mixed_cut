@@ -30,27 +30,27 @@ struct ArrangeOrderSheet: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("调整顺序")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(DesignTokens.Typography.title)
                 Text("\(orderedSegments.count) 个分镜 · 预计 \(String(format: "%.1fs", totalDuration))")
-                    .font(.system(size: 11))
+                    .font(DesignTokens.Typography.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             Text("用左右箭头调整顺序")
-                .font(.system(size: 11))
+                .font(DesignTokens.Typography.caption)
                 .foregroundStyle(.tertiary)
         }
-        .padding(16)
+        .padding(DesignTokens.Spacing.comfortable)
     }
 
     private var list: some View {
         ScrollView(.horizontal) {
-            LazyHStack(spacing: 12) {
+            LazyHStack(spacing: DesignTokens.Spacing.normal) {
                 ForEach(Array(orderedSegments.enumerated()), id: \.element.id) { idx, seg in
                     arrangeCard(segment: seg, index: idx)
                 }
             }
-            .padding(16)
+            .padding(DesignTokens.Spacing.comfortable)
         }
     }
 
@@ -58,21 +58,23 @@ struct ArrangeOrderSheet: View {
         VStack(spacing: 6) {
             HStack {
                 Text("#\(index + 1)")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .font(DesignTokens.Typography.microMetric)
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button(action: { moveLeft(index) }) {
                     Image(systemName: "arrow.left.circle")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("左移")
                 .disabled(index == 0)
 
                 Button(action: { moveRight(index) }) {
                     Image(systemName: "arrow.right.circle")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("右移")
                 .disabled(index == orderedSegments.count - 1)
             }
             .padding(.horizontal, 4)
@@ -92,6 +94,7 @@ struct ArrangeOrderSheet: View {
             Button("取消", action: onCancel)
                 .buttonStyle(.bordered)
                 .disabled(isGenerating)
+                .keyboardShortcut(.cancelAction)   // Esc 关闭（macOS sheet 默认不响应 Esc，必须显式挂）
 
             Button(action: confirm) {
                 HStack {
@@ -106,7 +109,7 @@ struct ArrangeOrderSheet: View {
             .buttonStyle(.borderedProminent)
             .disabled(isGenerating || orderedSegments.count < 2)
         }
-        .padding(16)
+        .padding(DesignTokens.Spacing.comfortable)
     }
 
     private func moveLeft(_ index: Int) {

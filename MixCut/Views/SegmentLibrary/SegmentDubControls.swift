@@ -6,9 +6,13 @@ struct SegmentDubControls: View {
     @Binding var isVoiceLocked: Bool
     @Binding var treatment: SubtitleTreatment
     let onApplyMaskToAll: () -> Void
+    /// 本分镜自己的烧录字幕字号（逐分镜独立，不是全局设置）
+    @Binding var fontRatio: Double
+    /// 把当前字号套用到**本视频**的所有分镜（与「遮挡区应用到所有分镜」同作用域）
+    let onApplyFontSizeToAll: () -> Void
 
-    /// 烧录字幕字号（全局统一，与画面预览、导出共用同一 UserDefaults 键）
-    @AppStorage(SubtitleFontSize.userDefaultsKey) private var fontRatio: Double = SubtitleFontSize.defaultRatio
+    /// 就地调整字号的弹层
+    @State private var showFontSizePopover = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -23,12 +27,12 @@ struct SegmentDubControls: View {
             // 保留原声的分镜不重配也不烧新字幕，字幕处理对其无意义
             if !isVoiceLocked {
                 VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: "captions.bubble")
-                            .font(.system(size: 9))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.tertiary)
                         Text("字幕处理")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(DesignTokens.Typography.micro)
                             .foregroundStyle(.secondary)
                     }
 
@@ -43,33 +47,72 @@ struct SegmentDubControls: View {
                 if treatment.needsMask {
                     Button(action: onApplyMaskToAll) {
                         Label("遮挡区应用到所有分镜", systemImage: "square.on.square")
-                            .font(.system(size: 10))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
                     .controlSize(.mini)
                 }
 
-                // 字幕字号（全局统一）——拖动时上方画面预览实时变化，可与原字幕比大小
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
+                // ⚠️ 字幕字号是**全局设置**（影响所有视频的所有分镜）。
+                // 早期做法是每张卡各放一个滑条：200 张卡 = 200 个重复控件，
+                // 且用户会以为只改当前分镜。后来挪到工具栏，又太远 —— 正在看这张卡的
+                // 画面预览时想调字号，得满界面找。
+                // 现在：卡片上给**就地入口**，点开是同一个全局设置的弹层，
+                // 弹层里写清作用域。控件只有一个实例，但在手边。
+                Button {
+                    showFontSizePopover = true
+                } label: {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: "textformat.size")
-                            .font(.system(size: 9))
-                            .foregroundStyle(.tertiary)
-                        Text("字幕字号")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        Text(String(format: "%.1f%%", SubtitleFontSize.clamp(fontRatio) * 100))
-                            .font(.system(size: 9, design: .rounded))
-                            .foregroundStyle(.tertiary)
+                            .font(DesignTokens.Typography.micro)
+                        Text("字幕字号 \(String(format: "%.1f%%", SubtitleFontSize.clamp(fontRatio) * 100))")
+                            .font(DesignTokens.Typography.micro)
                             .monospacedDigit()
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                        Spacer()
                     }
-                    Slider(value: $fontRatio,
-                           in: SubtitleFontSize.minRatio...SubtitleFontSize.maxRatio)
-                        .controlSize(.mini)
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
                 }
-                .help("字幕字号全片统一。拖动时上方画面里的示例字幕会实时变大变小，可与原视频字幕对比大小。")
+                .buttonStyle(.plain)
+                .help("调整这个分镜的字幕烧录字号。需要统一时，可在弹层里应用到本视频所有分镜。")
+                .popover(isPresented: $showFontSizePopover, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
+                        Text("字幕字号")
+                            .font(DesignTokens.Typography.labelEmphasis)
+                        Text("只影响这一个分镜")
+                            .font(DesignTokens.Typography.micro)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: DesignTokens.Spacing.compact) {
+                            Text("小").font(DesignTokens.Typography.micro).foregroundStyle(.tertiary)
+                            Slider(value: $fontRatio,
+                                   in: SubtitleFontSize.minRatio...SubtitleFontSize.maxRatio)
+                                .frame(width: 180)
+                            Text("大").font(DesignTokens.Typography.micro).foregroundStyle(.tertiary)
+                            Text(String(format: "%.1f%%", SubtitleFontSize.clamp(fontRatio) * 100))
+                                .font(DesignTokens.Typography.caption)
+                                .monospacedDigit()
+                                .frame(width: 42, alignment: .trailing)
+                        }
+                        Text("拖动时上方画面里的示例字幕会实时变化，可与原视频字幕比大小。")
+                            .font(DesignTokens.Typography.micro)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: 300, alignment: .leading)
+
+                        Divider()
+
+                        Button {
+                            onApplyFontSizeToAll()
+                            showFontSizePopover = false
+                        } label: {
+                            Label("应用到本视频所有分镜", systemImage: "square.on.square")
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(DesignTokens.Spacing.comfortable)
+                }
             }
         }
     }

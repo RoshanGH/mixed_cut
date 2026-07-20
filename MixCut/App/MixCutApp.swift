@@ -139,7 +139,13 @@ struct MixCutApp: App {
             Task { await Self.regenerateSegmentThumbnailsToFirstFrame(container: containerForMigration) }
             // 孤儿文件 GC：回收已删除（只删记录、未删磁盘）且无任何记录引用的视频/缩略图文件。
             // 必须放在所有迁移/恢复之后，确保 recoverFromDisk 重建的视频已被记录引用，不会误删。
-            Self.runOrphanGC(container: modelContainer)
+            //
+            // ⚠️ 启动性能：这一步要 fetch 全部 Video/Segment、遍历 physicalShots→variants（嵌套关系 faulting），
+            // 再扫 5 棵目录树（Thumbnails 已达数百文件）。以前**每次启动都同步跑**，直接拖慢冷启动。
+            // 改为「每 24 小时最多一次」+ 延后到启动完成后跑，不阻塞首屏。
+            Self.migrateGlobalSubtitleFontRatio(container: modelContainer)
+            Self.scheduleOrphanGCIfDue(container: modelContainer)
+            Self.purgeStaleTempFiles()
             #if DEBUG
             DebugSelfTest.runIfRequested(container: modelContainer)
             #endif
@@ -592,9 +598,20 @@ struct MixCutApp: App {
                 break
             }
         }
-        if fixedCount > 0 {
+        // ⚠️ 只重置 Video 不够：Project 也会被置成 .importing / .generating，
+        // 崩溃或强退后项目会**永久停在「生成中」**，用户既看不到出口也无法再次生成。
+        var fixedProjects = 0
+        if let projects = try? context.fetch(FetchDescriptor<Project>()) {
+            for p in projects where p.status == .importing || p.status == .generating {
+                // 有方案就算完成，否则回到就绪态；两者都能让用户继续操作
+                p.status = p.schemeCount > 0 ? .completed : .ready
+                fixedProjects += 1
+            }
+        }
+
+        if fixedCount > 0 || fixedProjects > 0 {
             try? context.save()
-            MixLog.info(" 启动时已重置 \(fixedCount) 个卡在中间态的视频状态")
+            MixLog.info(" 启动时已重置 \(fixedCount) 个视频 / \(fixedProjects) 个项目的中间态状态")
         }
     }
 
@@ -903,6 +920,75 @@ struct MixCutApp: App {
     ///
     /// ⚠️ 数据安全：referenced 必须收全（Video.localPath/thumbnailPath + Segment.thumbnailPath），
     /// 否则会误删在用文件。
+    /// 一次性迁移：把旧的**全局**字幕字号继承到每个分镜。
+    ///
+    /// 字幕字号原本是存在 UserDefaults 里的全局设置（改一处 = 改所有视频的所有分镜），
+    /// 后来改成逐分镜独立。若不迁移，老用户之前调好的字号会突然回落到默认值。
+    @MainActor
+    private static func migrateGlobalSubtitleFontRatio(container: ModelContainer) {
+        let doneKey = "didMigrateSubtitleFontRatioToSegment_v1"
+        guard !UserDefaults.standard.bool(forKey: doneKey) else { return }
+        defer { UserDefaults.standard.set(true, forKey: doneKey) }
+
+        // 没有旧全局值就无需迁移（新用户直接用默认）
+        guard let legacy = UserDefaults.standard.object(forKey: SubtitleFontSize.userDefaultsKey) as? Double else { return }
+        let ratio = SubtitleFontSize.clamp(legacy)
+        guard abs(ratio - SubtitleFontSize.defaultRatio) > 0.0001 else { return }
+
+        let ctx = container.mainContext
+        guard let segments = try? ctx.fetch(FetchDescriptor<Segment>()), !segments.isEmpty else { return }
+        for seg in segments { seg.subtitleFontRatio = ratio }
+        ctx.safeSave()
+        MixLog.info("[Migration] 旧全局字幕字号 \(String(format: "%.1f%%", ratio * 100)) 已继承到 \(segments.count) 个分镜")
+    }
+
+    /// 清理临时目录中的过期中间产物。
+    ///
+    /// 切片、PCM、TTS wav、合成中间文件都落在 tempDirectory。虽然各流程大多有清理，
+    /// 但异常分支（抛错 / 取消 / 崩溃）会漏删，且以前**没有任何兜底清理**，
+    /// 长期使用会持续占盘。这里在启动后台清掉超过 24 小时的残留（正在进行的任务不会被误删）。
+    @MainActor
+    private static func purgeStaleTempFiles() {
+        Task.detached(priority: .background) {
+            let dir = FileHelper.tempDirectory
+            let cutoff = Date().addingTimeInterval(-24 * 60 * 60)
+            guard let items = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+            var freed: Int64 = 0
+            var count = 0
+            for url in items {
+                guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                      let modified = values.contentModificationDate, modified < cutoff else { continue }
+                freed += Int64(values.fileSize ?? 0)
+                try? FileManager.default.removeItem(at: url)
+                count += 1
+            }
+            if count > 0 {
+                let mb = Double(freed) / 1024 / 1024
+                MixLog.info("[TempPurge] 已清理 \(count) 个过期临时文件，释放 \(String(format: "%.1f", mb))MB")
+            }
+        }
+    }
+
+    /// 按需调度孤儿文件 GC：距上次执行满 24 小时才跑，且延后到启动之后，避免拖慢冷启动。
+    @MainActor
+    private static func scheduleOrphanGCIfDue(container: ModelContainer) {
+        let key = "lastOrphanGCAt"
+        let interval: TimeInterval = 24 * 60 * 60
+        let last = UserDefaults.standard.double(forKey: key)
+        let now = Date().timeIntervalSince1970
+        guard last == 0 || now - last >= interval else {
+            MixLog.info("[OrphanGC] 距上次不足 24h，本次启动跳过")
+            return
+        }
+        Task { @MainActor in
+            // 让首屏先渲染出来，再做这件重活
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            runOrphanGC(container: container)
+            UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: key)
+        }
+    }
+
     @MainActor
     private static func runOrphanGC(container: ModelContainer) {
         let ctx = container.mainContext

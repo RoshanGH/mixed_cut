@@ -33,9 +33,9 @@ struct SidebarView: View {
                 projectVM.selectedProject = nil
                 selectedNavItem = nil
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.compact) {
                     Image(systemName: "film.stack.fill")
-                        .font(.system(size: 14))
+                        .font(DesignTokens.Typography.bodyLarge)
                         .foregroundStyle(.blue)
                     Text("MixCut")
                         .font(.system(size: 14, weight: .bold))
@@ -53,7 +53,7 @@ struct SidebarView: View {
 
             // 内容列表
             ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
                     // 项目区域
                     sectionHeader("项目")
                         .padding(.top, 4)
@@ -84,25 +84,25 @@ struct SidebarView: View {
             Button {
                 showWeChatPopover = true
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.compact) {
                     Image(systemName: "message.fill")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .frame(width: 20)
                     Text("微信")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                     Spacer()
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isWeChatHovered ? Color.secondary.opacity(0.08) : Color.clear)
                 )
             }
             .buttonStyle(.plain)
             .foregroundStyle(.tertiary)
             .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.15)) {
+                withAnimation(DesignTokens.Motion.hover) {
                     isWeChatHovered = hovering
                 }
             }
@@ -119,17 +119,17 @@ struct SidebarView: View {
             Button {
                 showSettings = true
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: DesignTokens.Spacing.compact) {
                     Image(systemName: "gear")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .frame(width: 20)
                     Text("设置")
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                     Spacer()
                     if hasMissingDependency {
                         // 未配置依赖时显示橙色感叹号
                         Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 11))
+                            .font(DesignTokens.Typography.caption)
                             .foregroundStyle(.orange)
                             .help(hasAPIKey ? "Whisper 语音模型未下载" : "AI API Key 未配置")
                     }
@@ -137,14 +137,14 @@ struct SidebarView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(isSettingsHovered ? Color.secondary.opacity(0.08) : Color.clear)
                 )
             }
             .buttonStyle(.plain)
             .foregroundStyle(hasMissingDependency ? .secondary : .tertiary)
             .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.15)) {
+                withAnimation(DesignTokens.Motion.hover) {
                     isSettingsHovered = hovering
                 }
             }
@@ -181,14 +181,14 @@ struct SidebarView: View {
             }
         } message: {
             if let project = projectToDelete {
-                Text("确定要删除项目「\(project.name)」吗？所有视频、分镜和方案数据都将被删除，此操作不可恢复。")
+                Text("将删除项目「\(project.name)」及其全部视频、分镜与方案。删除后 5 秒内可点「撤销」找回。")
             }
         }
     }
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.system(size: 10, weight: .semibold))
+            .font(DesignTokens.Typography.microEmphasis)
             .foregroundStyle(.tertiary)
             .textCase(.uppercase)
             .padding(.horizontal, 8)
@@ -207,23 +207,23 @@ struct SidebarView: View {
                 }
             }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 Image(systemName: isSelected ? "film.fill" : "film")
-                    .font(.system(size: 11))
+                    .font(DesignTokens.Typography.caption)
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                     .frame(width: 18)
                 if isRenaming {
                     TextField("项目名", text: $renameText, onCommit: {
                         commitRename(project)
                     })
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .textFieldStyle(.plain)
                     .onExitCommand {
                         renamingProjectID = nil
                     }
                 } else {
                     Text(project.name)
-                        .font(.system(size: 12))
+                        .font(DesignTokens.Typography.label)
                         .lineLimit(1)
                         .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                 }
@@ -237,14 +237,14 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.1) :
                           isHovered ? Color.secondary.opacity(0.06) : Color.clear)
             )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(DesignTokens.Motion.hover) {
                 hoveredProject = hovering ? project.id : nil
             }
         }
@@ -281,36 +281,36 @@ struct SidebarView: View {
         let shortcut = shortcutHint(for: item)
         return Button {
             guard projectVM.selectedProject != nil else { return }
-            withAnimation(.easeOut(duration: 0.18)) {
+            withAnimation(DesignTokens.Motion.transition) {
                 selectedNavItem = item
             }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 Image(systemName: item.icon)
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .frame(width: 18)
                     .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
                 Text(item.rawValue)
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                 Spacer()
                 if isHovered, !shortcut.isEmpty {
                     Text(shortcut)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(DesignTokens.Typography.microMono)
                         .foregroundStyle(.tertiary)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(isSelected ? Color.accentColor.opacity(0.1) :
                           isHovered ? Color.secondary.opacity(0.06) : Color.clear)
             )
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(DesignTokens.Motion.hover) {
                 hoveredNavItem = hovering ? item : nil
             }
         }
@@ -335,13 +335,13 @@ struct SidebarView: View {
 
     /// 微信号卡片（点击侧边栏「微信」弹出）
     private var weChatCard: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: DesignTokens.Spacing.normal) {
             Text("添加我的微信加入交流群")
-                .font(.system(size: 13, weight: .semibold))
+                .font(DesignTokens.Typography.bodyEmphasis)
 
-            VStack(spacing: 4) {
+            VStack(spacing: DesignTokens.Spacing.tight) {
                 Text("微信号")
-                    .font(.system(size: 11))
+                    .font(DesignTokens.Typography.caption)
                     .foregroundStyle(.secondary)
                 Text(weChatID)
                     .font(.system(size: 16, weight: .medium))
@@ -352,12 +352,12 @@ struct SidebarView: View {
                 copyWeChatID()
             } label: {
                 Text(didCopyWeChat ? "已复制 ✓" : "复制微信号")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
         }
-        .padding(20)
+        .padding(DesignTokens.Padding.page)
         .frame(width: 200)
     }
 
@@ -365,7 +365,7 @@ struct SidebarView: View {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(weChatID, forType: .string)
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(DesignTokens.Motion.hover) {
             didCopyWeChat = true
         }
     }
@@ -374,15 +374,15 @@ struct SidebarView: View {
         Button {
             projectVM.isCreatingProject = true
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .frame(width: 18)
                 Text("新建项目")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                 Spacer()
                 Text("⌘N")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(DesignTokens.Typography.microMono)
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 8)
@@ -400,18 +400,18 @@ struct NewProjectSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: DesignTokens.Spacing.generous) {
             VStack(spacing: 6) {
                 Image(systemName: "film.stack.fill")
                     .font(.system(size: 24))
                     .foregroundStyle(.blue)
                 Text("新建项目")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(DesignTokens.Typography.title)
             }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("项目名称")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
                 TextField("输入项目名称", text: $projectVM.newProjectName)
                     .textFieldStyle(.roundedBorder)
@@ -423,7 +423,7 @@ struct NewProjectSheet: View {
                     }
             }
 
-            HStack(spacing: 12) {
+            HStack(spacing: DesignTokens.Spacing.normal) {
                 Button("取消") {
                     projectVM.newProjectName = ""
                     dismiss()
@@ -434,9 +434,9 @@ struct NewProjectSheet: View {
                     projectVM.createProject()
                     dismiss()
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
                         Image(systemName: "plus")
-                            .font(.system(size: 11))
+                            .font(DesignTokens.Typography.caption)
                         Text("创建")
                     }
                 }

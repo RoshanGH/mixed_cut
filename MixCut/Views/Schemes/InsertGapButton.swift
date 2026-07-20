@@ -15,8 +15,9 @@ struct InsertGapButton: View {
                 .contentShape(Rectangle())   // 整列都可点
         }
         .buttonStyle(.plain)
-        .animation(.easeOut(duration: 0.12), value: isHovering)
+        .animation(DesignTokens.Motion.hover, value: isHovering)
         .onHover { isHovering = $0 }
         .help("在此处插入分镜")
+        .accessibilityLabel("在此插入分镜")
     }
 }

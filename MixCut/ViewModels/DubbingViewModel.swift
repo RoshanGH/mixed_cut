@@ -150,7 +150,15 @@ final class DubbingViewModel {
         let segById = Dictionary(uniqueKeysWithValues: reconfigurable.map { ($0.id.uuidString, $0) })
 
         let n = variantCount
+        var completedRounds = 0
         for k in 0..<n {
+            // ⚠️ 取消检查：这条链路每轮都在花钱（AI 改写 + 后续 TTS）。
+            // 以前全程没有一处 Task.isCancelled，用户关掉界面也停不下来，API 继续烧。
+            if Task.isCancelled {
+                setProgress(vid, "")
+                ToastCenter.shared.show("已停止改写，前 \(completedRounds) 套已保留", icon: "stop.circle.fill", style: .info)
+                return
+            }
             setProgress(vid, "改写第 \(k + 1)/\(n) 套…")
             do {
                 let results = try await rewriteService.rewrite(
@@ -163,10 +171,20 @@ final class DubbingViewModel {
                                   text: r.rewrittenText, context: context)
                     }
                 }
-                try? context.save()
+                context.saveOrWarn("改写台词")
+                completedRounds += 1
             } catch {
-                errorMessage = "改写失败：\(error.localizedDescription)"
-                return
+                // ⚠️ 以前这里直接 return：已落库的前几套台词留在库里，但后面的批量合成被整体跳过，
+                // 于是产生一批"有台词、没音频"的变体，用户看不出问题、也没有"只补合成"的入口。
+                // 改为 break：保留已成功的几套，并继续往下走合成，把它们补齐。
+                errorMessage = "第 \(k + 1) 套改写失败：\(Self.friendlyError(error))"
+                if completedRounds == 0 {
+                    setProgress(vid, "")
+                    return   // 一套都没成功才真的中止
+                }
+                ToastCenter.shared.show("第 \(k + 1) 套改写失败，已保留前 \(completedRounds) 套并继续合成配音",
+                                        icon: "exclamationmark.triangle.fill", style: .warning, duration: 4)
+                break
             }
         }
         setProgress(vid, "")
@@ -343,7 +361,7 @@ final class DubbingViewModel {
     /// 把底层（DashScope / 网络）错误翻译成用户能看懂的提示，并保留原始返回片段便于排查。
     /// 与 AI 改写共用 APIErrorClassifier 的识别规则，避免重复维护两套。
     static func friendlyError(_ error: Error) -> String {
-        APIErrorClassifier.friendly(error)
+        FriendlyError.reason(for: error)
     }
 
     /// qwen 克隆 TTS 偶发"续读参考内容"(合成音频比台词长、混进下一段，且常带重复)。
@@ -433,7 +451,8 @@ final class DubbingViewModel {
             dub.generatedForEndFrame = segment.endFrame
             dub.generatedForTextHash = DubStaleness.textHash(of: dub.rewrittenText)
             dub.status = .generated
-            try? context.save()
+            // TTS 已计费、音频已落盘：保存失败会变成"孤儿文件 + 必须重新付费合成"，必须告知
+            context.saveOrWarn("配音")
             // 配音落库后自动逐句对齐（whisper 对成品配音测每句时间；失败静默走比例兜底，不阻断配音成功）
             await alignCaptions(for: dub, context: context)
             lastDubErrors[dub.id] = nil   // 成功后清掉旧失败原因
@@ -449,26 +468,65 @@ final class DubbingViewModel {
         }
     }
 
-    /// 对已生成配音的 dub 做逐句对齐，写回 captionLines。失败静默走比例兜底，绝不阻断配音成功。
+    /// 逐句对齐的结局。调用方据此决定要不要给用户提示。
+    enum CaptionAlignOutcome {
+        /// ASR 成功，按真实词时间戳对齐
+        case aligned
+        /// ASR 失败，按字数比例估算（精度较差）
+        case approximated(reason: String)
+        /// 什么都没做，附原因
+        case skipped(reason: String)
+    }
+
+    /// 对已生成配音的 dub 做逐句对齐，写回 captionLines。
     /// ASR 跑成品 m4a（已 atempo，时间=分镜内 0 起）；ASRService 是 actor，await 期间不卡主线程。
-    func alignCaptions(for dub: SegmentDub, context: ModelContext) async {
-        guard let audio = dub.audioFilePath, FileManager.default.fileExists(atPath: audio) else { return }
-        guard let seg = dub.segment else { return }
+    ///
+    /// - Parameter allowApproximation: ASR 失败时是否允许用「按字数比例估算」的结果覆盖现有字幕。
+    ///   - 刚生成配音后的**自动**对齐传 `true`：此时 captionLines 本来就是空的，估算总比没有强。
+    ///   - 用户手动点「重新自动对齐」时必须传 `false`：他可能已经逐句手调过时间，
+    ///     ASR 一失败就拿估算值覆盖，等于**静默毁掉他的手工成果**且界面上毫无异样。
+    @discardableResult
+    func alignCaptions(for dub: SegmentDub, context: ModelContext,
+                       allowApproximation: Bool = true) async -> CaptionAlignOutcome {
+        guard let audio = dub.audioFilePath, FileManager.default.fileExists(atPath: audio) else {
+            return .skipped(reason: "这一版还没有生成配音音频，或音频文件已丢失。请先生成配音再对齐。")
+        }
+        guard let seg = dub.segment else {
+            return .skipped(reason: "这条配音已不属于任何分镜，无法对齐。")
+        }
         let segDur = seg.duration
-        guard segDur > 0, !dub.rewrittenText.isEmpty else { return }
+        guard segDur > 0 else {
+            return .skipped(reason: "分镜时长为 0，无法计算字幕时间。")
+        }
+        guard !dub.rewrittenText.isEmpty else {
+            return .skipped(reason: "这一版没有台词文本，没有可对齐的内容。")
+        }
+
         var words: [AlignWord] = []
         var audioDur = dub.audioDuration
+        var asrFailure: String?
         do {
             let r = try await asrService.transcribe(videoPath: audio)
             words = r.words.map { AlignWord(text: $0.word, start: $0.start, end: $0.end) }
             if r.duration > 0 { audioDur = r.duration }
         } catch {
-            MixLog.info("[Caption] 逐句对齐 ASR 失败，走比例兜底: \(error.localizedDescription)")
+            asrFailure = FriendlyError.reason(for: error)
+            MixLog.info("[Caption] 逐句对齐 ASR 失败: \(error.localizedDescription)")
         }
+
+        if let asrFailure, !allowApproximation {
+            // 拿不到真实词时间戳，又不允许用估算覆盖 → 保持现状，把原因如实告诉用户
+            return .skipped(reason: "语音识别没能跑通，无法精确对齐，已保留你当前的字幕时间未做改动。\n原因：\(asrFailure)")
+        }
+
         let lines = SentenceTimingAligner.align(text: dub.rewrittenText, words: words,
                                                 audioDuration: audioDur, segmentDuration: segDur)
         dub.captionLines = lines
-        try? context.save()
+        context.saveOrWarn("字幕时间")
+        if let asrFailure {
+            return .approximated(reason: asrFailure)
+        }
+        return .aligned
     }
 
     /// 批量合成一组分镜下所有「还没音频」的变体（一键改写后自动调用）。
@@ -481,6 +539,13 @@ final class DubbingViewModel {
         var ok = 0, fail = 0
         var errors: [String] = []   // 去重收集真实失败原因，供上层透出
         for dub in pending {
+            // ⚠️ 合成是整条链路里最长最贵的一段（每段都要调 TTS）。
+            // 用户点了停止 / 关掉界面，必须立刻停手，不能继续烧配额。
+            if Task.isCancelled {
+                setProgress(videoID, "")
+                MixLog.info("[Dub] 用户取消，已合成 \(ok) 段，剩余 \(pending.count - ok - fail) 段未合成")
+                break
+            }
             setProgress(videoID, "合成配音 \(ok + fail + 1)/\(pending.count)…")
             if await generateAudio(for: dub, context: context, silent: true) {
                 ok += 1

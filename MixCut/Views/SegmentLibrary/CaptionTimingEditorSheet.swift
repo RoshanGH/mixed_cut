@@ -16,6 +16,9 @@ struct CaptionTimingEditorSheet: View {
     @State private var confirmRealign = false
     @State private var isRealigning = false
     @State private var splittingIndex: Int?      // 正处于「拆分模式」的句子下标
+    /// 对齐/试听等操作的失败说明。非 nil 时弹 alert —— 这类操作以前失败是完全静默的，
+    /// 用户点了没反应只会以为按钮坏了。
+    @State private var realignMessage: String?
 
     private var segDuration: Double { dub.segment?.duration ?? 0 }
     private let step = 0.1
@@ -31,7 +34,7 @@ struct CaptionTimingEditorSheet: View {
                 Spacer()
             } else {
                 ScrollView {
-                    VStack(spacing: 8) {
+                    VStack(spacing: DesignTokens.Spacing.compact) {
                         ForEach(lines.indices, id: \.self) { i in
                             row(i)
                         }
@@ -51,10 +54,18 @@ struct CaptionTimingEditorSheet: View {
         } message: {
             Text("将用配音重新识别每句时间，覆盖你手动调过的时间。文本不变。")
         }
+        .alert("字幕对齐", isPresented: Binding(
+            get: { realignMessage != nil },
+            set: { if !$0 { realignMessage = nil } }
+        )) {
+            Button("知道了", role: .cancel) { realignMessage = nil }
+        } message: {
+            Text(realignMessage ?? "")
+        }
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DesignTokens.Spacing.compact) {
             Image(systemName: "captions.bubble.fill").foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text("逐句字幕时间").font(.headline)
@@ -63,8 +74,9 @@ struct CaptionTimingEditorSheet: View {
             }
             Spacer()
             Button("关闭") { dismiss() }
+                .keyboardShortcut(.cancelAction)   // Esc 关闭（macOS sheet 默认不响应 Esc，必须显式挂）
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.normal)
     }
 
     private func row(_ i: Int) -> some View {
@@ -78,10 +90,11 @@ struct CaptionTimingEditorSheet: View {
                     .font(.title3).foregroundStyle(playing ? .red : .green)
             }
             .buttonStyle(.borderless)
+            .accessibilityLabel(playing ? "停止试听" : "试听这句")
             .help("试听这句配音")
 
             VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.compact) {
                     if splittingIndex == i {
                         splitEditor(i)
                     } else {
@@ -91,26 +104,28 @@ struct CaptionTimingEditorSheet: View {
                     }
                     splitToggle(i)
                 }
-                HStack(spacing: 12) {
+                HStack(spacing: DesignTokens.Spacing.normal) {
                     timeStepper("起", value: lines[i].start) { setStart(i, $0) }
                     timeStepper("止", value: lines[i].end) { setEnd(i, $0) }
                 }
             }
         }
         .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(.controlBackgroundColor).opacity(playing ? 0.9 : 0.5)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator, lineWidth: 0.5))
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color(.controlBackgroundColor).opacity(playing ? 0.9 : 0.5)))
+        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(.separator, lineWidth: 0.5))
     }
 
     private func timeStepper(_ label: String, value: Double, _ set: @escaping (Double) -> Void) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.tight) {
             Text(label).font(.caption2).foregroundStyle(.tertiary)
             Button { set(value - step) } label: { Image(systemName: "minus") }
                 .buttonStyle(.borderless).controlSize(.small)
+                .accessibilityLabel("\(label)时间提前")
             Text(String(format: "%.1fs", value))
-                .font(.system(size: 12, design: .monospaced)).frame(width: 44)
+                .font(DesignTokens.Typography.labelMono).frame(width: 44)
             Button { set(value + step) } label: { Image(systemName: "plus") }
                 .buttonStyle(.borderless).controlSize(.small)
+                .accessibilityLabel("\(label)时间延后")
         }
     }
 
@@ -124,10 +139,11 @@ struct CaptionTimingEditorSheet: View {
             splittingIndex = active ? nil : i
         } label: {
             Image(systemName: active ? "xmark.circle.fill" : "scissors")
-                .font(.system(size: 13))
+                .font(DesignTokens.Typography.body)
                 .foregroundStyle(active ? Color.secondary : (canSplit ? Color.accentColor : Color.secondary.opacity(0.4)))
         }
         .buttonStyle(.borderless)
+        .accessibilityLabel(active ? "取消拆分" : "拆分句子")
         .disabled(!canSplit)
         .help(active ? "退出拆分" : (canSplit ? "拆分这一句：点两字之间的竖线切开" : "只有一个字，无法拆分"))
     }
@@ -143,7 +159,7 @@ struct CaptionTimingEditorSheet: View {
                 // 字之间的分界（末字后不放，避免拆出空句）
                 if k < cs.count - 1 {
                     Button { splitLine(i, afterCharIndex: k) } label: {
-                        RoundedRectangle(cornerRadius: 1)
+                        RoundedRectangle(cornerRadius: 1, style: .continuous)
                             .fill(Color.accentColor)
                             .frame(width: 3, height: 18)
                             .padding(.horizontal, 2)
@@ -178,7 +194,7 @@ struct CaptionTimingEditorSheet: View {
             Text("字幕文字要改？去改这版台词（会重新配音并重新对齐）")
                 .font(.caption2).foregroundStyle(.tertiary)
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.normal)
     }
 
     // MARK: - 编辑（即时写库，带约束）
@@ -216,14 +232,28 @@ struct CaptionTimingEditorSheet: View {
 
     private func persist() {
         dub.captionLines = lines
-        try? modelContext.save()
+        // 保存失败必须提示：否则界面显示新时间、库里还是旧值，
+        // 之后烧录字幕用的是旧时间，用户拿到成片才发现对不上。
+        modelContext.saveOrWarn("字幕时间")
     }
 
     private func realign() async {
         isRealigning = true
-        await dubVM.alignCaptions(for: dub, context: modelContext)
+        // 用户可能已经逐句手调过时间：ASR 跑不通时**不允许**用估算值覆盖，宁可什么都不改并说明原因
+        let outcome = await dubVM.alignCaptions(for: dub, context: modelContext,
+                                                allowApproximation: false)
         lines = dub.captionLines
         isRealigning = false
+
+        switch outcome {
+        case .aligned:
+            ToastCenter.shared.show("已按语音重新对齐 \(lines.count) 句字幕",
+                                    icon: "checkmark.seal.fill", style: .success)
+        case .approximated(let reason):
+            realignMessage = "已按字数比例估算字幕时间（精度有限）。\n语音识别未成功：\(reason)"
+        case .skipped(let reason):
+            realignMessage = reason
+        }
     }
 
     // MARK: - 播放某句音频段（纯音频，不用视频播放器避免黑屏）
@@ -232,8 +262,22 @@ struct CaptionTimingEditorSheet: View {
         player?.stop()
         stopToken += 1
         if playingIndex == i { playingIndex = nil; return }
-        guard let path = dub.audioFilePath,
-              let p = try? AVAudioPlayer(contentsOf: URL(fileURLWithPath: path)) else { return }
+        // 试听失败以前是完全静默的：点播放键毫无反应，用户只会以为按钮坏了
+        guard let path = dub.audioFilePath else {
+            realignMessage = "这一版还没有生成配音音频，无法试听。请先在分镜卡片上生成配音。"
+            return
+        }
+        guard FileManager.default.fileExists(atPath: path) else {
+            realignMessage = "配音音频文件已丢失（可能被清理或手动删除）。请重新生成这一版配音后再试听。"
+            return
+        }
+        let p: AVAudioPlayer
+        do {
+            p = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
+        } catch {
+            realignMessage = "配音音频无法播放：\(FriendlyError.reason(for: error))\n建议重新生成这一版配音。"
+            return
+        }
         let line = lines[i]
         p.currentTime = max(0, line.start)
         p.play()

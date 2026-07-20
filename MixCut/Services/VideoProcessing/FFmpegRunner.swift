@@ -23,13 +23,40 @@ enum FFmpegError: LocalizedError {
         case .binaryNotFound:
             return "视频处理组件未找到，请重新安装应用"
         case .executionFailed(let code, let stderr):
-            let hint = stderr.suffix(200)
-            return "视频处理失败 (exit \(code)): \(hint)"
+            // ⚠️ 不要把 ffmpeg 原始 stderr 糊给用户 —— 末尾 200 字符通常是编码器参数刷屏，
+            // 不是失败原因。这里翻译成人话 + 可执行建议，原文只进日志。
+            return Self.friendlyMessage(exitCode: code, stderr: stderr)
         case .outputParsingFailed(let detail):
             return "视频分析结果异常: \(detail)"
         case .cancelled:
             return "操作已取消"
         }
+    }
+
+    /// 把 ffmpeg 的 stderr 归类成用户能看懂、且知道下一步做什么的一句话。
+    /// 匹配不到已知模式时给通用建议，**绝不回落到原始 stderr**（那是给日志看的）。
+    private static func friendlyMessage(exitCode: Int32, stderr: String) -> String {
+        let s = stderr.lowercased()
+
+        if s.contains("no space left") || s.contains("enospc") {
+            return "磁盘空间不足，无法写入视频。请清理磁盘后重试。"
+        }
+        if s.contains("permission denied") || s.contains("operation not permitted") {
+            return "没有文件读写权限。请检查导出目录的访问权限，或换一个目录重试。"
+        }
+        if s.contains("no such file") || s.contains("does not exist") {
+            return "找不到源视频文件，它可能已被移动或删除。请重新导入该素材。"
+        }
+        if s.contains("invalid data found") || s.contains("moov atom not found") || s.contains("could not find codec") {
+            return "视频文件已损坏或格式不受支持，无法处理。建议用其他工具转成 MP4(H.264) 后重新导入。"
+        }
+        if s.contains("device") && (s.contains("busy") || s.contains("unavailable")) {
+            return "硬件编码器当前不可用。请稍后重试，或在设置中改用软件编码。"
+        }
+        if s.contains("killed") || exitCode == 137 {
+            return "视频处理被系统中断（内存不足）。请关闭其他大型应用后重试。"
+        }
+        return "视频处理失败。请重试；若反复失败，请到设置中导出诊断日志反馈（错误码 \(exitCode)）。"
     }
 }
 
@@ -145,9 +172,14 @@ actor FFmpegRunner {
     // MARK: - 核心执行
 
     /// 执行 FFmpeg 命令并返回 stdout
+    /// - Parameter timeoutSeconds: 墙钟超时（秒）。**0 表示不设**，靠 Task 取消来中断。
+    ///   ⚠️ 以前这里写死 180 秒并作用于**所有** ffmpeg 调用 —— 导出一条 3 分钟以上的成片
+    ///   必然被杀，而且报出来的是 exit code 非 0，用户根本看不出是超时。
+    ///   短任务（缩略图/切片/探测）可以传具体秒数；整片编码类调用一律用默认的 0。
     func run(
         arguments: [String],
         totalDuration: Double? = nil,
+        timeoutSeconds: Int = 0,
         onProgress: (@Sendable (FFmpegProgress) -> Void)? = nil
     ) async throws -> Data {
         let binaryPath = resolveBinary()
@@ -209,11 +241,13 @@ actor FFmpegRunner {
                     return
                 }
 
-                // 超时保护：3 分钟后终止进程（避免永久挂起；FFmpeg 处理一般几秒到几十秒）
-                DispatchQueue.global().asyncAfter(deadline: .now() + 180) {
-                    if process.isRunning {
-                        MixLog.error("FFmpeg 进程超时（3分钟），强制终止")
-                        FFmpegRunner.forceTerminate(process)
+                // 超时保护：仅在调用方显式指定时生效（0 = 不设，交给 Task 取消）
+                if timeoutSeconds > 0 {
+                    DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(timeoutSeconds)) {
+                        if process.isRunning {
+                            MixLog.error("FFmpeg 进程超时（\(timeoutSeconds)s），强制终止")
+                            FFmpegRunner.forceTerminate(process)
+                        }
                     }
                 }
             }
@@ -249,9 +283,17 @@ actor FFmpegRunner {
 
         return try await withTaskCancellationHandler(operation: {
             try await withCheckedThrowingContinuation { continuation in
-                process.terminationHandler = { _ in
+                process.terminationHandler = { proc in
                     let data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
                     let output = String(data: data, encoding: .utf8) ?? ""
+                    // ⚠️ 以前无视退出码一律返回 output：ffprobe 崩溃/被杀就返回空串，
+                    // 下游 `Double("") ?? 0` 得到时长 0 → 配音变速系数、帧数、起始时间全部按 0 计算，
+                    // 整条流程"成功"跑完但结果是错的。现在探测失败就明确抛错。
+                    guard proc.terminationStatus == 0 else {
+                        continuation.resume(throwing: FFmpegError.outputParsingFailed(
+                            "视频信息探测失败（exit \(proc.terminationStatus)）"))
+                        return
+                    }
                     continuation.resume(returning: output)
                 }
 
@@ -410,7 +452,7 @@ actor FFmpegRunner {
             "-movflags", "+faststart",
             "-y", outputPath
         ]
-        _ = try await run(arguments: args)
+        _ = try await run(arguments: args, timeoutSeconds: 600)
     }
 
     /// 切出 [start,end) 秒的音频为 16k 单声道裸 PCM(s16le)，供阿里实时 ASR 流式发送。
@@ -422,14 +464,14 @@ actor FFmpegRunner {
                     "-i", videoPath,
                     "-vn", "-ac", "1", "-ar", String(sampleRate),
                     "-f", "s16le", "-acodec", "pcm_s16le", outPath]
-        _ = try await run(arguments: args)
+        _ = try await run(arguments: args, timeoutSeconds: 600)
     }
 
     /// 整片音频转 16k 单声道裸 PCM(s16le)，供阿里整片 ASR 流式发送。
     func extractAudioPCM(from videoPath: String, sampleRate: Int = 16000, to outPath: String) async throws {
         let args = ["-y", "-i", videoPath, "-vn", "-ac", "1", "-ar", String(sampleRate),
                     "-f", "s16le", "-acodec", "pcm_s16le", outPath]
-        _ = try await run(arguments: args)
+        _ = try await run(arguments: args, timeoutSeconds: 600)
     }
 
     /// 探测视频文件是否包含音频轨道（异步，不阻塞 actor 线程）
@@ -607,7 +649,7 @@ actor FFmpegRunner {
             "-y",
             outputPath
         ]
-        _ = try await run(arguments: args)
+        _ = try await run(arguments: args, timeoutSeconds: 120)
     }
 
     // MARK: - 进度解析

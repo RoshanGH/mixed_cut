@@ -11,7 +11,7 @@ struct SchemeDetailView: View {
     var body: some View {
         HStack(spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.generous) {
                     schemeHeader
 
                     Divider()
@@ -48,27 +48,44 @@ struct SchemeDetailView: View {
                 .transition(.move(edge: .trailing))
             }
         }
-        .animation(.easeOut(duration: 0.2), value: drawerOperation)
+        .animation(DesignTokens.Motion.transition, value: drawerOperation)
         .task(id: scheme.id) { cleanupStaleDubs() }
     }
 
     /// 清理废弃的旧克隆变体：架构为「只克隆原声」，每个视频当前仅一个有效克隆声 ID
-    /// （`video.clonedVoiceId`）。voiceId 不等于当前 ID 的 SegmentDub 是历史残留，删除其音频与记录。
+    /// （`video.clonedVoiceId`）。voiceId 不等于当前 ID 的 SegmentDub 是历史残留。
+    ///
+    /// ⚠️ **只删没有音频的空壳记录**。原先这里会连音频文件一起删，是严重的静默数据丢失：
+    /// - 换 API Key 会触发重克隆并换掉 `clonedVoiceId`，于是**之前所有生成好的配音**都变成"voiceId 不一致"
+    /// - 而 `Segment.effectiveDubVariants` 并不按 voiceId 过滤，这些配音其实还能正常用、也还在被方案引用
+    /// - 结果是：用户仅仅点开一个方案详情，跨所有项目的付费配音成果就被无声抹掉，且不可撤销
+    ///
+    /// 现在的口径：有音频文件的一律保留（大不了留着不用），只回收确实没东西可丢的空记录。
     private func cleanupStaleDubs() {
         var changed = false
+        var keptCount = 0
+        // 本方案里被显式选中的配音 id：这些一旦删掉，selectedSegmentDubId 会变成悬空 UUID，
+        // 该方案会静默退回原声，而用户几乎不可能察觉。
+        let referencedDubIDs = Set(scheme.schemeSegments.compactMap { $0.selectedSegmentDubId })
+
         for ss in scheme.orderedSegments {
             guard let seg = ss.segment, let current = seg.video?.clonedVoiceId else { continue }
-            let stale = seg.segmentDubs.filter { $0.voiceId != current }
-            guard !stale.isEmpty else { continue }
-            for d in stale {
-                if let path = d.audioFilePath {
-                    try? FileManager.default.removeItem(atPath: path)
-                }
+            for d in seg.segmentDubs where d.voiceId != current {
+                // 有音频文件 → 保留，绝不删用户的付费成果
+                let hasAudio = d.audioFilePath.map { FileManager.default.fileExists(atPath: $0) } ?? false
+                if hasAudio { keptCount += 1; continue }
+                // 正被方案引用 → 保留。
+                // ⚠️ 这里必须真的查 selectedSegmentDubId。`audioFilePath == nil` 也可能只是
+                // `updateVariantText` 改文案后清空了旧音频、正在等重新合成的中间态，删掉就把选择丢了。
+                if referencedDubIDs.contains(d.id) { keptCount += 1; continue }
                 modelContext.delete(d)
                 changed = true
             }
         }
-        if changed { try? modelContext.save() }
+        if keptCount > 0 {
+            MixLog.info("[SchemeDetail] 保留 \(keptCount) 条旧音色的配音（有音频，不清理）")
+        }
+        if changed { modelContext.safeSave() }
     }
 
     private func handlePick(_ segment: Segment, operation: SegmentPickerDrawer.Operation) {
@@ -76,11 +93,18 @@ struct SchemeDetailView: View {
         case .insert(let position):
             if viewModel.insertSegment(segment, at: position, in: scheme) {
                 ToastCenter.shared.show("已插入到 #\(position)", icon: "checkmark.circle.fill", style: .success)
+                // ⚠️ 插入点必须后移一格。抽屉插入后不关闭（方便连续挑几个），
+                // 但 position 是常量：不后移的话，选 A 落到 #3、再选 B 又落到 #3 并把 A 顶到 #4，
+                // 最终顺序变成 B、A —— 与用户点选顺序正好相反。
+                drawerOperation = .insert(position: position + 1)
             }
         case .replace(let schemeSegmentID, _):
             if let schemeSeg = scheme.schemeSegments.first(where: { $0.id == schemeSegmentID }) {
                 if viewModel.replaceSegment(schemeSeg, with: segment, in: scheme) {
                     ToastCenter.shared.show("已替换 #\(schemeSeg.position)", icon: "checkmark.circle.fill", style: .success)
+                    // 替换是一次性操作：完成即收起抽屉。
+                    // 不收起的话，用户再点一个就把刚换上去的又换掉了。
+                    drawerOperation = nil
                 }
             }
         }
@@ -89,7 +113,7 @@ struct SchemeDetailView: View {
     // MARK: - 方案头部
 
     private var schemeHeader: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
             HStack(alignment: .firstTextBaseline) {
                 Text(scheme.name)
                     .font(.system(size: 20, weight: .semibold))
@@ -100,30 +124,33 @@ struct SchemeDetailView: View {
                     ToastCenter.shared.show("方案名已复制", icon: "doc.on.doc.fill")
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .font(.system(size: 10))
+                        .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
                 .help("复制方案名")
+                .accessibilityLabel("复制方案名")
 
                 Spacer()
+                // 统计数值统一用 metric 令牌：原来是 24pt `.light`，既违反"字重只用
+                // regular/medium/semibold/bold"的规范，浅色底上对比度也过低。
                 Text(String(format: "%.1f", scheme.totalDuration))
-                    .font(.system(size: 24, weight: .light, design: .rounded))
-                    .foregroundStyle(.secondary)
+                    .font(DesignTokens.Typography.metric)
+                    .foregroundStyle(.primary)
                 +
                 Text("s")
-                    .font(.system(size: 14, weight: .light))
-                    .foregroundStyle(.tertiary)
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
             }
 
             if !scheme.schemeDescription.isEmpty {
                 Text(scheme.schemeDescription)
-                    .font(.system(size: 13))
+                    .font(DesignTokens.Typography.body)
                     .foregroundStyle(.secondary)
                     .lineSpacing(3)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 InfoChip(icon: "paintpalette", text: scheme.style)
                 InfoChip(icon: "person.2", text: scheme.targetAudience)
                 InfoChip(icon: "film.stack", text: "\(scheme.segmentCount) 分镜")
@@ -132,16 +159,16 @@ struct SchemeDetailView: View {
             if !scheme.narrativeStructure.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.right.arrow.left")
-                        .font(.system(size: 9))
+                        .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.blue)
                     Text(scheme.narrativeStructure)
-                        .font(.system(size: 11))
+                        .font(DesignTokens.Typography.caption)
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(.blue.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
         }
     }
@@ -151,24 +178,24 @@ struct SchemeDetailView: View {
     private var narrativeStructureBar: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("叙事结构")
-                .font(.system(size: 12, weight: .semibold))
+                .font(DesignTokens.Typography.labelEmphasis)
                 .foregroundStyle(.secondary)
 
             // 叙事结构条：横向条形分布，节点不多但用 LazyHStack 保持懒加载一致性
+            // ⚠️ 性能：`scheme.totalDuration` 是 O(分镜数) 的 reduce。写在 ForEach 体内会变成
+            // O(n²)，且窗口宽度一变就整体重跑。这里提到循环外，只算一次。
+            let totalDuration = max(scheme.totalDuration, 1)
             GeometryReader { geo in
                 LazyHStack(spacing: 2) {
                     ForEach(scheme.orderedSegments) { schemeSeg in
                         if let segment = schemeSeg.segment {
-                            let width = max(
-                                30,
-                                geo.size.width * (segment.duration / max(scheme.totalDuration, 1))
-                            )
-                            RoundedRectangle(cornerRadius: 4)
+                            let width = max(30, geo.size.width * (segment.duration / totalDuration))
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
                                 .fill(SemanticTypeTag.color(for: segment.semanticTypes.first ?? .transition))
                                 .frame(width: width)
                                 .overlay {
                                     Text(segment.semanticTypes.map(\.rawValue).joined(separator: "/"))
-                                        .font(.system(size: 8, weight: .medium))
+                                        .font(DesignTokens.Typography.micro)
                                         .foregroundStyle(.white)
                                         .lineLimit(1)
                                         .padding(.horizontal, 2)
@@ -184,12 +211,12 @@ struct SchemeDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(usedTypes, id: \.self) { type in
-                        HStack(spacing: 4) {
+                        HStack(spacing: DesignTokens.Spacing.tight) {
                             Circle()
                                 .fill(SemanticTypeTag.color(for: type))
                                 .frame(width: 6, height: 6)
                             Text(type.rawValue)
-                                .font(.system(size: 10))
+                                .font(DesignTokens.Typography.microRegular)
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -202,9 +229,9 @@ struct SchemeDetailView: View {
 
     private var storyboardView: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 Text("分镜序列")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DesignTokens.Typography.labelEmphasis)
                     .foregroundStyle(.secondary)
                 Spacer()
                 combinationHint
@@ -253,12 +280,12 @@ struct SchemeDetailView: View {
         let total = factors.reduce(1, *)
         if total <= 1 {
             Label("暂无配音变体，导出为原声", systemImage: "waveform.slash")
-                .font(.system(size: 10))
+                .font(DesignTokens.Typography.microRegular)
                 .foregroundStyle(.tertiary)
         } else {
             Label("可生成 \(total) 个变体组合（\(factors.map(String.init).joined(separator: "×"))）",
                   systemImage: "square.grid.3x3.fill")
-                .font(.system(size: 10, weight: .medium))
+                .font(DesignTokens.Typography.micro)
                 .foregroundStyle(.tint)
                 .help("此方案每个分镜可用「原声/改写A/改写B…」，全部排列组合共 \(total) 种；锁定原声的分镜计为 ×1。导出时按当前选定的一种组合输出一条视频。")
         }
@@ -270,20 +297,20 @@ struct SchemeDetailView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 10))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.tertiary)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(DesignTokens.Typography.labelEmphasis)
                     .foregroundStyle(.secondary)
             }
             Text(text)
-                .font(.system(size: 12))
+                .font(DesignTokens.Typography.label)
                 .foregroundStyle(.secondary)
                 .lineSpacing(3)
-                .padding(12)
+                .padding(DesignTokens.Spacing.normal)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.3))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(.quaternary.opacity(DesignTokens.Palette.Alpha.medium))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -318,7 +345,7 @@ struct StoryboardCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
             if let segment = schemeSeg.segment {
                 // 视频播放器 + 序号叠加 + hover 操作按钮
                 // 用 .overlay 而非 ZStack，避免 ZStack propose 不传递 height 导致 SegmentInlinePlayer 塌缩
@@ -329,20 +356,20 @@ struct StoryboardCard: View {
                     dubAudioPath: segment.isVoiceLocked ? nil : chosenDub?.audioFilePath
                 )
                     .frame(width: cardWidth - 12, height: (cardWidth - 12) * 16.0 / 9.0)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(alignment: .topLeading) {
                         Text("#\(schemeSeg.position)")
-                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .font(DesignTokens.Typography.microMetric)
                             .foregroundStyle(.white)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 2)
                             .background(.black.opacity(0.5))
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                             .padding(4)
                     }
                     .overlay(alignment: .topTrailing) {
                         if isHovering {
-                            HStack(spacing: 4) {
+                            HStack(spacing: DesignTokens.Spacing.tight) {
                                 cardActionButton(icon: "arrow.triangle.2.circlepath",
                                                  help: "替换",
                                                  action: onReplace)
@@ -363,14 +390,14 @@ struct StoryboardCard: View {
                         }
                         if segment.semanticTypes.count > 2 {
                             Text("+\(segment.semanticTypes.count - 2)")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(DesignTokens.Typography.micro)
                                 .foregroundStyle(.secondary)
                         }
                     }
 
                     // 台词（hover 显示完整）
                     Text(segment.text)
-                        .font(.system(size: 10))
+                        .font(DesignTokens.Typography.microRegular)
                         .lineLimit(2)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -386,13 +413,13 @@ struct StoryboardCard: View {
             } else {
                 VStack(spacing: 6) {
                     Text("#\(schemeSeg.position)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .font(DesignTokens.Typography.microMetric)
                         .foregroundStyle(.tertiary)
                     Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 14))
+                        .font(DesignTokens.Typography.bodyLarge)
                         .foregroundStyle(.orange)
                     Text("分镜数据缺失")
-                        .font(.system(size: 10))
+                        .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.secondary)
                 }
                 .frame(width: cardWidth - 12, height: 80)
@@ -401,17 +428,17 @@ struct StoryboardCard: View {
         .padding(6)
         .frame(width: cardWidth)
         .background {
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(isHovering
                       ? Color(.controlBackgroundColor).opacity(0.9)
                       : Color(.controlBackgroundColor).opacity(0.5))
         }
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(.secondary.opacity(isHovering ? 0.15 : 0.06), lineWidth: 1)
         )
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(DesignTokens.Motion.hover) {
                 isHovering = hovering
             }
         }
@@ -428,7 +455,7 @@ struct StoryboardCard: View {
         if segment.isVoiceLocked {
             // 锁定分镜：只播原声，不可切换
             Label("原声（锁定）", systemImage: "lock.fill")
-                .font(.system(size: 9, weight: .medium))
+                .font(DesignTokens.Typography.micro)
                 .foregroundStyle(.orange)
                 .padding(.horizontal, 6).padding(.vertical, 2)
                 .background(Capsule().fill(Color.orange.opacity(0.15)))
@@ -437,7 +464,7 @@ struct StoryboardCard: View {
             if variants.isEmpty {
                 // 尚无任何已生成的改写版 → 仅原声，无可选
                 Label("原声", systemImage: "waveform")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(DesignTokens.Typography.micro)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Capsule().fill(Color.gray.opacity(0.12)))
@@ -463,7 +490,7 @@ struct StoryboardCard: View {
                 } label: {
                     Label(chosen == nil ? "原声" : "改写\(variantLetter(chosen!.textVariantIndex))",
                           systemImage: "waveform")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(DesignTokens.Typography.micro)
                         .foregroundStyle(chosen == nil ? Color.secondary : Color.green)
                         .padding(.horizontal, 6).padding(.vertical, 2)
                         .background(Capsule().fill(chosen == nil ? Color.gray.opacity(0.12) : Color.green.opacity(0.15)))
@@ -480,7 +507,7 @@ struct StoryboardCard: View {
                                   disabled: Bool = false) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 9, weight: .semibold))
+                .font(DesignTokens.Typography.microEmphasis)
                 .foregroundStyle(.white)
                 .frame(width: 22, height: 22)
                 .background(disabled ? .gray.opacity(0.4) : .black.opacity(0.6))
@@ -489,6 +516,7 @@ struct StoryboardCard: View {
         .buttonStyle(.plain)
         .disabled(disabled)
         .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -519,31 +547,36 @@ struct StoryboardTimeRow: View {
                            frame: Int,
                            onMinus: @escaping () -> Void,
                            onPlus: @escaping () -> Void) -> some View {
-        HStack(spacing: 3) {
+        // VoiceOver 用「起始/结束」而不是单字「始/止」，读起来更清楚
+        let spoken = label == "始" ? "起始时间" : "结束时间"
+        return HStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 8, weight: .semibold))
+                .font(DesignTokens.Typography.microEmphasis)
                 .foregroundStyle(.tertiary)
-            miniAdjustButton(icon: "minus", action: onMinus)
+            miniAdjustButton(icon: "minus", accessibilityLabel: "\(spoken)提前", action: onMinus)
             Text(FrameTime.timecode(frame: frame, fps: fps))
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(DesignTokens.Typography.microMonoStrong)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
-            miniAdjustButton(icon: "plus", action: onPlus)
+            miniAdjustButton(icon: "plus", accessibilityLabel: "\(spoken)延后", action: onPlus)
         }
     }
 
-    private func miniAdjustButton(icon: String, action: @escaping () -> Void) -> some View {
+    private func miniAdjustButton(icon: String,
+                                  accessibilityLabel: String,
+                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 6, weight: .heavy))
+                .font(.system(size: 10, weight: .heavy))
                 .foregroundStyle(.tertiary)
                 .frame(width: 16, height: 16)
-                .background(.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .background(.secondary.opacity(DesignTokens.Palette.Alpha.subtle))
+                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 
@@ -554,17 +587,17 @@ struct InfoChip: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: DesignTokens.Spacing.tight) {
             Image(systemName: icon)
-                .font(.system(size: 9))
+                .font(DesignTokens.Typography.microRegular)
                 .foregroundStyle(.tertiary)
             Text(text)
-                .font(.system(size: 11))
+                .font(DesignTokens.Typography.caption)
         }
         .foregroundStyle(.secondary)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(.secondary.opacity(0.06))
+        .background(.secondary.opacity(DesignTokens.Palette.Alpha.subtle))
         .clipShape(Capsule())
     }
 }

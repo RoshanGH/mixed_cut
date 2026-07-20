@@ -37,6 +37,7 @@ final class ShotEditViewModel {
         let existing = segment.physicalShots.sorted { $0.orderIndex < $1.orderIndex }
         if !existing.isEmpty {
             shots = existing
+            reconcileStaleGenerating(in: existing, modelContext: modelContext)
             loadSelectionsFromShots()
             await ensureShotThumbnails(segment: segment, modelContext: modelContext)
             return
@@ -68,6 +69,42 @@ final class ShotEditViewModel {
         }
     }
 
+    /// 对账「僵尸生成中」变体。
+    ///
+    /// `generating` 状态是落库的，但轮询任务活在本 VM 里：一旦用户关掉工作区或退出 App，
+    /// 轮询就没了，而变体会**永远停在转圈状态且没有任何操作按钮**（`.generating` 分支不给按钮），
+    /// 用户只能删掉它 —— 可它很可能已经在云端跑成功并且**已经扣过费**。
+    ///
+    /// 这里在进入工作区时对账：凡是 `generating` 但当前并无活跃轮询的，一律降级为 `timedOut`。
+    /// `timedOut` 已有完整的「重试（凭 taskId 取回结果，不重复扣费）」路径，一步接回既有能力。
+    private func reconcileStaleGenerating(in shots: [PhysicalShot], modelContext: ModelContext) {
+        var changed = 0
+        for shot in shots {
+            for variant in shot.variants where variant.status == .generating {
+                // ⚠️ 必须查**进程级**注册表，不能只查本 VM 的 busyVariantIDs：
+                // 工作区 sheet 每次弹出都会新建一个 ShotEditViewModel，而上一个 VM 发起的轮询
+                // Task 在 sheet 关闭后仍在后台跑。只看本 VM 会把"其实正在正常轮询"的变体
+                // 误判成超时并落库，用户此时点重试还会与旧任务并发写同一条记录。
+                guard !ShotVariantPollRegistry.shared.isPolling(variant.id) else { continue }
+                // 按有无 taskId 分流，确保每种状态都落到一个**可用**的按钮上：
+                // - 有 taskId → timedOut：「重试」= 凭任务号取回结果，不重复扣费
+                // - 无 taskId → failed：「重试」= 重新提交（此前根本没提交成功，未扣费）
+                if let tid = variant.taskId, !tid.isEmpty {
+                    variant.status = .timedOut
+                    variant.friendlyError = "上次等待被中断（关闭了工作区或退出 App）。任务可能已在云端完成，点「重试」取回结果，不会重复扣费。"
+                } else {
+                    variant.status = .failed
+                    variant.friendlyError = "上次生成被中断，未拿到任务号（未扣费）。点「重试」重新发起。"
+                }
+                changed += 1
+            }
+        }
+        if changed > 0 {
+            try? modelContext.save()
+            MixLog.info("[ShotEditDiag] 对账僵尸生成中变体 \(changed) 个 → 已转为「已超时」，可重试取回")
+        }
+    }
+
     /// 从持久化的 PhysicalShot.selectedVariantID 恢复选择状态（重开工作区/调整后保持）。
     private func loadSelectionsFromShots() {
         var sel: [Int: SlotChoice] = [:]
@@ -94,6 +131,8 @@ final class ShotEditViewModel {
             do {
                 try await ffmpeg.generateThumbnail(from: video.localPath, at: at, to: url.path)
                 shot.thumbnailPath = url.path
+                // 固定路径重生成：清掉可能存在的「解码失败」记录，否则新图不会被读取
+                ThumbnailCache.shared.invalidate(path: url.path)
             } catch { /* 缩略图失败不阻塞，保留占位 */ }
         }
         try? modelContext.save()
@@ -109,11 +148,45 @@ final class ShotEditViewModel {
 
     /// 合并 i 与 i+1（改变镜头数 → applyPartition）
     func mergeShots(at i: Int, segment: Segment, modelContext: ModelContext) {
-        applyPartition(ShotPartitionEditor.merge(currentSpans(), at: i), segment: segment, modelContext: modelContext)
+        let result = ShotPartitionEditor.merge(currentSpans(), at: i)
+        guard result != currentSpans() else {
+            errorMessage = "这两个镜头无法合并（可能已经是同一个镜头，或索引越界）。"
+            return
+        }
+        applyPartition(result, segment: segment, modelContext: modelContext)
     }
     /// 中点拆分镜头 i
     func splitShot(at i: Int, segment: Segment, modelContext: ModelContext) {
-        applyPartition(ShotPartitionEditor.splitAtMidpoint(currentSpans(), at: i), segment: segment, modelContext: modelContext)
+        let result = ShotPartitionEditor.splitAtMidpoint(currentSpans(), at: i)
+        // ⚠️ `splitAtMidpoint` 在镜头太短时会原样返回，`applyPartition` 又会 no-op 早返回，
+        // 于是按钮点下去**什么都不发生、也没有任何提示**，用起来就像按钮坏了。
+        guard result != currentSpans() else {
+            errorMessage = "这个镜头太短，拆开后每段不足最小长度，无法再拆分。"
+            return
+        }
+        applyPartition(result, segment: segment, modelContext: modelContext)
+    }
+
+    /// 删掉某镜头名下所有变体的落盘文件，返回**已完成（即已计费出片）**的变体数量。
+    /// 合并/拆分/移动边界都会作废这些变体，三处必须行为一致。
+    @discardableResult
+    private func purgeVariantFiles(of shot: PhysicalShot) -> Int {
+        var completed = 0
+        for v in shot.variants {
+            if v.status == .completed { completed += 1 }
+            if let p = v.resultVideoPath { try? FileManager.default.removeItem(atPath: p) }
+            if let t = v.thumbnailPath { try? FileManager.default.removeItem(atPath: t) }
+        }
+        return completed
+    }
+
+    /// 明确告知用户「刚才那一下丢掉了几个已生成的画面替换」。
+    /// 这些是按次计费生成出来的，静默销毁最不能接受——用户往往是误点了那个无边框小图标。
+    private func notifyDiscardedVariants(_ count: Int) {
+        guard count > 0 else { return }
+        ToastCenter.shared.show(
+            "调整镜头切分已丢弃 \(count) 个已生成的替换画面（需要的话要重新生成，会重新计费）",
+            icon: "exclamationmark.triangle.fill", style: .warning, duration: 6)
     }
 
     /// 分区对账（按 (start,end) 相等保留，否则删/建）+ no-op 早返回 + 作废替换画面。
@@ -131,9 +204,17 @@ final class ShotEditViewModel {
                 modelContext.insert(s)
             }
         }
-        for o in old where !reused.contains(o.id) { modelContext.delete(o) }  // 变体随 cascade 删
+        // ⚠️ 删镜头前必须先删它名下变体的**磁盘文件**。
+        // 只 delete(o) 靠 cascade 清数据库记录的话，几十 MB 的结果 mp4 会永远留在盘上、
+        // 再也没人引用得到（endBoundaryEdit 是删文件的，这里以前漏了，行为不一致）。
+        var discardedCount = 0
+        for o in old where !reused.contains(o.id) {
+            discardedCount += purgeVariantFiles(of: o)
+            modelContext.delete(o)
+        }
         segment.invalidateReplacedPicture()
         try? modelContext.save()
+        notifyDiscardedVariants(discardedCount)
         shots = segment.physicalShots.sorted { $0.orderIndex < $1.orderIndex }
         loadSelectionsFromShots()
         Task { await ensureShotThumbnails(segment: segment, modelContext: modelContext) }
@@ -159,18 +240,17 @@ final class ShotEditViewModel {
         guard boundaryDirty else { return }
         boundaryDirty = false
         let sorted = shots.sorted { $0.orderIndex < $1.orderIndex }
+        var discardedCount = 0
         for idx in [b, b + 1] where idx >= 0 && idx < sorted.count {
             let s = sorted[idx]
-            for v in s.variants {
-                if let p = v.resultVideoPath { try? FileManager.default.removeItem(atPath: p) }
-                if let t = v.thumbnailPath { try? FileManager.default.removeItem(atPath: t) }
-                modelContext.delete(v)
-            }
+            discardedCount += purgeVariantFiles(of: s)
+            for v in s.variants { modelContext.delete(v) }
             s.selectedVariantID = nil
             s.thumbnailPath = nil
         }
         segment.invalidateReplacedPicture()
         try? modelContext.save()
+        notifyDiscardedVariants(discardedCount)
         shots = segment.physicalShots.sorted { $0.orderIndex < $1.orderIndex }
         loadSelectionsFromShots()
         Task { await ensureShotThumbnails(segment: segment, modelContext: modelContext) }
@@ -205,6 +285,15 @@ final class ShotEditViewModel {
         errorMessage = nil
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { errorMessage = "请输入提示词"; return }
+
+        // ⚠️ 防重复提交：每次提交都是一次真实计费。
+        // 这里**不能**靠 `busyVariantIDs` —— 那是按 variant.id 记的，而本方法每次都新建一个变体，
+        // 所以连点两下会拿到两个不同 id，防重入形同虚设，用户被扣两次钱。
+        // 改为按「同一镜头 + 同一提示词 + 正在生成」判重。
+        if shot.variants.contains(where: { $0.status == .generating && $0.prompt == trimmed }) {
+            errorMessage = "这条提示词正在生成中，请勿重复提交（每次提交都会计费）"
+            return
+        }
         guard let (video, hash) = validatedVideo(shot: shot, segment: segment) else { return }
 
         let variant = ShotVariant(prompt: trimmed)
@@ -243,14 +332,21 @@ final class ShotEditViewModel {
             // 理论不该发生（timedOut 一定有 taskId）；兜底提示
             errorMessage = "该占位缺少任务号，无法查询，请重新生成"; return
         }
-        guard let (video, hash) = validatedVideo(shot: shot, segment: segment) else { return }
+        guard let (_, hash) = validatedVideo(shot: shot, segment: segment) else { return }
 
         let vid = variant.id
         variant.status = .generating          // 展示「云端生成中」并自动续查
         try? modelContext.save()
         busyVariantIDs.insert(vid)
+        // 同时登记到进程级注册表：本 VM 可能被销毁（sheet 关闭），但轮询 Task 还在跑，
+        // 下一个 VM 靠这个注册表才知道"有人正在轮询"，不会误判为僵尸。
+        ShotVariantPollRegistry.shared.begin(vid)
         progress[vid] = "生成中"
-        defer { busyVariantIDs.remove(vid); progress[vid] = nil }
+        defer {
+            busyVariantIDs.remove(vid)
+            ShotVariantPollRegistry.shared.end(vid)
+            progress[vid] = nil
+        }
 
         do {
             let outcome = try await variantService.resume(
@@ -262,7 +358,7 @@ final class ShotEditViewModel {
             // 网络抖动等：保持「已超时」，让用户可再次重试（taskId 仍在）
             variant.status = .timedOut
             try? modelContext.save()
-            errorMessage = "查询任务失败：\(APIErrorClassifier.friendly(error))"
+            errorMessage = "查询任务失败：\(FriendlyError.reason(for: error))"
         }
     }
 
@@ -272,8 +368,15 @@ final class ShotEditViewModel {
                              video: Video, hash: String, prompt: String, modelContext: ModelContext) async {
         let vid = variant.id
         busyVariantIDs.insert(vid)
+        // 同时登记到进程级注册表：本 VM 可能被销毁（sheet 关闭），但轮询 Task 还在跑，
+        // 下一个 VM 靠这个注册表才知道"有人正在轮询"，不会误判为僵尸。
+        ShotVariantPollRegistry.shared.begin(vid)
         progress[vid] = "生成中"
-        defer { busyVariantIDs.remove(vid); progress[vid] = nil }
+        defer {
+            busyVariantIDs.remove(vid)
+            ShotVariantPollRegistry.shared.end(vid)
+            progress[vid] = nil
+        }
 
         do {
             let outcome = try await variantService.generate(
@@ -286,32 +389,61 @@ final class ShotEditViewModel {
                 fps: video.fps,
                 prompt: prompt,
                 // 提交成功即落库 taskId（此后超时/崩溃/退出都不丢，可凭它查回结果）
-                onTaskCreated: { [weak self] tid in Task { @MainActor in self?.persistTaskID(tid, variantID: vid, modelContext: modelContext) } },
+                //
+                // ⚠️ 这里**不能**用 `[weak self]` + 延迟 Task：用户关掉工作区后 VM 就释放了，
+                // self 变 nil → taskId 永远写不进库 → 钱已经花了却查不回结果，
+                // 而且对账时会因为查不到 taskId 而告诉用户"未扣费"（假话）。
+                // 改为直接强引用 modelContext + 变体对象落库，不经过 VM。
+                onTaskCreated: { tid in
+                    Task { @MainActor in
+                        Self.persistTaskID(tid, to: variant, modelContext: modelContext)
+                    }
+                },
                 onStatus: { [weak self] s in Task { @MainActor in self?.progress[vid] = s } }
             )
             apply(outcome, to: variant, modelContext: modelContext)
         } catch {
-            // 只有**提交阶段失败**（切片/提交 HTTP/缺 key）才会到这里：无 taskId、没扣费，可重试(=重新提交)
-            variant.status = .failed
-            variant.friendlyError = "提交失败：\(APIErrorClassifier.friendly(error))"
+            // ⚠️ 不能一律当成"提交阶段失败、未扣费"：拿到 taskId **之后**的轮询网络错误 /
+            // 结果下载失败同样会抛到这里。若此时判成 .failed，UI 会给出「重新生成」→
+            // 重新提交 = **第二次扣费**，而第一次已付费的结果被丢弃。
+            // 判据只看有没有 taskId：有就是"已提交、已可能计费"，走免费的重试取回路径。
+            if let tid = variant.taskId, !tid.isEmpty {
+                variant.status = .timedOut
+                variant.friendlyError = "等待结果时中断（\(FriendlyError.reason(for: error))）。任务已提交到云端，点「重试」取回结果，不会重复扣费。"
+            } else {
+                variant.status = .failed
+                variant.friendlyError = "提交失败：\(FriendlyError.reason(for: error))"
+            }
             try? modelContext.save()
             errorMessage = variant.friendlyError
         }
     }
 
-    /// 落库 taskId（提交成功即调用）。按 id 在当前 shots 中定位变体，避免跨隔离捕获 @Model。
-    private func persistTaskID(_ taskId: String, variantID: UUID, modelContext: ModelContext) {
-        for s in shots {
-            if let v = s.variants.first(where: { $0.id == variantID }) {
-                v.taskId = taskId
-                try? modelContext.save()
-                return
-            }
-        }
+    /// 落库 taskId（提交成功即调用）。
+    ///
+    /// 设计成 `static` 且直接收变体对象：调用方是 service 的回调，可能在 VM 已释放后才执行，
+    /// 走实例方法会因 `self == nil` 而**静默丢掉 taskId**（等于丢掉已付费任务的唯一凭据）。
+    private static func persistTaskID(_ taskId: String, to variant: ShotVariant, modelContext: ModelContext) {
+        guard variant.modelContext != nil else { return }   // 变体已被删除则跳过，避免写已删对象崩溃
+        variant.taskId = taskId
+        modelContext.safeSave()
     }
 
     /// 把轮询终局落到变体状态 + 文案。
+    ///
+    /// ⚠️ 必须先判变体是否已被删除。轮询要等 2~4 分钟，这期间用户完全可能合并/拆分镜头
+    /// （cascade 删掉 ShotVariant）。往已删对象写属性会触发 SwiftData 断言、直接崩溃。
+    /// 同 `persistTaskID` 的守卫，之前只防住了那一处，这里漏了。
     private func apply(_ outcome: ShotVariantService.Outcome, to variant: ShotVariant, modelContext: ModelContext) {
+        guard variant.modelContext != nil else {
+            // 变体已不在了：云端若已出片，落盘文件没人引用得到，顺手清掉免得堆垃圾
+            if case .completed(let r) = outcome {
+                try? FileManager.default.removeItem(atPath: r.resultVideoPath)
+                try? FileManager.default.removeItem(atPath: r.thumbnailPath)
+                MixLog.info("[ShotEdit] 变体已被删除，丢弃云端返回结果并清理落盘文件")
+            }
+            return
+        }
         switch outcome {
         case .completed(let r):
             variant.resultVideoPath = r.resultVideoPath
@@ -328,7 +460,8 @@ final class ShotEditViewModel {
             variant.status = .failed
             variant.friendlyError = "云端结果已过期（阿里仅保留 24 小时），需重新生成（会重新计费）。"
         }
-        try? modelContext.save()
+        // 这是**已付费任务的终局状态**，保存失败必须让用户知道，不能 try? 吞掉
+        modelContext.saveOrWarn("画面替换结果")
     }
 
     /// 校验并取出可用的 video + hash；缺信息/不可编辑时置 errorMessage 并返回 nil。
@@ -414,14 +547,38 @@ final class ShotEditViewModel {
             try? await FFmpegRunner().generateThumbnail(from: destURL.path, at: 0.0, to: thumbURL.path)
             // 就地写回原分镜（不新增 Segment/Video）
             segment.replacedPictureVideoPath = destURL.path
+            // 输出路径是确定性的（重新合成后路径不变），必须显式让存在性缓存失效
+            segment.invalidateReplacedExistsCache()
             segment.replacedPictureThumbnailPath = thumbURL.path
             segment.replacedPictureFrameCount = result.totalFrames   // = 探测到的实际帧数
             segment.pictureShowsReplaced = true
-            try? modelContext.save()
+            // 合成产物已移到最终目录：保存失败会导致"文件在、替换画面却丢了"，必须告知
+            modelContext.saveOrWarn("替换画面")
             return true
         } catch {
             errorMessage = "合成失败：\(error.localizedDescription)"
             return false
         }
     }
+}
+
+
+// MARK: - 轮询注册表
+
+/// 进程级「正在轮询中的变体」注册表。
+///
+/// 为什么需要它：分镜头替换工作区是 sheet，每次弹出都会新建一个 `ShotEditViewModel`
+/// （`@State private var vm = ShotEditViewModel()`）。而生成/重试是用裸 `Task { }` 发起的，
+/// sheet 关闭后 Task 并不会自动取消，仍在后台轮询并写库。
+/// 因此"是否有人在轮询"这件事**不能只存在某个 VM 实例的内存里**，否则重开工作区时
+/// `reconcileStaleGenerating` 会把仍在正常轮询的变体误判为超时。
+@MainActor
+final class ShotVariantPollRegistry {
+    static let shared = ShotVariantPollRegistry()
+    private var polling: Set<UUID> = []
+    private init() {}
+
+    func begin(_ id: UUID) { polling.insert(id) }
+    func end(_ id: UUID) { polling.remove(id) }
+    func isPolling(_ id: UUID) -> Bool { polling.contains(id) }
 }

@@ -30,8 +30,12 @@ actor VoiceCloneService {
     /// 用参考音频注册克隆音色，返回 voice_id。
     func enroll(referenceAudioPath: String, preferredName: String) async throws -> String {
         guard let key = apiKeyProvider(), !key.isEmpty else { throw CloneError.missingAPIKey }
-        let data = try Data(contentsOf: URL(fileURLWithPath: referenceAudioPath))
-        let b64 = data.base64EncodedString()
+        // 同 Wan25：映射只覆盖 base64 编码，不跨越后面的网络请求（避免文件被清理时 SIGBUS）
+        let b64: String = try {
+            let data = try Data(contentsOf: URL(fileURLWithPath: referenceAudioPath), options: .mappedIfSafe)
+            MixLog.info("[VoiceClone] 参考音频 \(data.count / 1024) KB")
+            return data.base64EncodedString()
+        }()
 
         let body: [String: Any] = [
             "model": "qwen-voice-enrollment",

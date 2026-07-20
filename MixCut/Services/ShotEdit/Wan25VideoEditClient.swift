@@ -51,8 +51,15 @@ actor Wan25VideoEditClient {
     func submit(videoFileURL: URL, prompt: String) async throws -> String {
         guard let key = apiKeyProvider(), !key.isEmpty else { throw ClientError.missingAPIKey }
 
-        let data = try Data(contentsOf: videoFileURL)
-        let b64 = data.base64EncodedString()
+        // 内存映射读取：切片可能有几十 MB，`Data(contentsOf:)` 会先整份拷进堆内存，
+        // 叠加 base64（×1.33）和 JSON 序列化后峰值内存翻好几倍。mappedIfSafe 省掉这一次拷贝。
+        // ⚠️ 映射必须在编码完成后立即释放：映射存活期间文件被删/截断会 SIGBUS 崩溃，
+        // 而下面的网络请求可能持续几分钟，绝不能让映射跨过它。
+        let b64: String = try {
+            let data = try Data(contentsOf: videoFileURL, options: .mappedIfSafe)
+            MixLog.info("[Wan25] 上传切片 \(videoFileURL.lastPathComponent)，\(data.count / 1024) KB")
+            return data.base64EncodedString()
+        }()
         let body: [String: Any] = [
             "model": Self.model,
             "input": [

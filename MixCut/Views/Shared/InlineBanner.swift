@@ -47,14 +47,14 @@ struct InlineBanner: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: DesignTokens.Spacing.compact) {
             Image(systemName: style.iconName)
-                .font(.system(size: 13))
+                .font(DesignTokens.Typography.body)
                 .foregroundStyle(style.color)
                 .padding(.top, 1)
 
             Text(message)
-                .font(.system(size: 11))
+                .font(DesignTokens.Typography.caption)
                 .foregroundStyle(.primary.opacity(0.85))
                 .lineLimit(4)
                 .textSelection(.enabled)
@@ -64,7 +64,7 @@ struct InlineBanner: View {
                 Button("重试", action: onRetry)
                     .buttonStyle(.borderless)
                     .controlSize(.small)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignTokens.Typography.captionEmphasis)
                     .foregroundStyle(style.color)
             }
 
@@ -73,27 +73,28 @@ struct InlineBanner: View {
                     onDismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(DesignTokens.Typography.microBold)
                         .foregroundStyle(.tertiary)
                         .padding(4)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("关闭提示")
             }
         }
         .padding(10)
         .background(style.color.opacity(0.06))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(style.color.opacity(0.15), lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .transition(.move(edge: .top).combined(with: .opacity))
         .task(id: message) {
             // 如果设置了自动消失，倒计时后调用 onDismiss
             guard let after = autoDismissAfter, let onDismiss else { return }
             try? await Task.sleep(nanoseconds: UInt64(after * 1_000_000_000))
             if !Task.isCancelled {
-                withAnimation(.easeOut(duration: 0.25)) {
+                withAnimation(DesignTokens.Motion.transition) {
                     onDismiss()
                 }
             }

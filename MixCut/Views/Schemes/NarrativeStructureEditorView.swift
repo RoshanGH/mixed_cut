@@ -33,12 +33,12 @@ struct NarrativeStructureEditorView: View {
             Divider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.comfortable) {
                     previewNameSection
                     slotsSection
                     addSlotButton
                 }
-                .padding(20)
+                .padding(DesignTokens.Padding.page)
             }
 
             Divider()
@@ -62,12 +62,12 @@ struct NarrativeStructureEditorView: View {
     // MARK: - 顶部标题
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DesignTokens.Spacing.compact) {
             Image(systemName: "list.bullet.indent")
-                .font(.system(size: 14))
+                .font(DesignTokens.Typography.bodyLarge)
                 .foregroundStyle(.purple)
             Text("叙事结构编辑器")
-                .font(.system(size: 14, weight: .semibold))
+                .font(DesignTokens.Typography.bodyLargeEmphasis)
             Spacer()
             Button {
                 dismiss()
@@ -77,6 +77,7 @@ struct NarrativeStructureEditorView: View {
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("关闭")
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -87,7 +88,7 @@ struct NarrativeStructureEditorView: View {
     private var previewNameSection: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("结构名（自动生成）")
-                .font(.system(size: 11, weight: .semibold))
+                .font(DesignTokens.Typography.captionEmphasis)
                 .foregroundStyle(.secondary)
             Text(previewName.isEmpty ? "添加段位与标签后自动生成" : previewName)
                 .font(.system(size: 13, weight: .medium))
@@ -96,8 +97,8 @@ struct NarrativeStructureEditorView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.quaternary.opacity(0.3))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(.quaternary.opacity(DesignTokens.Palette.Alpha.medium))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
     }
 
@@ -111,14 +112,14 @@ struct NarrativeStructureEditorView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("段位（顺序 = 成片顺序，可拖拽排序）")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(DesignTokens.Typography.captionEmphasis)
                     .foregroundStyle(.secondary)
                 Spacer()
             }
 
             if slots.isEmpty {
                 Text("还没有段位，点下方「＋ 添加一段」开始")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 8)
@@ -153,7 +154,7 @@ struct NarrativeStructureEditorView: View {
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(isInvalid ? Color.red : Color.purple))
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
                 // 已选标签 chips + ＋加标签
                 FlowChips {
                     ForEach(row.tags, id: \.self) { tag in
@@ -164,9 +165,9 @@ struct NarrativeStructureEditorView: View {
                     } label: {
                         HStack(spacing: 3) {
                             Image(systemName: "plus")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(DesignTokens.Typography.microBold)
                             Text("加标签")
-                                .font(.system(size: 11))
+                                .font(DesignTokens.Typography.caption)
                         }
                         .foregroundStyle(.purple)
                         .padding(.horizontal, 8)
@@ -180,17 +181,17 @@ struct NarrativeStructureEditorView: View {
 
                 // 时长区间过滤(留空=不限)
                 HStack(spacing: 6) {
-                    Image(systemName: "timer").font(.system(size: 10)).foregroundStyle(.secondary)
-                    Text("时长").font(.system(size: 11)).foregroundStyle(.secondary)
+                    Image(systemName: "timer").font(DesignTokens.Typography.microRegular).foregroundStyle(.secondary)
+                    Text("时长").font(DesignTokens.Typography.caption).foregroundStyle(.secondary)
                     TextField("不限", text: durationBinding(for: index, keyPath: \.minDuration))
-                        .frame(width: 44).textFieldStyle(.roundedBorder).font(.system(size: 11))
-                    Text("~").font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(width: 44).textFieldStyle(.roundedBorder).font(DesignTokens.Typography.caption)
+                    Text("~").font(DesignTokens.Typography.caption).foregroundStyle(.secondary)
                     TextField("不限", text: durationBinding(for: index, keyPath: \.maxDuration))
-                        .frame(width: 44).textFieldStyle(.roundedBorder).font(.system(size: 11))
-                    Text("秒").font(.system(size: 11)).foregroundStyle(.secondary)
+                        .frame(width: 44).textFieldStyle(.roundedBorder).font(DesignTokens.Typography.caption)
+                    Text("秒").font(DesignTokens.Typography.caption).foregroundStyle(.secondary)
                     if let lo = row.minDuration, let hi = row.maxDuration, lo > hi {
                         Label("最短>最长", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10)).foregroundStyle(.orange)
+                            .font(DesignTokens.Typography.microRegular).foregroundStyle(.orange)
                     }
                 }
 
@@ -198,20 +199,20 @@ struct NarrativeStructureEditorView: View {
                 HStack(spacing: 6) {
                     if row.tags.isEmpty {
                         Label("未选标签", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.red)
                     } else if candidateCount == 0 {
                         Label("无候选分镜", systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10))
+                            .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.red)
                     } else if candidateCount > narrativeCandidateLimit {
                         // 超过上限：只取前 30 送 AI，明确告知避免误以为变体会更多
                         Text("候选 \(sentToAI)（共 \(candidateCount)，按质量取前 \(narrativeCandidateLimit) 送 AI）")
-                            .font(.system(size: 10, design: .rounded))
+                            .font(DesignTokens.Typography.microRounded)
                             .foregroundStyle(.secondary)
                     } else {
                         Text("候选 \(candidateCount)")
-                            .font(.system(size: 10, design: .rounded))
+                            .font(DesignTokens.Typography.microRounded)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -224,18 +225,19 @@ struct NarrativeStructureEditorView: View {
                 deleteSlot(at: index)
             } label: {
                 Image(systemName: "trash")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("删除段位")
         }
         .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(isInvalid ? Color.red.opacity(0.05) : Color.secondary.opacity(0.04))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .strokeBorder(isInvalid ? Color.red.opacity(0.3) : Color.clear, lineWidth: 1)
         )
     }
@@ -243,14 +245,15 @@ struct NarrativeStructureEditorView: View {
     private func tagChip(_ tag: String, slotIndex: Int) -> some View {
         HStack(spacing: 3) {
             Text(tag)
-                .font(.system(size: 11, weight: .medium))
+                .font(DesignTokens.Typography.captionStrong)
             Button {
                 removeTag(tag, fromSlotAt: slotIndex)
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(DesignTokens.Typography.microBold)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("移除标签")
         }
         .foregroundStyle(colorForTag(tag))
         .padding(.horizontal, 8)
@@ -265,15 +268,15 @@ struct NarrativeStructureEditorView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: "plus.circle.fill")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                 Text("添加一段")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignTokens.Typography.labelStrong)
             }
             .foregroundStyle(.purple)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 10)
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .strokeBorder(Color.purple.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4]))
             )
         }
@@ -283,10 +286,44 @@ struct NarrativeStructureEditorView: View {
     // MARK: - 底部：生成数 + 生成按钮
 
     private var footer: some View {
-        HStack(spacing: 16) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
+            // 生成失败的原因必须**看得见**。这个编辑器原来根本没有展示 errorMessage 的地方，
+            // 失败时只有一个转瞬即逝的 Toast，用户回过神来已经不知道发生了什么。
+            if let message = viewModel.errorMessage, !message.isEmpty {
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(DesignTokens.Palette.Status.warning)
+                    Text(message)
+                        .font(DesignTokens.Typography.caption)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button {
+                        viewModel.errorMessage = nil
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(DesignTokens.Typography.microRegular)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("关闭提示")
+                }
+                .padding(DesignTokens.Spacing.compact)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DesignTokens.Palette.Status.warning.opacity(0.1),
+                            in: RoundedRectangle(cornerRadius: DesignTokens.Corner.small, style: .continuous))
+            }
+
+            footerControls
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private var footerControls: some View {
+        HStack(spacing: DesignTokens.Spacing.comfortable) {
             HStack(spacing: 6) {
                 Text("生成变体数")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                 Picker("", selection: $requestedCount) {
                     ForEach([3, 5, 8, 10, 15, 20], id: \.self) { n in
                         Text("\(n)").tag(n)
@@ -302,7 +339,7 @@ struct NarrativeStructureEditorView: View {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text(viewModel.generationProgress.isEmpty ? "生成中…" : viewModel.generationProgress)
-                        .font(.system(size: 10))
+                        .font(DesignTokens.Typography.microRegular)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -311,19 +348,18 @@ struct NarrativeStructureEditorView: View {
             Button {
                 generate()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: DesignTokens.Spacing.tight) {
                     Image(systemName: "wand.and.stars")
-                        .font(.system(size: 11))
+                        .font(DesignTokens.Typography.caption)
                     Text("生成方案")
                 }
             }
-            .keyboardShortcut(.defaultAction)
+            // ⚠️ 不挂 .defaultAction：本弹窗里有「最短/最长秒数」输入框，
+            // 用户填完数字习惯性按回车就会直接发起一次**按次计费**的 AI 生成，没有任何确认。
             .buttonStyle(.borderedProminent)
             .tint(.purple)
             .disabled(!canGenerate)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
     }
 
     // MARK: - 生成可用性
@@ -357,17 +393,17 @@ struct NarrativeStructureEditorView: View {
         return VStack(spacing: 0) {
             HStack {
                 Text("选择标签")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(DesignTokens.Typography.bodyEmphasis)
                 Spacer()
                 Button("完成") { tagPickerSlotID = nil }
                     .controlSize(.small)
             }
-            .padding(16)
+            .padding(DesignTokens.Spacing.comfortable)
             Divider()
 
             if availableTags.isEmpty {
                 Text("当前项目库内还没有可用标签（需先导入并分析视频）")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(24)
@@ -379,13 +415,13 @@ struct NarrativeStructureEditorView: View {
                             Button {
                                 toggleTag(type.rawValue, forSlotID: slotID)
                             } label: {
-                                HStack(spacing: 4) {
+                                HStack(spacing: DesignTokens.Spacing.tight) {
                                     if isOn {
                                         Image(systemName: "checkmark")
-                                            .font(.system(size: 9, weight: .bold))
+                                            .font(DesignTokens.Typography.microBold)
                                     }
                                     Text(type.rawValue)
-                                        .font(.system(size: 12))
+                                        .font(DesignTokens.Typography.label)
                                 }
                                 .foregroundStyle(isOn ? .white : colorForTag(type.rawValue))
                                 .padding(.horizontal, 10)
@@ -397,7 +433,7 @@ struct NarrativeStructureEditorView: View {
                             .buttonStyle(.plain)
                         }
                     }
-                    .padding(16)
+                    .padding(DesignTokens.Spacing.comfortable)
                 }
             }
         }
@@ -500,11 +536,14 @@ struct NarrativeStructureEditorView: View {
         persist()
         let requested = requestedCount
         Task {
-            await viewModel.generateNarrativeVariants(for: strategy, in: project, requested: requested)
-            // 生成成功后关闭编辑器（变体已落到方案列表）
-            if viewModel.errorMessage == nil {
-                dismiss()
+            // 按**真实生成结果**决定去留，不能再看 errorMessage：
+            // 有好几条失败路径只弹 Toast 不设 errorMessage，那样会把失败当成功、直接关窗。
+            let didGenerate = await viewModel.generateNarrativeVariants(
+                for: strategy, in: project, requested: requested)
+            if didGenerate {
+                dismiss()   // 变体已落到方案列表
             }
+            // 失败则留在编辑器里，让用户看着提示直接调整段位/标签再试
         }
     }
 

@@ -10,7 +10,7 @@ struct WelcomeView: View {
             Spacer()
 
             // Logo 和标题
-            VStack(spacing: 12) {
+            VStack(spacing: DesignTokens.Spacing.normal) {
                 Image(systemName: "film.stack.fill")
                     .font(.system(size: 48))
                     .foregroundStyle(
@@ -25,19 +25,19 @@ struct WelcomeView: View {
                     .font(.system(size: 28, weight: .bold))
 
                 Text("AI 驱动的广告视频混剪工具")
-                    .font(.system(size: 14))
+                    .font(DesignTokens.Typography.bodyLarge)
                     .foregroundStyle(.secondary)
             }
 
             // 功能亮点
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
                 FeatureRow(icon: "scissors", text: "AI 自动按语义切分视频镜头", color: .blue)
                 FeatureRow(icon: "wand.and.stars", text: "智能排列组合生成新广告视频", color: .purple)
                 FeatureRow(icon: "square.and.arrow.up", text: "一键导出为可用的 MP4 视频", color: .green)
             }
-            .padding(20)
-            .background(.quaternary.opacity(0.2))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(DesignTokens.Padding.page)
+            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             // CTA
             Button {
@@ -45,9 +45,9 @@ struct WelcomeView: View {
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(DesignTokens.Typography.bodyEmphasis)
                     Text("创建新项目")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(DesignTokens.Typography.bodyLargeEmphasis)
                 }
                 .padding(.horizontal, 28)
                 .padding(.vertical, 10)
@@ -56,26 +56,26 @@ struct WelcomeView: View {
             .controlSize(.large)
 
             if !projectVM.projects.isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: DesignTokens.Spacing.compact) {
                     Text("或继续最近的项目")
-                        .font(.system(size: 11))
+                        .font(DesignTokens.Typography.caption)
                         .foregroundStyle(.tertiary)
 
-                    HStack(spacing: 8) {
+                    HStack(spacing: DesignTokens.Spacing.compact) {
                         ForEach(projectVM.projects.filter { $0.status != .archived }.prefix(3)) { project in
                             Button {
                                 projectVM.selectedProject = project
                             } label: {
-                                HStack(spacing: 4) {
+                                HStack(spacing: DesignTokens.Spacing.tight) {
                                     Image(systemName: "film.fill")
-                                        .font(.system(size: 9))
+                                        .font(DesignTokens.Typography.microRegular)
                                     Text(project.name)
-                                        .font(.system(size: 11, weight: .medium))
+                                        .font(DesignTokens.Typography.captionStrong)
                                         .lineLimit(1)
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 4)
-                                .background(.quaternary.opacity(0.5))
+                                .background(.quaternary.opacity(DesignTokens.Palette.Alpha.strong))
                                 .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
@@ -91,27 +91,27 @@ struct WelcomeView: View {
                     if !hasAPIKey {
                         HStack(spacing: 6) {
                             Image(systemName: "key")
-                                .font(.system(size: 10))
+                                .font(DesignTokens.Typography.microRegular)
                                 .foregroundStyle(.orange)
                             Text("请先在设置中配置 AI API Key")
-                                .font(.system(size: 11))
+                                .font(DesignTokens.Typography.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
                     if !hasWhisperModel {
                         HStack(spacing: 6) {
                             Image(systemName: "waveform")
-                                .font(.system(size: 10))
+                                .font(DesignTokens.Typography.microRegular)
                                 .foregroundStyle(.orange)
                             Text("语音识别模型未下载（设置 → 通用 → 语音模型）")
-                                .font(.system(size: 11))
+                                .font(DesignTokens.Typography.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
-                .padding(12)
+                .padding(DesignTokens.Spacing.normal)
                 .background(.orange.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
             Spacer()
@@ -130,15 +130,15 @@ struct FeatureRow: View {
     var color: Color = .accentColor
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DesignTokens.Spacing.normal) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .font(DesignTokens.Typography.bodyLarge)
                 .foregroundStyle(color)
                 .frame(width: 28, height: 28)
                 .background(color.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             Text(text)
-                .font(.system(size: 13))
+                .font(DesignTokens.Typography.body)
         }
     }
 }

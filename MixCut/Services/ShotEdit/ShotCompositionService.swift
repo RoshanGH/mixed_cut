@@ -75,7 +75,7 @@ actor ShotCompositionService {
             "-i", sourceVideoPath,
             "-vn", "-c:a", "aac", "-b:a", "192k",
             "-y", audio
-        ])
+        ], timeoutSeconds: 600)
 
         // 4) mux：拼接画面 + 原音频（替换音轨）
         let finalURL = FileHelper.tempDirectory.appendingPathComponent("composite-\(UUID().uuidString).mp4")
@@ -85,7 +85,7 @@ actor ShotCompositionService {
         muxArgs += ["-map", "0:v:0"]
         if hasAudio { muxArgs += ["-map", "1:a:0", "-c:a", "aac"] }
         muxArgs += ["-c:v", "copy", "-shortest", "-movflags", "+faststart", "-y", finalURL.path]
-        _ = try await ffmpeg.run(arguments: muxArgs)
+        _ = try await ffmpeg.run(arguments: muxArgs, timeoutSeconds: 600)
 
         // 探测最终合成片的**实际**帧数（concat 可能统一到 30fps，与 source-fps 累加值不同），
         // 供就地替换的 effectivePicture 精确裁全片。
@@ -106,7 +106,7 @@ actor ShotCompositionService {
                 "-i", path, "-vf", "setpts=PTS-STARTPTS", "-an",
                 "-c:v", "h264_videotoolbox", "-b:v", "8000k", "-pix_fmt", "yuv420p",
                 "-y", out
-            ])
+            ], timeoutSeconds: 600)
         case .trim(let drop):
             let keep = max(1, actual - drop)
             _ = try await ffmpeg.run(arguments: [
@@ -114,7 +114,7 @@ actor ShotCompositionService {
                 "-vf", "trim=end_frame=\(keep),setpts=PTS-STARTPTS", "-an",
                 "-c:v", "h264_videotoolbox", "-b:v", "8000k", "-pix_fmt", "yuv420p",
                 "-y", out
-            ])
+            ], timeoutSeconds: 600)
         case .pad(let repeatLast):
             let stopDur = Double(repeatLast) / fps
             _ = try await ffmpeg.run(arguments: [
@@ -122,7 +122,7 @@ actor ShotCompositionService {
                 "-vf", "tpad=stop_mode=clone:stop_duration=\(String(format: "%.4f", stopDur)),setpts=PTS-STARTPTS", "-an",
                 "-c:v", "h264_videotoolbox", "-b:v", "8000k", "-pix_fmt", "yuv420p",
                 "-y", out
-            ])
+            ], timeoutSeconds: 600)
         }
     }
 

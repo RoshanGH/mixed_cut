@@ -42,10 +42,21 @@ struct ShotEditSheet: View {
 
             if let err = vm.errorMessage {
                 Divider()
-                HStack(spacing: 8) {
+                HStack(alignment: .top, spacing: DesignTokens.Spacing.compact) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text(err).font(.callout).foregroundStyle(.secondary)
-                    Spacer()
+                    // 可选中复制 + 允许换行：错误信息经常包含接口原文，
+                    // 之前单行截断，用户既看不全也复制不走，没法反馈给我们排查。
+                    Text(err)
+                        .font(.callout)
+                        .foregroundStyle(.primary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button { vm.errorMessage = nil } label: {
+                        Image(systemName: "xmark").font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("关闭提示")
                 }
                 .padding(10)
                 .background(Color.orange.opacity(0.08))
@@ -83,8 +94,9 @@ struct ShotEditSheet: View {
             .disabled(!vm.canCompose || vm.isComposing || vm.shots.isEmpty)
 
             Button("关闭") { dismiss() }
+                .keyboardShortcut(.cancelAction)   // Esc 关闭（macOS sheet 默认不响应 Esc，必须显式挂）
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.normal)
     }
 }
 
@@ -103,7 +115,7 @@ struct ShotTrackRow: View {
     private var srcPath: String { segment.video?.localPath ?? "" }
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: DesignTokens.Spacing.compact) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 0) {
                     ForEach(Array(shots.enumerated()), id: \.element.id) { idx, shot in
@@ -125,7 +137,7 @@ struct ShotTrackRow: View {
         let selected = selectedOrder == shot.orderIndex
         let editable = vm.isEditable(shot, fps: fps)
         let dur = vm.duration(of: shot, fps: fps)
-        VStack(spacing: 4) {
+        VStack(spacing: DesignTokens.Spacing.tight) {
             RangeVideoPlayer(
                 videoPath: srcPath,
                 startTime: Double(shot.startFrame) / fps,
@@ -142,7 +154,7 @@ struct ShotTrackRow: View {
                     .background(.black.opacity(0.5)).foregroundStyle(.white).clipShape(Capsule())
                     .padding(4)
             }
-            .overlay(RoundedRectangle(cornerRadius: 8)
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(selected ? Color.accentColor : .clear, lineWidth: 2.5))
 
             Text(String(format: "%.1fs", dur)).font(.caption2).foregroundStyle(.secondary)
@@ -161,11 +173,11 @@ struct ShotTrackRow: View {
     @ViewBuilder
     private func boundaryControl(boundaryIndex b: Int) -> some View {
         VStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 3)
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .fill(Color.accentColor.opacity(0.55))
                 .frame(width: 6, height: 170)
                 .overlay(Image(systemName: "arrow.left.and.right")
-                    .font(.system(size: 8)).foregroundStyle(.white))
+                    .font(DesignTokens.Typography.microRegular).foregroundStyle(.white))
                 .gesture(
                     DragGesture(minimumDistance: 1)
                         .onChanged { value in
@@ -185,7 +197,7 @@ struct ShotTrackRow: View {
             } label: {
                 Image(systemName: "arrow.trianglehead.merge").font(.caption2)
             }
-            .buttonStyle(.borderless).help("合并这两个镜头")
+            .buttonStyle(.borderless).accessibilityLabel("合并镜头").help("合并这两个镜头")
         }
         .frame(width: 28)
         .padding(.horizontal, 2)
@@ -225,8 +237,10 @@ struct ShotTrackRow: View {
             Text(label).font(.caption2).foregroundStyle(.tertiary)
             Button { vm.nudgeBoundary(boundaryIndex: b, deltaFrames: -1, segment: segment, modelContext: modelContext) }
                 label: { Image(systemName: "minus") }.buttonStyle(.borderless).controlSize(.small)
+                .accessibilityLabel("\(label)边界左移")
             Button { vm.nudgeBoundary(boundaryIndex: b, deltaFrames: 1, segment: segment, modelContext: modelContext) }
                 label: { Image(systemName: "plus") }.buttonStyle(.borderless).controlSize(.small)
+                .accessibilityLabel("\(label)边界右移")
         }
     }
 
@@ -287,7 +301,7 @@ struct ShotVariantPicker: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(16)
+        .padding(DesignTokens.Spacing.comfortable)
     }
 
     private var isOriginalChosen: Bool {
@@ -296,7 +310,7 @@ struct ShotVariantPicker: View {
     }
 
     private var originalCard: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: DesignTokens.Spacing.tight) {
             RangeVideoPlayer(
                 videoPath: segment.video?.localPath ?? "",
                 startTime: Double(shot.startFrame) / fps,
@@ -307,7 +321,7 @@ struct ShotVariantPicker: View {
                 playingID: $vm.playingID
             )
             .frame(width: 90, height: 160)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isOriginalChosen ? Color.accentColor : .clear, lineWidth: 2.5))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(isOriginalChosen ? Color.accentColor : .clear, lineWidth: 2.5))
             Text("原版").font(.caption2)
             Text(String(format: "%.1fs", Double(shot.frameCount) / fps))
                 .font(.caption2).foregroundStyle(.secondary)
@@ -322,7 +336,7 @@ struct ShotVariantPicker: View {
             if case .variant(let id) = (vm.selections[shot.orderIndex] ?? .original) { return id == v.id }
             return false
         }()
-        VStack(spacing: 4) {
+        VStack(spacing: DesignTokens.Spacing.tight) {
             Group {
                 if v.status == .completed, let p = v.resultVideoPath {
                     RangeVideoPlayer(
@@ -334,7 +348,7 @@ struct ShotVariantPicker: View {
                 }
             }
             .frame(width: 90, height: 160)
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(chosen ? Color.accentColor : .clear, lineWidth: 2.5))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(chosen ? Color.accentColor : .clear, lineWidth: 2.5))
             .onTapGesture {
                 if v.status == .completed { vm.select(orderIndex: shot.orderIndex, choice: .variant(v.id), modelContext: modelContext) }
             }
@@ -353,20 +367,20 @@ struct ShotVariantPicker: View {
     @ViewBuilder
     private func variantPlaceholder(_ v: ShotVariant, busy: Bool) -> some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.85))
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.black.opacity(0.85))
             if busy || v.status == .generating {
                 VStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text(vm.progress[v.id] ?? "生成中").font(.caption2).foregroundStyle(.white.opacity(0.8))
                 }
             } else if v.status == .timedOut {
-                VStack(spacing: 4) {
+                VStack(spacing: DesignTokens.Spacing.tight) {
                     Image(systemName: "clock.badge.exclamationmark.fill").foregroundStyle(.yellow)
                     Text("已超时").font(.caption2).foregroundStyle(.white.opacity(0.85))
                 }
                 .help(v.friendlyError ?? "本地等待超时，任务可能仍在云端生成，点「重试」重新获取结果，不会重复扣费。")
             } else if v.status == .failed {
-                VStack(spacing: 4) {
+                VStack(spacing: DesignTokens.Spacing.tight) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
                     Text("失败").font(.caption2).foregroundStyle(.white.opacity(0.85))
                 }
@@ -408,12 +422,13 @@ struct ShotVariantPicker: View {
                 vm.deleteVariant(v, modelContext: modelContext)
             } label: { Image(systemName: "trash").font(.caption2) }
             .buttonStyle(.borderless)
+            .accessibilityLabel("删除变体")
             .disabled(busy)
         }
     }
 
     private var promptArea: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.compact) {
             HStack {
                 Text("提示词").font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -428,15 +443,17 @@ struct ShotVariantPicker: View {
                 }
                 .menuStyle(.borderlessButton).fixedSize()
             }
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 TextField("例如：把手里的可乐换成一瓶雪碧，手和背景不变", text: $promptText, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...3)
                 Button {
                     let p = promptText
+                    // 立刻清空输入框：生成要 2~4 分钟，输入框一直留着内容会让用户以为没提交成功、
+                    // 从而再点一次（每次都计费）。清空是最直接的"已受理"反馈。
+                    promptText = ""
                     Task {
                         await vm.generateVariant(shot: shot, prompt: p, segment: segment, modelContext: modelContext)
-                        promptText = ""
                     }
                 } label: {
                     Label("生成变体", systemImage: "wand.and.stars")

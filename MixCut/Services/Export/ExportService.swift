@@ -173,7 +173,36 @@ actor ExportService {
     }
 
     /// 导出混剪方案为 MP4
+    /// 导出一条成片。
+    ///
+    /// ⚠️ 失败/取消时**必须删掉半成品**：ffmpeg 收到 SIGTERM 会优雅收尾、把 moov atom 写完，
+    /// 于是输出目录里会留下一个**双击能正常播放、但内容只有一半**的 mp4。
+    /// 用户看不出异常，直到把它发出去才发现播一半就断了 —— 这是最坏的一种失败方式。
     func export(
+        input: ExportInput,
+        outputPath: String,
+        config: ExportConfig = ExportConfig(),
+        onProgress: (@Sendable (ExportProgress) -> Void)? = nil
+    ) async throws {
+        // ⚠️ 只能清理**本次导出自己创建**的文件。
+        // 若目标路径上本来就有文件（重导同名方案、文件名撞车），而本次导出在早期就失败
+        // （源素材缺失 / 磁盘满 / ffmpeg 起不来），无条件删除会把用户原有的好文件一起毁掉。
+        let existedBefore = FileManager.default.fileExists(atPath: outputPath)
+        do {
+            try await performExport(input: input, outputPath: outputPath, config: config, onProgress: onProgress)
+        } catch {
+            // 删除截断的半成品，避免用户拿到"看起来正常"的坏文件
+            if !existedBefore, FileManager.default.fileExists(atPath: outputPath) {
+                try? FileManager.default.removeItem(atPath: outputPath)
+                MixLog.info("[Export] 导出中断，已清理半成品: \(outputPath)")
+            } else if existedBefore {
+                MixLog.info("[Export] 导出中断，目标路径原本就有文件，保留不动: \(outputPath)")
+            }
+            throw error
+        }
+    }
+
+    private func performExport(
         input: ExportInput,
         outputPath: String,
         config: ExportConfig = ExportConfig(),

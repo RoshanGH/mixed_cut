@@ -35,25 +35,30 @@ enum MaskStyle: String, Codable, CaseIterable, Identifiable {
 /// 参考实拍原字幕≈画面宽 7%，故范围取 3%~8.5%（可小可匹配大号原字幕），默认 5.5%。
 /// 全局存 UserDefaults（避免 SwiftData 迁移；导出路径与 UI 预览共用同一键）。
 enum SubtitleFontSize {
-    /// UserDefaults 键（与 UI 的 @AppStorage 共用同一键，值为 Double 比例）。
+    /// UserDefaults 键：**新建分镜的默认字号**（= 用户最后一次调过的值）。
+    ///
+    /// ⚠️ 语义已变：这里曾经是"全局字号"，改一处等于改所有视频的所有分镜。
+    /// 现在字号是**逐分镜**的（`Segment.subtitleFontRatio`），这个键只用来决定
+    /// 新分镜出生时取什么值 —— 否则老素材是用户调好的值、新导入的素材却回落到出厂默认，
+    /// 看起来像 bug。
     static let userDefaultsKey = "subtitleFontRatio"
 
     static let minRatio: Double = 0.030      // 最小（很小）
     static let maxRatio: Double = 0.085      // 最大（匹配/略超大号原字幕）
-    static let defaultRatio: Double = 0.055  // 默认
+    static let defaultRatio: Double = 0.055  // 出厂默认
 
     /// 夹取到合法区间。
     static func clamp(_ ratio: Double) -> Double { min(maxRatio, max(minRatio, ratio)) }
 
-    /// 当前全局比例；无值/越界回退默认并夹取。
-    static var currentRatio: Double {
+    /// 新建分镜应采用的字号：用户调过就跟随，没调过用出厂默认。
+    static var preferredRatioForNewSegments: Double {
         let stored = UserDefaults.standard.object(forKey: userDefaultsKey) as? Double
         return clamp(stored ?? defaultRatio)
     }
 
-    /// 按成片宽度换算字号像素（下限 12px 兜底极小分辨率）。
-    static func fontSize(forOutputWidth outputWidth: Int) -> Double {
-        max(12, Double(outputWidth) * currentRatio)
+    /// 记住用户刚设定的字号，作为后续新分镜的默认值。
+    static func rememberPreferred(_ ratio: Double) {
+        UserDefaults.standard.set(clamp(ratio), forKey: userDefaultsKey)
     }
 }
 

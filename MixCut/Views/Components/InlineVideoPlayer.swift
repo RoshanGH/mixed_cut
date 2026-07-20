@@ -21,7 +21,7 @@ struct InlineVideoPlayer: View {
                 // 视频画面
                 PlayerRepresentable(player: player)
                     .aspectRatio(aspectRatio, contentMode: .fit)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 // 自定义控制栏
                 controlBar(player: player)
@@ -37,6 +37,7 @@ struct InlineVideoPlayer: View {
                                 .shadow(color: .black.opacity(0.3), radius: 4)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("播放")
                     }
             }
         }
@@ -62,17 +63,20 @@ struct InlineVideoPlayer: View {
                 }
             } label: {
                 Image(systemName: player.timeControlStatus == .playing ? "pause.fill" : "play.fill")
-                    .font(.system(size: 10))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.primary)
                     .frame(width: 20, height: 20)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(player.timeControlStatus == .playing ? "暂停" : "播放")
 
             // 当前时间
             Text(formatTime(currentTime))
-                .font(.system(size: 9, design: .monospaced))
+                .font(DesignTokens.Typography.microMono)
                 .foregroundStyle(.secondary)
-                .frame(width: 28, alignment: .trailing)
+                .frame(width: 40, alignment: .trailing)
+                .lineLimit(1)
+                .monospacedDigit()   // 10 分钟以上是 "12:34" 共 5 字符，28pt 装不下会截断
 
             // 可拖动进度条
             GeometryReader { geo in
@@ -106,25 +110,28 @@ struct InlineVideoPlayer: View {
 
             // 总时长
             Text(formatTime(duration))
-                .font(.system(size: 9, design: .monospaced))
+                .font(DesignTokens.Typography.microMono)
                 .foregroundStyle(.tertiary)
-                .frame(width: 28, alignment: .leading)
+                .frame(width: 40, alignment: .leading)
+                .lineLimit(1)
+                .monospacedDigit()
 
             // 停止按钮
             Button {
                 stopPlayback()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 9))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.tertiary)
                     .frame(width: 16, height: 16)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("关闭播放")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(Color(.controlBackgroundColor).opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 
     private func progressWidth(in totalWidth: CGFloat) -> CGFloat {
@@ -141,9 +148,9 @@ struct InlineVideoPlayer: View {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(aspectRatio, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         } else {
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(.quaternary)
                 .aspectRatio(aspectRatio, contentMode: .fit)
                 .overlay {

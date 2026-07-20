@@ -27,6 +27,14 @@ struct VariantExportProgress: Sendable {
 /// 从选中分镜解析出导出任务（@MainActor：读 SwiftData）。
 enum VariantExportInput {
     @MainActor
+    /// 因缺少源视频而**无法导出**的分镜编号。
+    ///
+    /// `from(segments:)` 对这些分镜是直接 `continue` 跳过的，于是弹窗标题写着"导出 20 个文件"、
+    /// 实际只出 18 个，也没人告诉用户少了哪两个。这里单独收集出来，供 UI 如实提示。
+    static func skippedSegmentNumbers(segments: [Segment], numberProvider: (Segment) -> Int) -> [Int] {
+        segments.filter { $0.video == nil }.map(numberProvider).sorted()
+    }
+
     static func from(segments: [Segment], numberProvider: (Segment) -> Int) -> [VariantExportJob] {
         // 1) 构造展开来源（仅含已生成音频的变体）
         var segByKey: [String: Segment] = [:]
@@ -79,7 +87,8 @@ enum VariantExportInput {
                     fps: fps, captionLines: capLines, hasHardSubtitle: seg.hasHardSubtitle,
                     maskStyleRaw: seg.maskStyleRaw, maskRect: seg.maskRect, isVoiceLocked: false,
                     dubAudioPath: audioPath, freezePadFrames: dub.freezePadFrames,
-                    trailingSilence: dub.trailingSilence, bgmAudioPath: bgmPath)
+                    trailingSilence: dub.trailingSilence, bgmAudioPath: bgmPath,
+                    subtitleFontRatio: seg.subtitleFontRatio)
                 jobs.append(.variant(spec: spec, videoWidth: video.width, videoHeight: video.height,
                                      fileName: item.fileName))
             } else {

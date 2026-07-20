@@ -56,11 +56,11 @@ struct OnboardingView: View {
                 Text("欢迎使用 MixCut")
                     .font(.system(size: 24, weight: .bold))
                 Text("AI 驱动的广告视频混剪工具")
-                    .font(.system(size: 13))
+                    .font(DesignTokens.Typography.body)
                     .foregroundStyle(.secondary)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
                 OnboardingBullet(icon: "scissors", color: .blue,
                                  text: "AI 自动按语义切分视频镜头")
                 OnboardingBullet(icon: "wand.and.stars", color: .purple,
@@ -70,8 +70,8 @@ struct OnboardingView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.2))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
@@ -85,12 +85,12 @@ struct OnboardingView: View {
                 Text("第一步 · 配置 AI Key")
                     .font(.system(size: 22, weight: .bold))
                 Text("MixCut 需要大模型完成语义分析与混剪策略")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
                 OnboardingBullet(icon: "1.circle.fill", color: .blue,
                                  text: "打开「设置 → API」")
                 OnboardingBullet(icon: "2.circle.fill", color: .blue,
@@ -100,12 +100,12 @@ struct OnboardingView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.2))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             SettingsLink {
                 Label("打开设置...", systemImage: "gear")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(DesignTokens.Typography.labelStrong)
             }
             .controlSize(.small)
         }
@@ -121,12 +121,12 @@ struct OnboardingView: View {
                 Text("第二步 · 导入广告素材")
                     .font(.system(size: 22, weight: .bold))
                 Text("新建项目后把视频拖进来，剩下交给 AI")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
                 OnboardingBullet(icon: "waveform", color: .blue,
                                  text: "Whisper 本地识别台词（不上传云端）")
                 OnboardingBullet(icon: "rectangle.split.3x1", color: .blue,
@@ -136,11 +136,11 @@ struct OnboardingView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.2))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Text("💡 语音识别模型已内置，装完即用、无需联网下载")
-                .font(.system(size: 11))
+                .font(DesignTokens.Typography.caption)
                 .foregroundStyle(.tertiary)
         }
     }
@@ -155,12 +155,12 @@ struct OnboardingView: View {
                 Text("第三步 · 生成方案并导出")
                     .font(.system(size: 22, weight: .bold))
                 Text("AI 先制定策略，再挑选具体分镜，批量混剪")
-                    .font(.system(size: 12))
+                    .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
                 OnboardingBullet(icon: "list.bullet.clipboard", color: .purple,
                                  text: "在「混剪方案」点「生成方案」")
                 OnboardingBullet(icon: "sparkles", color: .purple,
@@ -170,11 +170,11 @@ struct OnboardingView: View {
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.quaternary.opacity(0.2))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
             Text("🎬 准备好了，开始你的第一个项目吧")
-                .font(.system(size: 11))
+                .font(DesignTokens.Typography.caption)
                 .foregroundStyle(.tertiary)
         }
     }
@@ -188,7 +188,7 @@ struct OnboardingView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .font(.system(size: 12))
+            .font(DesignTokens.Typography.label)
 
             Spacer()
 
@@ -197,23 +197,23 @@ struct OnboardingView: View {
                     Circle()
                         .fill(idx == step ? Color.accentColor : Color.secondary.opacity(0.25))
                         .frame(width: 7, height: 7)
-                        .animation(.easeInOut(duration: 0.2), value: step)
+                        .animation(DesignTokens.Motion.transition, value: step)
                 }
             }
 
             Spacer()
 
-            HStack(spacing: 8) {
+            HStack(spacing: DesignTokens.Spacing.compact) {
                 if step > 0 {
                     Button("上一步") {
-                        withAnimation(.easeInOut(duration: 0.25)) { step -= 1 }
+                        withAnimation(DesignTokens.Motion.transition) { step -= 1 }
                     }
                     .controlSize(.regular)
                 }
 
                 if step < totalSteps - 1 {
                     Button("下一步") {
-                        withAnimation(.easeInOut(duration: 0.25)) { step += 1 }
+                        withAnimation(DesignTokens.Motion.transition) { step += 1 }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.regular)
@@ -239,16 +239,16 @@ private struct OnboardingBullet: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: DesignTokens.Spacing.normal) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .font(DesignTokens.Typography.bodyLarge)
                 .foregroundStyle(color)
                 .frame(width: 28, height: 28)
                 .background(color.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
             Text(text)
-                .font(.system(size: 13))
+                .font(DesignTokens.Typography.body)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }

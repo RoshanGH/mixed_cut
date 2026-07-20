@@ -12,6 +12,12 @@ struct SplitSegmentSheet: View {
     @State private var player: AVPlayer?
     @State private var cutFrame: Int = 0
     @State private var isSplitting = false
+    /// 拆分失败原因。非 nil 时留在弹窗里展示，而不是默默关闭。
+    @State private var splitError: String?
+
+    /// 分镜是否短到根本没有合法拆分点（前后各要留 0.3s）。
+    /// 太短时 `lo == hi`，Slider 拿到零宽区间会算出 NaN 布局，必须在 UI 上直接拦掉。
+    private var isTooShortToSplit: Bool { hi <= lo }
 
     private var fps: Double {
         let f = segment.video?.fps ?? 30
@@ -27,35 +33,58 @@ struct SplitSegmentSheet: View {
         VStack(spacing: 0) {
             header
             Divider()
-            VStack(spacing: 12) {
+            VStack(spacing: DesignTokens.Spacing.normal) {
                 if let player {
                     FramePreview(player: player)
                         .aspectRatio(9.0 / 16.0, contentMode: .fit)
                         .frame(maxHeight: 320)
                         .background(Color.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
                 Text("拆分点：\(String(format: "%.1f", Double(cutFrame - startFrame) / fps))s · 第 \(cutFrame - startFrame) 帧")
                     .font(.system(size: 13, design: .monospaced))
-                Slider(
-                    value: Binding(
-                        get: { Double(cutFrame) },
-                        set: { cutFrame = Int($0.rounded()); seek() }
-                    ),
-                    in: Double(lo)...Double(hi)
-                )
-                .tint(.red)
+                // 分镜太短时区间会退化成一个点，Slider 内部除以区间长度会产生 NaN 布局
+                if isTooShortToSplit {
+                    Text("这个分镜只有 \(String(format: "%.1f", segment.duration))s，拆开后每段不足 0.3 秒，无法再拆分。")
+                        .font(DesignTokens.Typography.caption)
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Slider(
+                        value: Binding(
+                            get: { Double(cutFrame) },
+                            set: { cutFrame = Int($0.rounded()); seek() }
+                        ),
+                        in: Double(lo)...Double(hi)
+                    )
+                    .tint(.red)
+                }
                 HStack {
-                    Text("0:00 · 第0帧").font(.system(size: 10)).foregroundStyle(.tertiary)
+                    Text("0:00 · 第0帧").font(DesignTokens.Typography.microRegular).foregroundStyle(.tertiary)
                     Spacer()
                     Text("\(String(format: "%.1f", segment.duration))s · 第 \(endFrame - startFrame) 帧")
-                        .font(.system(size: 10)).foregroundStyle(.tertiary)
+                        .font(DesignTokens.Typography.microRegular).foregroundStyle(.tertiary)
                 }
                 Text("拆分后是两个新分镜，原配音 / 画面重绘等将清空、不可恢复")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(DesignTokens.Typography.caption).foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+
+                if let splitError {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(splitError)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(DesignTokens.Typography.caption)
+                    .padding(DesignTokens.Spacing.compact)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.1),
+                                in: RoundedRectangle(cornerRadius: DesignTokens.Corner.small, style: .continuous))
+                }
             }
-            .padding(16)
+            .padding(DesignTokens.Spacing.comfortable)
             Divider()
             footer
         }
@@ -65,7 +94,7 @@ struct SplitSegmentSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: DesignTokens.Spacing.compact) {
             Image(systemName: "scissors").foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 2) {
                 Text("拆分分镜").font(.headline)
@@ -74,19 +103,20 @@ struct SplitSegmentSheet: View {
             }
             Spacer()
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.normal)
     }
 
     private var footer: some View {
         HStack {
             Spacer()
             Button("取消") { dismiss() }
+                .keyboardShortcut(.cancelAction)   // Esc 关闭（macOS sheet 默认不响应 Esc，必须显式挂）
                 .disabled(isSplitting)
             Button(isSplitting ? "拆分中…" : "确定拆分") { doSplit() }
                 .buttonStyle(.borderedProminent)
-                .disabled(isSplitting)
+                .disabled(isSplitting || isTooShortToSplit)
         }
-        .padding(12)
+        .padding(DesignTokens.Spacing.normal)
     }
 
     private func setup() {
@@ -94,7 +124,8 @@ struct SplitSegmentSheet: View {
         let p = AVPlayer(url: URL(fileURLWithPath: path))
         p.isMuted = true
         player = p
-        cutFrame = (startFrame + endFrame) / 2
+        // 中点必须夹到合法区间内，否则短分镜下初值会落在 Slider 区间之外
+        cutFrame = min(max((startFrame + endFrame) / 2, lo), max(lo, hi))
         seek()
     }
 
@@ -108,9 +139,21 @@ struct SplitSegmentSheet: View {
         isSplitting = true
         let target = cutFrame
         Task { @MainActor in
-            await importVM.splitSegment(segment, atFrame: target) { onSplit() }
+            let outcome = await importVM.splitSegment(segment, atFrame: target) { onSplit() }
             isSplitting = false
-            dismiss()
+            // 只有真的拆成功才关窗。以前不管成败一律 dismiss，
+            // 失败时用户看到弹窗正常关闭、列表却毫无变化，完全不知道出了什么事。
+            switch outcome {
+            case .success:
+                ToastCenter.shared.show("已拆分为两个分镜", icon: "checkmark.seal.fill", style: .success)
+                dismiss()
+            case .successWithWarning(let warning):
+                ToastCenter.shared.show(warning, icon: "exclamationmark.triangle.fill",
+                                        style: .warning, duration: 6)
+                dismiss()
+            case .failed(let reason):
+                splitError = reason   // 留在弹窗里把原因讲清楚
+            }
         }
     }
 }

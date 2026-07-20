@@ -38,10 +38,10 @@ struct KeyboardShortcutsSheet: View {
     ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: DesignTokens.Spacing.comfortable) {
             HStack {
                 Image(systemName: "keyboard")
-                    .font(.system(size: 18))
+                    .font(DesignTokens.Typography.headline)
                     .foregroundStyle(Color.accentColor)
                 Text("键盘快捷键")
                     .font(.system(size: 18, weight: .semibold))
@@ -55,6 +55,7 @@ struct KeyboardShortcutsSheet: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("关闭")
             }
 
             Divider()
@@ -64,7 +65,7 @@ struct KeyboardShortcutsSheet: View {
                     ForEach(groups) { group in
                         VStack(alignment: .leading, spacing: 6) {
                             Text(group.title)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(DesignTokens.Typography.captionEmphasis)
                                 .foregroundStyle(.tertiary)
                                 .textCase(.uppercase)
                             VStack(spacing: 0) {
@@ -72,15 +73,15 @@ struct KeyboardShortcutsSheet: View {
                                     let item = group.items[idx]
                                     HStack {
                                         Text(item.label)
-                                            .font(.system(size: 12))
+                                            .font(DesignTokens.Typography.label)
                                         Spacer()
                                         Text(item.keys)
                                             .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                             .foregroundStyle(.secondary)
                                             .padding(.horizontal, 8)
                                             .padding(.vertical, 3)
-                                            .background(.quaternary.opacity(0.5))
-                                            .clipShape(RoundedRectangle(cornerRadius: 5))
+                                            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.strong))
+                                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                                     }
                                     .padding(.vertical, 5)
                                     if idx != group.items.count - 1 {
@@ -89,14 +90,14 @@ struct KeyboardShortcutsSheet: View {
                                 }
                             }
                             .padding(10)
-                            .background(.quaternary.opacity(0.25))
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.medium))
+                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         }
                     }
                 }
             }
         }
-        .padding(20)
+        .padding(DesignTokens.Padding.page)
         .frame(width: 480, height: 540)
     }
 }

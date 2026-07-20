@@ -171,9 +171,10 @@ actor ASRService {
         onProgress?(0.1)
         let tempWavPath = FileHelper.tempDirectory
             .appendingPathComponent("audio_\(UUID().uuidString).wav").path
+        // ⚠️ defer 注册在 extractAudio 之前：整轨 wav 很大，抽取失败/取消时若不清理会永久占盘。
+        defer { try? FileManager.default.removeItem(atPath: tempWavPath) }
         try await ffmpeg.extractAudio(from: videoPath, to: tempWavPath)
         onProgress?(0.3)
-        defer { try? FileManager.default.removeItem(atPath: tempWavPath) }
 
         guard let whisperPath = ASRService.findWhisperBinaryStatic() else {
             MixLog.error("Whisper 未找到，语音识别跳过")

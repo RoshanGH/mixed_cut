@@ -16,12 +16,12 @@ struct SegmentCardCompact: View {
 
     var body: some View {
         Button(action: { if !isDisabled { onTap() } }) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.tight) {
                 ZStack(alignment: .topLeading) {
                     thumbnail
                     if isDisabled {
                         Image(systemName: "nosign")
-                            .font(.system(size: 14))
+                            .font(DesignTokens.Typography.bodyLarge)
                             .foregroundStyle(.white)
                             .padding(4)
                             .background(.black.opacity(0.45))
@@ -30,30 +30,30 @@ struct SegmentCardCompact: View {
                     }
                 }
                 .frame(width: cardWidth, height: imageHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
                 semanticTags
 
                 Text(segment.text.isEmpty ? "—" : segment.text)
-                    .font(.system(size: 10))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .frame(width: cardWidth, alignment: .leading)
 
                 Text(String(format: "%.1fs", segment.duration))
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(DesignTokens.Typography.microMono)
                     .foregroundStyle(.tertiary)
             }
             .frame(width: cardWidth)
             .padding(6)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isHovering && !isDisabled
                           ? Color(.controlBackgroundColor).opacity(0.95)
                           : Color(.controlBackgroundColor).opacity(0.5))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(.secondary.opacity(isHovering ? 0.18 : 0.06), lineWidth: 1)
             )
             .opacity(isDisabled ? 0.4 : 1.0)
@@ -77,7 +77,7 @@ struct SegmentCardCompact: View {
             }
             if types.count > 2 {
                 Text("+\(types.count - 2)")
-                    .font(.system(size: 8))
+                    .font(DesignTokens.Typography.microRegular)
                     .foregroundStyle(.secondary)
             }
         }

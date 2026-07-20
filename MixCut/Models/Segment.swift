@@ -77,6 +77,13 @@ final class Segment: Identifiable {
     /// 关键词
     var keywordsData: Data?  // [String] 编码存储
 
+    // MARK: 解码缓存（不持久化）
+    // 见文件末尾 `DecodedCache` 的说明：用引用盒承载，避免在 getter 里回填时触发变更通知。
+    @Transient private var semanticTypesCache = DecodedCache<[SemanticType]>()
+    @Transient private var keywordsCache = DecodedCache<[String]>()
+    /// 替换画面文件存在性缓存：`(已查过的路径, 是否存在)`，避免渲染路径上反复 `stat()`。
+    @Transient private var replacedExistsCache = DecodedCache<(path: String, exists: Bool)>()
+
     /// 数据质量详情
     var qualityReasoning: String?
 
@@ -126,6 +133,13 @@ final class Segment: Identifiable {
     /// 遮挡样式（MaskStyle.rawValue：blur/solid/dim）
     var maskStyleRaw: String = "blur"
 
+    /// 烧录字幕字号比例（相对画面宽度）。
+    ///
+    /// ⚠️ **逐分镜独立**：每个分镜可以有自己的字号，改一个不影响其它分镜。
+    /// 想统一时用弹层里的「应用到本视频所有分镜」，作用域也仅限该视频。
+    /// （早期这是个全局 UserDefaults 设置，导致改一处等于改全部视频的全部分镜，语义不对。）
+    var subtitleFontRatio: Double = SubtitleFontSize.defaultRatio
+
     /// 遮挡矩形（桥接四个归一化 Double）
     var maskRect: SubtitleMaskRect {
         get { SubtitleMaskRect(x: maskX, y: maskY, width: maskWidth, height: maskHeight) }
@@ -142,13 +156,24 @@ final class Segment: Identifiable {
     }
 
     /// 语义类型（支持多个）
+    ///
+    /// ⚠️ 性能：该属性在列表/筛选/搜索路径上被高频访问（每敲一个搜索字符会遍历全部分镜），
+    /// 原实现每次 get 都新建 `JSONDecoder` 并全量解码。这里用 `DecodedCache` 惰性缓存，
+    /// 仅在 setter 里失效；缓存盒是引用类型，回填不会触发 SwiftData 属性变更通知。
     var semanticTypes: [SemanticType] {
         get {
-            guard let data = semanticTypesData else { return [] }
-            return (try? JSONDecoder().decode([SemanticType].self, from: data)) ?? []
+            if let cached = semanticTypesCache.value { return cached }
+            guard let data = semanticTypesData else {
+                semanticTypesCache.value = []
+                return []
+            }
+            let decoded = (try? JSONCoding.decoder.decode([SemanticType].self, from: data)) ?? []
+            semanticTypesCache.value = decoded
+            return decoded
         }
         set {
-            semanticTypesData = try? JSONEncoder().encode(newValue)
+            semanticTypesData = try? JSONCoding.encoder.encode(newValue)
+            semanticTypesCache.value = newValue
         }
     }
 
@@ -188,6 +213,9 @@ final class Segment: Identifiable {
         self.qualityScore = qualityScore
         self.createdAt = Date()
         self.semanticTypes = semanticTypes
+        // 新分镜跟随用户最后一次设定的字号（没设过则用出厂默认），
+        // 避免"老素材是调好的值、新导入的却回落到默认"这种看起来像 bug 的不一致。
+        self.subtitleFontRatio = SubtitleFontSize.preferredRatioForNewSegments
     }
 
     /// 时长（保证非负）
@@ -217,15 +245,28 @@ final class Segment: Identifiable {
         replacedPictureThumbnailPath = nil
         replacedPictureFrameCount = 0
         pictureShowsReplaced = false
+        invalidateReplacedExistsCache()
+    }
+
+    /// 清空「替换画面文件是否存在」的缓存。
+    ///
+    /// ⚠️ 合成替换画面时输出路径是**确定性**的（hash + segmentId），重新合成后路径不变，
+    /// 仅靠"路径变了才重查"会读到过期结果。因此**任何写 `replacedPictureVideoPath` 或
+    /// 增删该文件的地方，都必须调用本方法**。
+    func invalidateReplacedExistsCache() {
+        replacedExistsCache.value = nil
     }
 
     // MARK: - 当前生效画面（就地替换的单一真源）
 
     /// 分镜当前应展示/导出的画面来源：有替换画面且生效时用替换片(整段)，否则用原源视频的帧区间。
+    /// ⚠️ 性能：本属性在渲染路径上被高频访问（卡片 body、以及播放进度条的每一帧），
+    /// 原实现每次都做 `FileManager.fileExists` 系统调用 —— 播放时每秒可达 20 次 `stat()`。
+    /// 文件存在性改为**惰性缓存**：路径不变就只查一次；路径变化（切换替换画面/重新合成）自动重查。
     var effectivePicture: EffectivePicture {
         if pictureShowsReplaced,
            let p = replacedPictureVideoPath,
-           FileManager.default.fileExists(atPath: p) {
+           Self.replacedFileExists(path: p, cache: replacedExistsCache) {
             let d = duration
             let fc = max(1, replacedPictureFrameCount)
             return EffectivePicture(videoPath: p, startTime: 0, endTime: d,
@@ -252,13 +293,65 @@ final class Segment: Identifiable {
     }
 
     /// 关键词
+    ///
+    /// ⚠️ 性能：同 `semanticTypes`，搜索时会对全部分镜访问此属性，故做惰性解码缓存。
     var keywords: [String] {
         get {
-            guard let data = keywordsData else { return [] }
-            return (try? JSONDecoder().decode([String].self, from: data)) ?? []
+            if let cached = keywordsCache.value { return cached }
+            guard let data = keywordsData else {
+                keywordsCache.value = []
+                return []
+            }
+            let decoded = (try? JSONCoding.decoder.decode([String].self, from: data)) ?? []
+            keywordsCache.value = decoded
+            return decoded
         }
         set {
-            keywordsData = try? JSONEncoder().encode(newValue)
+            keywordsData = try? JSONCoding.encoder.encode(newValue)
+            keywordsCache.value = newValue
         }
     }
+}
+
+// MARK: - JSON 解码缓存支撑
+
+/// 全局共享的 JSON 编解码器。
+///
+/// `JSONDecoder()` / `JSONEncoder()` 的构造并不便宜，而模型层的 `Data? + 计算属性` 模式
+/// 在列表 / 筛选 / 搜索路径上每次访问都会新建一个，累积开销显著。
+enum JSONCoding {
+    static let decoder = JSONDecoder()
+    static let encoder = JSONEncoder()
+}
+
+extension Segment {
+    /// 带缓存的文件存在性检查：路径与上次一致就直接复用结果，否则查一次并记住。
+    /// 用于把 `effectivePicture` 从"每次渲染一次 `stat()`"降到"每个路径一次"。
+    fileprivate static func replacedFileExists(path: String, cache: DecodedCache<(path: String, exists: Bool)>) -> Bool {
+        if let c = cache.value, c.path == path { return c.exists }
+        let exists = FileManager.default.fileExists(atPath: path)
+        cache.value = (path, exists)
+        return exists
+    }
+}
+
+/// 解码结果缓存盒。
+///
+/// 之所以用 **引用类型**而不是直接放一个 `@Transient var` 值属性：
+/// SwiftData / Observation 会跟踪属性**赋值**，若在计算属性的 getter 里回填一个被跟踪的属性，
+/// 会在视图 body 求值期间触发变更通知，导致「Modifying state during view update」乃至重绘循环。
+/// 盒子引用本身始终不变、只改内部 `value`，因此回填是完全静默的。
+/// ⚠️ 使用约束（改代码前必读）
+///
+/// 缓存**只在对应计算属性的 setter 里失效**。因此以下前提必须一直成立，否则会读到过期数据
+/// 且不会有任何报错：
+/// 1. **禁止绕过 setter 直接写底层 `*Data` 字段**（如 `semanticTypesData = ...`）。
+///    要改值一律走 `segment.semanticTypes = ...`。
+/// 2. **禁止从另一个 ModelContext 写这些字段**。当前全 App 共用 `container.mainContext`，
+///    若将来引入后台上下文 / CloudKit 同步 / 批量迁移去写它们，必须在此补跨上下文失效逻辑。
+/// 3. 新增带缓存的字段时，务必同时提供显式失效入口
+///    （参考 `Segment.invalidateReplacedExistsCache()`）。
+final class DecodedCache<T> {
+    var value: T?
+    init() {}
 }

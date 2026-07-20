@@ -17,6 +17,15 @@ final class SchemeViewModel {
     var isNarrativeGenerating = false
     var generationProgress: String = ""
     var errorMessage: String?
+    /// 本次生成中失败的策略（名称 + 人话原因），供界面如实展示"哪几个没生成、为什么"。
+    /// ⚠️ 用独立 id 而不是拿 name 当 ForEach 的 id —— AI 生成的策略名可能重复，
+    /// 重复 id 会让 SwiftUI 的列表渲染错乱。
+    struct FailedStrategy: Identifiable {
+        let id = UUID()
+        let name: String
+        let reason: String
+    }
+    var failedStrategies: [FailedStrategy] = []
 
     private var modelContext: ModelContext?
     private let schemeService = SchemeGenerationService()
@@ -157,6 +166,7 @@ final class SchemeViewModel {
 
         isGenerating = true
         errorMessage = nil
+        failedStrategies = []
         project.status = .generating
 
         // 记录已成功落库的策略数：一旦 >0，即便后续步骤抛错，也说明「部分方案已存盘」，
@@ -193,9 +203,16 @@ final class SchemeViewModel {
             // Step 2: 所有策略并行生成组合
             generationProgress = "正在并行生成 \(strategyResults.count) 个策略的变体..."
 
-            let allResults: [(Int, SchemeStrategy, [AICompactComposition])] = await withTaskGroup(
-                of: (Int, SchemeStrategy, [AICompactComposition])?.self
-            ) { group in
+            // 单个策略失败**不能静默吞掉**：以前只打一条 info 日志，用户只会发现"方案怎么变少了"，
+            // 既不知道是哪个策略没生成，也不知道原因。这里把失败原因一并带回来，最后如实告知。
+            struct StrategyOutcome {
+                let index: Int
+                let strategy: SchemeStrategy
+                let compositions: [AICompactComposition]?
+                let failure: String?
+            }
+
+            let outcomes: [StrategyOutcome] = await withTaskGroup(of: StrategyOutcome.self) { group in
                 for (i, strategyResult) in strategyResults.enumerated() {
                     group.addTask { [schemeService, catalogText, videoAliases, variationsPerStrategy, customPrompt] in
                         do {
@@ -206,24 +223,34 @@ final class SchemeViewModel {
                                 variationCount: variationsPerStrategy,
                                 customPrompt: customPrompt
                             )
-                            return (i, strategyResult, compositions)
+                            return StrategyOutcome(index: i, strategy: strategyResult,
+                                                   compositions: compositions, failure: nil)
                         } catch {
-                            MixLog.info(" 策略「\(strategyResult.name)」生成失败: \(error)")
-                            return nil
+                            MixLog.error("策略「\(strategyResult.name)」生成失败: \(error)")
+                            return StrategyOutcome(index: i, strategy: strategyResult, compositions: nil,
+                                                   failure: FriendlyError.reason(for: error))
                         }
                     }
                 }
 
-                var results: [(Int, SchemeStrategy, [AICompactComposition])] = []
-                for await result in group {
-                    if let r = result {
-                        results.append(r)
-                        await MainActor.run {
-                            generationProgress = "已完成 \(results.count)/\(strategyResults.count) 个策略..."
-                        }
+                var results: [StrategyOutcome] = []
+                var done = 0
+                for await outcome in group {
+                    results.append(outcome)
+                    done += 1
+                    let finished = done
+                    await MainActor.run {
+                        generationProgress = "已完成 \(finished)/\(strategyResults.count) 个策略..."
                     }
                 }
-                return results.sorted { $0.0 < $1.0 }
+                return results.sorted { $0.index < $1.index }
+            }
+
+            failedStrategies = outcomes.compactMap { o in
+                o.failure.map { FailedStrategy(name: o.strategy.name, reason: $0) }
+            }
+            let allResults: [(Int, SchemeStrategy, [AICompactComposition])] = outcomes.compactMap { o in
+                o.compositions.map { (o.index, o.strategy, $0) }
             }
 
             // 在主线程创建数据模型
@@ -285,7 +312,13 @@ final class SchemeViewModel {
 
             loadSchemes(for: project)
             generationProgress = "生成完成：\(strategies.count) 个策略，共 \(schemes.count) 个方案"
-            ToastCenter.shared.show("已生成 \(strategies.count) 个策略 · \(schemes.count) 个方案", icon: "sparkles", style: .success)
+            if failedStrategies.isEmpty {
+                ToastCenter.shared.show("已生成 \(strategies.count) 个策略 · \(schemes.count) 个方案", icon: "sparkles", style: .success)
+            } else {
+                // 部分失败：说清楚成功几个、失败几个，失败明细在页面上的清单里
+                ToastCenter.shared.show("已生成 \(schemes.count) 个方案，\(failedStrategies.count) 个策略未能生成",
+                                        icon: "exclamationmark.triangle.fill", style: .warning, duration: 5)
+            }
         } catch {
             // 已有策略成功落库 → 这是「部分成功后中断」，不能误报为彻底失败、也不能把已存盘的方案藏起来。
             if persistedStrategyCount > 0 {
@@ -298,7 +331,9 @@ final class SchemeViewModel {
                 ToastCenter.shared.show("已生成 \(schemes.count) 个方案，但生成中途中断：\(error.localizedDescription)",
                                         icon: "exclamationmark.triangle.fill", style: .warning, duration: 4)
             } else {
-                errorMessage = "方案生成失败: \(error.localizedDescription)\n(\(String(describing: error).prefix(300)))"
+                // ⚠️ 不要把 `String(describing: error)` 的枚举内存 dump 给用户看（那是日志的活）。
+                errorMessage = "方案生成失败：\(FriendlyError.reason(for: error))"
+                MixLog.error("方案生成失败原始错误: \(String(describing: error))")
                 project.status = .ready
                 context.safeSave()
             }
@@ -543,13 +578,19 @@ final class SchemeViewModel {
     }
 
     /// 生成：组织 SegmentDescriptor/池/目录 → 调 service → 把通过的变体落成 MixScheme（命名"变体一/二…"）
-    func generateNarrativeVariants(for strategy: MixStrategy, in project: Project, requested: Int) async {
-        guard let context = modelContext else { return }
+    /// 生成叙事结构变体。
+    ///
+    /// 返回是否**真的生成出了方案**。以前返回 Void，且多条失败路径只弹 Toast 不设 errorMessage，
+    /// 调用方靠 `errorMessage == nil` 判断成败 → 失败时编辑器照样关闭，
+    /// 用户以为生成成功了，回到列表却一条新方案都没有。
+    @discardableResult
+    func generateNarrativeVariants(for strategy: MixStrategy, in project: Project, requested: Int) async -> Bool {
+        guard let context = modelContext else { return false }
 
         let slots = strategy.narrativeSlots.sorted { $0.order < $1.order }
         guard !slots.isEmpty else {
             ToastCenter.shared.show("请先为叙事结构配置段位标签", icon: "exclamationmark.circle.fill")
-            return
+            return false
         }
 
         isNarrativeGenerating = true
@@ -561,7 +602,7 @@ final class SchemeViewModel {
         let allSegments = project.videos.flatMap(\.segments)
         guard !allSegments.isEmpty else {
             ToastCenter.shared.show("没有可用的分镜素材，请先导入并分析视频", icon: "exclamationmark.circle.fill")
-            return
+            return false
         }
 
         let catalog = buildSegmentCatalog(allSegments)
@@ -601,7 +642,7 @@ final class SchemeViewModel {
         if let emptyIdx = pools.firstIndex(where: { $0.isEmpty }) {
             ToastCenter.shared.show("第 \(emptyIdx + 1) 段没有匹配的分镜，请调整该段标签或补充素材",
                                     icon: "exclamationmark.triangle.fill")
-            return
+            return false
         }
 
         // 3. 调 service 生成合法变体
@@ -615,15 +656,15 @@ final class SchemeViewModel {
                 requested: requested
             )
         } catch {
-            errorMessage = "叙事结构变体生成失败: \(error.localizedDescription)"
-            ToastCenter.shared.show("生成失败：\(error.localizedDescription)", icon: "exclamationmark.triangle.fill")
-            return
+            errorMessage = "叙事结构变体生成失败：\(FriendlyError.reason(for: error))"
+            ToastCenter.shared.show("生成失败，详情见编辑器内提示", icon: "exclamationmark.triangle.fill")
+            return false
         }
 
         guard !variants.isEmpty else {
-            ToastCenter.shared.show("未生成连贯变体，建议调整段位标签或增加素材",
-                                    icon: "exclamationmark.triangle.fill")
-            return
+            errorMessage = "AI 没能排出符合这个叙事结构的组合。通常是某些段位的候选分镜太少、或标签限制太严。建议放宽段位标签、增加素材，或减少要生成的方案数量后重试。"
+            ToastCenter.shared.show("未生成连贯变体", icon: "exclamationmark.triangle.fill")
+            return false
         }
 
         // 4. 把通过的变体逐个落成 MixScheme（复用现有 SchemeSegment 建法）
@@ -667,6 +708,7 @@ final class SchemeViewModel {
         selectedStrategy = strategy
         selectedScheme = strategy.orderedSchemes.first
         ToastCenter.shared.show("已生成 \(variants.count) 个变体", icon: "sparkles", style: .success)
+        return true
     }
 
     // MARK: - 自定义方案创建
@@ -678,8 +720,16 @@ final class SchemeViewModel {
         from segments: [Segment],
         in project: Project
     ) async -> MixScheme? {
-        guard let context = modelContext else { return nil }
-        guard !segments.isEmpty else { return nil }
+        // 失败路径必须带原因：调用方要据此给用户可读的提示，不能静默返回 nil。
+        guard let context = modelContext else {
+            errorMessage = "数据存储未就绪，请重启应用后重试"
+            return nil
+        }
+        guard !segments.isEmpty else {
+            errorMessage = "没有选中任何分镜，无法组合为方案"
+            return nil
+        }
+        errorMessage = nil
 
         // 确保 customGroup 存在（理论上一定有，双保险）
         let group: MixStrategy
