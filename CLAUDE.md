@@ -114,8 +114,11 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 - **编译后自动重启应用**: 每次 xcodebuild 编译成功后，必须执行 `pkill -x MixCut; sleep 1; open <DerivedData路径>/Build/Products/Debug/MixCut.app` 自动重启用户的应用
 - **DerivedData 路径**: `/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/`
-- **每次修改后自动打包 DMG**: 编译成功后，必须自动执行 Release 构建 + DMG 打包，输出到 `~/Desktop/MixCut.dmg`。用户需要随时分发给同事测试，不要等用户手动要求打包。完整流程：
+- **每次修改后自动打包 DMG**: 编译成功后，必须自动执行 Release 构建 + DMG 打包，输出到 `~/Desktop/MixCut-v<版本号>.dmg`。用户需要随时分发给同事测试，不要等用户手动要求打包。
+- **⚠️ 产物文件名必须带版本号**：`MixCut-v0.9.1.dmg`，**绝不允许**打成 `MixCut.dmg`。桌面上会同时存在多个版本的包，不带版本号根本分不清哪个是哪个，也没法直接传网盘。卷名（`-volname`）同样带版本号。
+- **打包前先 bump 版本号**：哪怕只是打测试包、不发版，版本号也要正常往后递增，不要停在旧版本号上。
   ```bash
+  # 0. bump 版本号（VERSION 文件 + pbxproj 的两处 MARKETING_VERSION 必须一致）
   # 1. Debug 编译 + 重启本地应用
   xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Debug build
   pkill -x MixCut; sleep 1; open <DerivedData>/Build/Products/Debug/MixCut.app
@@ -123,13 +126,16 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
   # ⚠️ 必须带 universal 参数，否则默认只编本机 arm64，Intel Mac 装了报「不支持此应用程序」
   xcodebuild -project MixCut.xcodeproj -scheme MixCut -configuration Release \
     -destination 'generic/platform=macOS' ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO build
+  V=$(cat VERSION)
   TEMP=$(mktemp -d) && cp -R <DerivedData>/Build/Products/Release/MixCut.app "$TEMP/" && ln -s /Applications "$TEMP/Applications"
-  rm -f ~/Desktop/MixCut.dmg && hdiutil create -volname MixCut -srcfolder "$TEMP" -ov -format UDZO ~/Desktop/MixCut.dmg
+  rm -f ~/Desktop/MixCut-v${V}.dmg
+  hdiutil create -volname "MixCut ${V}" -srcfolder "$TEMP" -ov -format UDZO ~/Desktop/MixCut-v${V}.dmg
   rm -rf "$TEMP"
   ```
 
   > **发版前务必校验 DMG 内主程序是 universal**：`lipo -archs <app>/Contents/MacOS/MixCut` 应为 `x86_64 arm64`。
   > 普通 `xcodebuild ... Release build`（不带 `-destination generic + ARCHS`）只出 arm64，会悄悄丢掉 Intel 支持。
+  > 同时校验 DMG 内 `CFBundleShortVersionString` == 目标版本号（挂载后用 PlistBuddy 读），别只信构建目录。
 
 ## 自己先测试，别让用户当测试员（必须遵守 ⚠️⚠️⚠️）
 
@@ -165,10 +171,44 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 - **不要自动提交 git 和发布版本**：修改代码后只做编译+重启+打包 DMG，不要执行 `git add/commit/push` 和 `gh release`。必须等用户验证没问题后，用户明确要求才能提交和发版。
 - **不要自作主张 `git tag` 或 `gh release create`**：版本号和发布时机由用户决定。
-- **每次发版必须双端同步：GitHub + Gitee 都要有对应 release（含 DMG 附件）**。
-  GitHub 用 `gh release create vX.Y.Z ~/Desktop/MixCut.dmg --title ... --notes ...`；
-  Gitee 同步用仓库根目录的 `./release_gitee.sh`（默认拿最新 tag，会自动复用 GitHub 上的 release notes 并上传 DMG）。
-  Gitee Token 保存在 `~/.config/mixcut/gitee.env`（不在 git 仓库内），换 token 编辑这个文件。
+
+### 分发方式（v0.7.1 起，现行）：DMG 走百度网盘，release 只放下载页链接
+
+DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬上限 100MB，两边都不适合放包。
+现行分发链路是 **固定下载页 + versions.json + 用户提供的网盘分享链接**：
+
+- **下载页**：http://47.119.175.47/mixcut/ （nginx `location ^~ /mixcut/` → `/www/wwwroot/dlpage/`）
+- **版本库**：`/www/wwwroot/dlpage/versions.json`，结构 `{"mac":[{version,date,size,url},…], "win":[…]}`，
+  每平台一个数组、**最新在最前**；主按钮取 `[0]`，弹窗列出全部历史版本（老链接一律保留）。
+- **发新版 = 往对应数组最前面 prepend 一条**，改完即时生效。
+
+**⚠️ 各自的职责边界（务必分清，我曾搞错）**：
+
+| 谁 | 做什么 |
+|---|---|
+| 我（Claude） | 只负责：bump 版本 → 打带版本号的 DMG → 提交/推送/打 tag → 发 GitHub + Gitee release（**正文指向下载页，不传附件**） |
+| 用户 | 把桌面上的 DMG 传到**百度网盘**，把分享链接（含提取码）发给我 |
+| 我（拿到链接后） | 把链接 prepend 进服务器的 `versions.json` |
+
+> **绝对不要自作主张把 DMG 上传到服务器 `/dl/`**。那是早期方案的遗留兜底路径，现行流程里包由用户放网盘。
+> **不要用 `./release_gitee.sh`** —— 它会强制上传 1.6GB DMG 到 Gitee，必然失败。
+
+**发版标准动作全序列**：
+1. bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION）→ clean Release universal 构建 → 打 `MixCut-v<版本>.dmg`
+2. 三项强制校验：主程序 `lipo -archs` == `x86_64 arm64`、4 个内置二进制均双架构、DMG 内 `CFBundleShortVersionString` == 目标版本
+3. `git commit` → `git tag vX.Y.Z` → `git push origin main && git push gitee main` → `git push origin vX.Y.Z && git push gitee vX.Y.Z`
+4. `gh release create vX.Y.Z --title … --notes-file …`（**不传 DMG**，正文「下载」段指向下载页）
+5. Gitee `POST https://gitee.com/api/v5/repos/jinxiushanhehao/mixed_cut/releases`
+   （jq 组 body，字段 access_token/tag_name/name/body/prerelease/target_commitish=main）
+6. **等用户给百度网盘链接** → 更新服务器 `versions.json`
+
+**凭据**：`GITEE_TOKEN` 与服务器 `CN_SSH_*` 都在项目根 `.env`（gitignored，绝不提交/外传）。
+服务器登录用**密码**不是 key，且密码含特殊字符：
+- 绝不能 `source .env`（`#` 会截断密码）；要 `grep -E '^CN_SSH_PASSWORD=' .env | sed -E 's/^CN_SSH_PASSWORD=//; s/^"(.*)"$/\1/'`
+- ssh/scp 必须带 `-o PreferredAuthentications=password -o PubkeyAuthentication=no` + `sshpass`
+
+**历史 Gitee release id**：v0.7.1=736815 / v0.8.0=739784 / v0.8.1=744314 / v0.9.0=750028 / v0.9.1=754773
+（正文改动用 `PATCH …/releases/{id}`，GitHub 用 `gh release edit vX.Y.Z --notes-file`）
 
 ## 关键开发规则（必须遵守）
 
