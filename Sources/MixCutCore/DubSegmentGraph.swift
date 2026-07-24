@@ -25,6 +25,19 @@ public struct CaptionOverlay: Sendable, Equatable {
     }
 }
 
+/// 全局 BGM 模式下，原声段的「纯人声」音源：
+/// 整轨 vocals.wav 的输入序号 + 原视频时间轴上的切片窗（秒）。
+/// ⚠️ 时间窗必须用**原视频**时间轴（segment.startTime/endTime），不能用替换画面片的帧换算——
+/// 替换画面片的音轨本来就取自原视频同窗口，vocals.wav 也是对原视频整轨分离的。
+public struct VocalsSource: Sendable, Equatable {
+    public let inputIndex: Int
+    public let start: Double
+    public let end: Double
+    public init(inputIndex: Int, start: Double, end: Double) {
+        self.inputIndex = inputIndex; self.start = start; self.end = end
+    }
+}
+
 /// 构建「切片 → 9:16 标准化 → 遮挡旧字幕 → 逐句叠新字幕 → 换音轨 → 定格/补静音」滤镜图。
 /// 输入约定：input 0 = 源视频；每条 caption PNG = 其 CaptionOverlay.inputIndex；dub m4a = dubAudioInputIndex。
 /// 逐句字幕：每句一个 overlay + `enable='between(t,起,止)'`（t=分镜内 0 起，由 trim/setpts 保证）。
@@ -46,7 +59,8 @@ public enum DubSegmentGraphBuilder {
         dubAudioInputIndex: Int,
         freezePadFrames: Int,
         trailingSilence: Double,
-        bgmInputIndex: Int? = nil
+        bgmInputIndex: Int? = nil,
+        vocalsSource: VocalsSource? = nil
     ) -> DubSegmentGraph {
         let w = outputWidth, h = outputHeight
         let fpsInt = Int(fps.rounded())
@@ -103,12 +117,20 @@ public enum DubSegmentGraphBuilder {
 
         // 5) 音频 → [aout]
         if keepOriginalAudio {
-            let aStart = Double(startFrame) / fps
-            let aEnd = Double(endFrame) / fps
-            parts.append(
-                "[0:a]atrim=start=\(String(format: "%.5f", aStart)):end=\(String(format: "%.5f", aEnd))," +
-                "asetpts=PTS-STARTPTS,aresample=44100[aout]"
-            )
+            if let vs = vocalsSource {
+                // 全局 BGM 模式：原声段只留纯口播（整轨 vocals.wav 按原视频时间轴切片）
+                parts.append(
+                    "[\(vs.inputIndex):a]atrim=start=\(String(format: "%.5f", vs.start)):end=\(String(format: "%.5f", vs.end))," +
+                    "asetpts=PTS-STARTPTS,aresample=44100[aout]"
+                )
+            } else {
+                let aStart = Double(startFrame) / fps
+                let aEnd = Double(endFrame) / fps
+                parts.append(
+                    "[0:a]atrim=start=\(String(format: "%.5f", aStart)):end=\(String(format: "%.5f", aEnd))," +
+                    "asetpts=PTS-STARTPTS,aresample=44100[aout]"
+                )
+            }
         } else {
             let padSuffix = trailingSilence > silenceEpsilon
                 ? ",apad=pad_dur=\(String(format: "%.3f", trailingSilence))"

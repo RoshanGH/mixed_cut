@@ -200,3 +200,44 @@ struct DubSegmentGraphBGMTests {
         #expect(fc.contains("amix=inputs=2:duration=first:normalize=0[aout]"))
     }
 }
+
+@Suite("全局 BGM 模式：原声段用纯人声音源")
+struct VocalsSourceTests {
+
+    @Test("传 vocalsSource 时原声段音频取自 vocals 输入并按秒切片")
+    func vocalsSliceReplacesOriginalAudio() {
+        let g = DubSegmentGraphBuilder.build(
+            mode: .none, startFrame: 0, endFrame: 90, fps: 30,
+            outputWidth: 720, outputHeight: 1280,
+            maskPixel: PixelRect(x: 0, y: 0, width: 100, height: 100),
+            captions: [], keepOriginalAudio: true,
+            dubAudioInputIndex: 1, freezePadFrames: 0, trailingSilence: 0,
+            vocalsSource: VocalsSource(inputIndex: 1, start: 12.5, end: 15.5))
+        #expect(g.filterComplex.contains("[1:a]atrim=start=12.50000:end=15.50000"))
+        #expect(!g.filterComplex.contains("[0:a]"))
+    }
+
+    @Test("不传 vocalsSource 时行为不变（原声取 [0:a]）")
+    func defaultKeepsOriginalBehavior() {
+        let g = DubSegmentGraphBuilder.build(
+            mode: .none, startFrame: 0, endFrame: 90, fps: 30,
+            outputWidth: 720, outputHeight: 1280,
+            maskPixel: PixelRect(x: 0, y: 0, width: 100, height: 100),
+            captions: [], keepOriginalAudio: true,
+            dubAudioInputIndex: 1, freezePadFrames: 0, trailingSilence: 0)
+        #expect(g.filterComplex.contains("[0:a]atrim="))
+    }
+
+    @Test("配音段不受 vocalsSource 影响（音频仍取配音输入）")
+    func dubSegmentIgnoresVocalsSource() {
+        let g = DubSegmentGraphBuilder.build(
+            mode: .none, startFrame: 0, endFrame: 90, fps: 30,
+            outputWidth: 720, outputHeight: 1280,
+            maskPixel: PixelRect(x: 0, y: 0, width: 100, height: 100),
+            captions: [], keepOriginalAudio: false,
+            dubAudioInputIndex: 1, freezePadFrames: 0, trailingSilence: 0,
+            vocalsSource: VocalsSource(inputIndex: 2, start: 0, end: 3))
+        #expect(g.filterComplex.contains("[1:a]aresample=44100"))
+        #expect(!g.filterComplex.contains("[2:a]"))
+    }
+}

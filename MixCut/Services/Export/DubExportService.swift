@@ -17,6 +17,33 @@ struct DubSegmentSpec: Sendable {
     let bgmAudioPath: String?      // 配音镜头的 BGM 源（整轨 bgm.wav）；nil = 不混 BGM
     /// 该分镜自己的字幕字号比例（逐分镜独立，不再读全局设置）
     let subtitleFontRatio: Double
+    /// 全局 BGM 模式：原声段改用整轨纯人声 wav（原视频 stems/vocals.wav）；nil = 常规模式
+    let vocalsAudioPath: String?
+    /// 人声切片窗（**原视频时间轴**，秒）。替换画面段也用原视频时间——替换片音轨本取自原视频同窗口。
+    let vocalsStart: Double
+    let vocalsEnd: Double
+
+    init(videoPath: String, startFrame: Int, endFrame: Int, fps: Double,
+         captionLines: [CaptionLine], hasHardSubtitle: Bool, maskStyleRaw: String,
+         maskRect: SubtitleMaskRect, isVoiceLocked: Bool, dubAudioPath: String?,
+         freezePadFrames: Int, trailingSilence: Double, bgmAudioPath: String?,
+         subtitleFontRatio: Double,
+         vocalsAudioPath: String? = nil, vocalsStart: Double = 0, vocalsEnd: Double = 0) {
+        self.videoPath = videoPath; self.startFrame = startFrame; self.endFrame = endFrame
+        self.fps = fps; self.captionLines = captionLines; self.hasHardSubtitle = hasHardSubtitle
+        self.maskStyleRaw = maskStyleRaw; self.maskRect = maskRect; self.isVoiceLocked = isVoiceLocked
+        self.dubAudioPath = dubAudioPath; self.freezePadFrames = freezePadFrames
+        self.trailingSilence = trailingSilence; self.bgmAudioPath = bgmAudioPath
+        self.subtitleFontRatio = subtitleFontRatio
+        self.vocalsAudioPath = vocalsAudioPath; self.vocalsStart = vocalsStart; self.vocalsEnd = vocalsEnd
+    }
+}
+
+/// 全局 BGM 铺底参数（导出时用户在导出页选中的 BGM）。
+struct GlobalBGMSpec: Sendable {
+    let audioPath: String
+    /// BGM 音量 0…1（UI 默认 0.6）
+    let volume: Double
 }
 
 /// 配音导出输入（整条成片）。
@@ -29,8 +56,11 @@ struct DubExportInput: Sendable {
     /// - Parameter combo: 每槽选定的变体 dubId（与 orderedSegments 对齐，nil=原声）。
     ///   传 nil 时退回按 SchemeSegment.selectedSegmentDubId 取定（单条/预览一致）。
     ///   nil/锁定/找不到/无音频 → 原声回退。配音段会自动混入分离出的 BGM。
+    /// - Parameter useVocalsOnly: 全局 BGM 模式——原声段改用纯人声切片、配音段不混原分离 BGM。
+    ///   任一分镜缺 vocals.wav 时返回 nil（预检阶段已保证分离成功；这里是兜底防御，
+    ///   绝不静默回退成混音原声——那会悄悄给用户一条 BGM 没去干净的片子）。
     @MainActor
-    static func from(scheme: MixScheme, combo: [UUID?]? = nil) -> DubExportInput? {
+    static func from(scheme: MixScheme, combo: [UUID?]? = nil, useVocalsOnly: Bool = false) -> DubExportInput? {
         let ordered = scheme.orderedSegments
         guard !ordered.isEmpty else { return nil }
 
@@ -47,6 +77,16 @@ struct DubExportInput: Sendable {
             maxW = max(maxW, video.width)
             maxH = max(maxH, video.height)
 
+            // 全局 BGM 模式：所有原声段都必须能拿到纯人声源，缺一即整条成片不可导
+            var vocalsPath: String? = nil
+            if useVocalsOnly {
+                guard let vp = Self.vocalsPath(for: video) else {
+                    MixLog.error("[Export] 全局 BGM 模式缺少 vocals.wav：\(video.name)")
+                    return nil
+                }
+                vocalsPath = vp
+            }
+
             // 该槽选定的变体：combo 指定优先，否则用 selectedSegmentDubId；nil 或找不到 → 原声
             let chosenId: UUID? = combo != nil ? (idx < combo!.count ? combo![idx] : nil)
                                                : schemeSeg.selectedSegmentDubId
@@ -60,7 +100,8 @@ struct DubExportInput: Sendable {
                     fps: fps, captionLines: [], hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
-                    subtitleFontRatio: segment.subtitleFontRatio))
+                    subtitleFontRatio: segment.subtitleFontRatio,
+                    vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime))
             } else if let dub = chosen,
                       let audioPath = dub.audioFilePath,
                       FileManager.default.fileExists(atPath: audioPath) {
@@ -76,7 +117,8 @@ struct DubExportInput: Sendable {
                     fps: fps, captionLines: capLines, hasHardSubtitle: segment.hasHardSubtitle, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: false, dubAudioPath: audioPath,
                     freezePadFrames: dub.freezePadFrames, trailingSilence: dub.trailingSilence,
-                    bgmAudioPath: Self.bgmPath(for: video),
+                    // 全局 BGM 模式下配音段不再混原视频分离 BGM（配音本身就是纯人声，BGM 最后整片统一铺）
+                    bgmAudioPath: useVocalsOnly ? nil : Self.bgmPath(for: video),
                     subtitleFontRatio: segment.subtitleFontRatio))
             } else {
                 // 非锁定但无已生成配音 → 回退保留原声原字幕，保证导出不中断
@@ -88,7 +130,8 @@ struct DubExportInput: Sendable {
                     fps: fps, captionLines: [], hasHardSubtitle: false, maskStyleRaw: segment.maskStyleRaw,
                     maskRect: segment.maskRect, isVoiceLocked: true, dubAudioPath: nil,
                     freezePadFrames: 0, trailingSilence: 0, bgmAudioPath: nil,
-                    subtitleFontRatio: segment.subtitleFontRatio))
+                    subtitleFontRatio: segment.subtitleFontRatio,
+                    vocalsAudioPath: vocalsPath, vocalsStart: segment.startTime, vocalsEnd: segment.endTime))
             }
         }
         guard !specs.isEmpty else { return nil }
@@ -99,6 +142,14 @@ struct DubExportInput: Sendable {
     private static func bgmPath(for video: Video) -> String? {
         guard let hash = video.contentHash else { return nil }
         let path = FileHelper.stemsDirectory(videoHash: hash).appendingPathComponent("bgm.wav").path
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
+    /// 原声段的纯人声源：demucs 分离出的整轨 vocals.wav；不存在 → nil。
+    /// 调用方（全局 BGM 模式）需已在预检阶段完成分离。
+    private static func vocalsPath(for video: Video) -> String? {
+        guard let hash = video.contentHash else { return nil }
+        let path = FileHelper.stemsDirectory(videoHash: hash).appendingPathComponent("vocals.wav").path
         return FileManager.default.fileExists(atPath: path) ? path : nil
     }
 }
@@ -174,6 +225,7 @@ actor DubExportService {
         input: DubExportInput,
         outputPath: String,
         config: ExportConfig = ExportConfig(),
+        globalBGM: GlobalBGMSpec? = nil,
         onProgress: (@Sendable (ExportProgress) -> Void)? = nil
     ) async throws {
         guard !input.segments.isEmpty else { throw ExportError.noSegments }
@@ -201,9 +253,17 @@ actor DubExportService {
             intermediatePaths.append(interURL.path)
         }
 
-        // 阶段二：concat 解复用器无损拼接
-        onProgress?(ExportProgress(phase: .concatenating, progress: 0.9, description: "拼接成片…"))
-        try await concatCopy(paths: intermediatePaths, workDir: workDir, outputPath: outputPath)
+        // 阶段二：concat 解复用器无损拼接。选了全局 BGM 时先落中间片，再铺底 BGM 到最终输出。
+        onProgress?(ExportProgress(phase: .concatenating, progress: 0.88, description: "拼接成片…"))
+        let concatTarget = globalBGM == nil
+            ? outputPath
+            : workDir.appendingPathComponent("voiced.mp4").path
+        try await concatCopy(paths: intermediatePaths, workDir: workDir, outputPath: concatTarget)
+
+        if let bgm = globalBGM {
+            onProgress?(ExportProgress(phase: .concatenating, progress: 0.95, description: "铺底背景音乐…"))
+            try await mixGlobalBGM(voicedPath: concatTarget, bgm: bgm, outputPath: outputPath)
+        }
 
         onProgress?(ExportProgress(phase: .completed, progress: 1.0, description: "配音导出完成"))
     }
@@ -275,6 +335,18 @@ actor DubExportService {
             }
         }
 
+        // 全局 BGM 模式：原声段音频改取整轨纯人声切片。
+        // 文件缺失 = 结果达不到「去原 BGM」的承诺，直接报错，绝不回退混音原声。
+        var vocalsSource: VocalsSource? = nil
+        if keepOriginalAudio, let vocPath = spec.vocalsAudioPath {
+            guard FileManager.default.fileExists(atPath: vocPath) else {
+                throw ExportError.missingVocals(vocPath)
+            }
+            extraInputs.append(vocPath)
+            vocalsSource = VocalsSource(inputIndex: extraInputs.count,
+                                        start: spec.vocalsStart, end: spec.vocalsEnd)
+        }
+
         let graph = DubSegmentGraphBuilder.build(
             mode: mode,
             startFrame: spec.startFrame, endFrame: spec.endFrame, fps: spec.fps,
@@ -285,7 +357,8 @@ actor DubExportService {
             dubAudioInputIndex: dubAudioInputIndex,
             freezePadFrames: spec.freezePadFrames,
             trailingSilence: spec.trailingSilence,
-            bgmInputIndex: bgmInputIndex)
+            bgmInputIndex: bgmInputIndex,
+            vocalsSource: vocalsSource)
 
         var args: [String] = ["-y", "-i", spec.videoPath]
         for input in extraInputs { args += ["-i", input] }
@@ -304,6 +377,37 @@ actor DubExportService {
                  "-movflags", "+faststart", outputPath]
 
         _ = try await ffmpeg.run(arguments: args, totalDuration: nil, onProgress: nil)
+    }
+
+    // MARK: - 全局 BGM 铺底
+
+    /// 把选中的 BGM 铺到纯口播成片上：视频流直拷（不重编码），音频 = 口播 + BGM 混音。
+    /// BGM 短于成片由 -stream_loop 循环补齐，长于成片由滤镜 atrim 截断，结尾 1 秒淡出。
+    private func mixGlobalBGM(voicedPath: String, bgm: GlobalBGMSpec, outputPath: String) async throws {
+        guard FileManager.default.fileExists(atPath: bgm.audioPath) else {
+            throw ExportError.encodingFailed(
+                "背景音乐文件不存在：\((bgm.audioPath as NSString).lastPathComponent)，请回「BGM 库」检查")
+        }
+        let duration = await probeDuration(voicedPath)
+        guard duration > 0 else {
+            throw ExportError.encodingFailed("无法读取成片时长，背景音乐铺底失败")
+        }
+        let graph = GlobalBGMMixGraphBuilder.filterComplex(pieceDuration: duration, bgmVolume: bgm.volume)
+        let args = ["-y", "-i", voicedPath,
+                    "-stream_loop", "-1", "-i", bgm.audioPath,
+                    "-filter_complex", graph,
+                    "-map", "0:v", "-map", "[aout]",
+                    "-c:v", "copy",
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "44100", "-ac", "2",
+                    "-movflags", "+faststart", outputPath]
+        _ = try await ffmpeg.run(arguments: args, totalDuration: nil, onProgress: nil)
+    }
+
+    /// 读容器时长（秒）；失败返回 0。
+    private func probeDuration(_ path: String) async -> Double {
+        let out = try? await ffmpeg.runProbe(arguments: [
+            "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path])
+        return Double((out ?? "").trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
     }
 
     // MARK: - 阶段二拼接

@@ -31,6 +31,7 @@
 		346BCE1788D6A61E346051F7 /* PhysicalShot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CF0353E8D72771B05CD795D /* PhysicalShot.swift */; };
 		3A4C06F557F58FA17AE5D986 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4730FBF87FD450D92F8D32A9 /* SettingsView.swift */; };
 		3B616E15A9854D3A92E837E3 /* VoiceCloneService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8125257167654959A82159EF /* VoiceCloneService.swift */; };
+		3DD5898BF44611E510C4FF1F /* GlobalBGMMixGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53282C4D5D11A4DB16781655 /* GlobalBGMMixGraph.swift */; };
 		3EA6C43C9B543AAD48FE5416 /* ad_styles.md in Resources */ = {isa = PBXBuildFile; fileRef = 901C23DFF0236F31144F05FC /* ad_styles.md */; };
 		40545E19D3DAE813CE38DFC0 /* CaptionBoundaryEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 00BB297E748A24807AAFAB9D /* CaptionBoundaryEditor.swift */; };
 		4073A3718CC9FAB5EE400BB7 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 398D9F67B6B07F677992CA9D /* UpdateChecker.swift */; };
@@ -44,7 +45,9 @@
 		55C48D531739EAEDDEE856D5 /* video_segmentation_prompt.md in Resources */ = {isa = PBXBuildFile; fileRef = B37CFECCAC0B22A7103027BF /* video_segmentation_prompt.md */; };
 		55D680392E127983C43366C3 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ACE2ED824CD1A03D8F12A62 /* WelcomeView.swift */; };
 		56C8FC6396E2466C84870DA4 /* SegmentVariantInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA81666C0EF4C52A4518514 /* SegmentVariantInspector.swift */; };
+		56FD408676D75ECD18215EC3 /* BGMLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */; };
 		5BFA9102727193F3F303530C /* ImportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CBDDB5E3AF7A43A34F86EF /* ImportViewModel.swift */; };
+		5C374946C2A12A8F7D12587D /* UniqueFileNamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19A0FB7E22D2DDEF87274BB2 /* UniqueFileNamer.swift */; };
 		5C37778E86144BA7923334E9 /* VariantSelector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4562C1C2A6CE4CD7B4F426D1 /* VariantSelector.swift */; };
 		60CCF84622A785C381FEA3FF /* segment_types_definition.md in Resources */ = {isa = PBXBuildFile; fileRef = B01A3AFBDC1142901A3947DF /* segment_types_definition.md */; };
 		612D1CB218960CA1D5C930F6 /* CaptionTimingEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20E690500D19E15B4DD3CF7A /* CaptionTimingEditorSheet.swift */; };
@@ -68,6 +71,7 @@
 		8BA0DD196B2CB35D0199F751 /* SegmentPickerDrawer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */; };
 		8DA76769E698732C83DFF23D /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7441C758FE1B6F0B996DCC3F /* ThumbnailCache.swift */; };
 		920ECE891320423BBAC664A8 /* ParaformerASR.swift in Sources */ = {isa = PBXBuildFile; fileRef = CADF30D1432D4475A36CAE6B /* ParaformerASR.swift */; };
+		943E3C8778520FAFD5E6A37F /* BGMLibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66877C6CCA03E25280D675CB /* BGMLibraryStore.swift */; };
 		9908BA8988CA083B76DA43CD /* SchemeGenerationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3199B0663AA1013F37308497 /* SchemeGenerationService.swift */; };
 		9CFD3CF6C7194508A041D7CC /* VariantBatchExportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99FB6534276046849D735315 /* VariantBatchExportService.swift */; };
 		A03232C311EA4B79AC8261CC /* SegmentExportExpander.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FD46E94BBEB4B9A82B0714F /* SegmentExportExpander.swift */; };
@@ -151,6 +155,7 @@
 		18C3F980EFF4481A9F9323C7 /* DubSettingsBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubSettingsBar.swift; sourceTree = "<group>"; };
 		1904A3920C65424D0EDF327B /* bin */ = {isa = PBXFileReference; lastKnownFileType = folder; path = bin; sourceTree = "<group>"; };
 		1986C779DBB5CC1CB2DA2E4E /* BatchExportSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchExportSheet.swift; sourceTree = "<group>"; };
+		19A0FB7E22D2DDEF87274BB2 /* UniqueFileNamer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = UniqueFileNamer.swift; path = Sources/MixCutCore/UniqueFileNamer.swift; sourceTree = "<group>"; };
 		1A9002373E37600803745419 /* FileHelper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileHelper.swift; sourceTree = "<group>"; };
 		1B3405BACFEFDF9218B606DD /* ShotEditViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShotEditViewModel.swift; sourceTree = "<group>"; };
 		1CC212CC8B46714F25F63E1D /* Project.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Project.swift; sourceTree = "<group>"; };
@@ -174,15 +179,18 @@
 		4ACE2ED824CD1A03D8F12A62 /* WelcomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WelcomeView.swift; sourceTree = "<group>"; };
 		4C4CC2EDACAE4BFBA8750741 /* DubbingViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DubbingViewModel.swift; sourceTree = "<group>"; };
 		510B36E7476585C9BB4D0DC4 /* SchemeDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeDetailView.swift; sourceTree = "<group>"; };
+		53282C4D5D11A4DB16781655 /* GlobalBGMMixGraph.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = GlobalBGMMixGraph.swift; path = Sources/MixCutCore/GlobalBGMMixGraph.swift; sourceTree = "<group>"; };
 		53F751C5D0FD58200E4E3FB2 /* NarrativeStructureEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NarrativeStructureEngine.swift; path = Sources/MixCutCore/NarrativeStructureEngine.swift; sourceTree = "<group>"; };
 		55675ED99B8EF371214D495C /* SegmentPickerDrawer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SegmentPickerDrawer.swift; sourceTree = "<group>"; };
 		55AF6B2F5FEBD2593D995456 /* InlineBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InlineBanner.swift; sourceTree = "<group>"; };
 		56B4B3C845C059F96ABA5AF1 /* OpenAICompatibleClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICompatibleClient.swift; sourceTree = "<group>"; };
 		57155C2AF9E313323FEE4038 /* ShotCompositionService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotCompositionService.swift; path = ../../../ShotEdit/ShotCompositionService.swift; sourceTree = "<group>"; };
+		5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BGMLibraryView.swift; path = MixCut/Views/BGMLibrary/BGMLibraryView.swift; sourceTree = "<group>"; };
 		59AF8B47EBE91540EB5E2803 /* ScriptRewriteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptRewriteService.swift; sourceTree = "<group>"; };
 		59EA48C6FF4B7C3BB4DC3122 /* AIProviderManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderManager.swift; sourceTree = "<group>"; };
 		5D595E4E7B57C7DF05BBB26E /* FlowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlowLayout.swift; sourceTree = "<group>"; };
 		5E38824D4DD571ED6A70E3AB /* ConcurrencyPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConcurrencyPolicy.swift; sourceTree = "<group>"; };
+		66877C6CCA03E25280D675CB /* BGMLibraryStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BGMLibraryStore.swift; path = MixCut/Services/BGM/BGMLibraryStore.swift; sourceTree = "<group>"; };
 		668A584A73936DE0EF82FDDE /* PromptPresets.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = PromptPresets.swift; path = ../../../ShotEdit/PromptPresets.swift; sourceTree = "<group>"; };
 		685BFF64A6DC4F662738E239 /* SchemeSegment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeSegment.swift; sourceTree = "<group>"; };
 		68E1E2F7BFD4E8F44AD8F5B5 /* DubSegmentGraph.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DubSegmentGraph.swift; path = Sources/MixCutCore/DubSegmentGraph.swift; sourceTree = "<group>"; };
@@ -396,6 +404,10 @@
 				7DFBD2DFA4D61CB3A541A31D /* MixCutCore */,
 				8A8155CA3877983E82D2C4D0 /* WrapHStack.swift */,
 				124522DE9ECA23C2BA58B156 /* SplitSegmentSheet.swift */,
+				66877C6CCA03E25280D675CB /* BGMLibraryStore.swift */,
+				53282C4D5D11A4DB16781655 /* GlobalBGMMixGraph.swift */,
+				19A0FB7E22D2DDEF87274BB2 /* UniqueFileNamer.swift */,
+				5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -841,6 +853,10 @@
 				40545E19D3DAE813CE38DFC0 /* CaptionBoundaryEditor.swift in Sources */,
 				E6E77FFC3E9A199D12B55A22 /* WrapHStack.swift in Sources */,
 				D8406709B02CCEB10615F2B8 /* SplitSegmentSheet.swift in Sources */,
+				943E3C8778520FAFD5E6A37F /* BGMLibraryStore.swift in Sources */,
+				3DD5898BF44611E510C4FF1F /* GlobalBGMMixGraph.swift in Sources */,
+				5C374946C2A12A8F7D12587D /* UniqueFileNamer.swift in Sources */,
+				56FD408676D75ECD18215EC3 /* BGMLibraryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -865,7 +881,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -990,7 +1006,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.9.1;
+				MARKETING_VERSION = 0.9.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.mixcut.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

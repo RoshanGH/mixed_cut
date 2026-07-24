@@ -297,6 +297,7 @@ enum ExportError: LocalizedError {
     case noSegments
     case noValidSegments
     case encodingFailed(String)
+    case missingVocals(String)
 
     var errorDescription: String? {
         switch self {
@@ -306,6 +307,8 @@ enum ExportError: LocalizedError {
             return "方案中没有有效的分镜（可能视频文件不存在）"
         case .encodingFailed(let detail):
             return "编码失败: \(detail)"
+        case .missingVocals(let path):
+            return "人声分离产物缺失（\((path as NSString).lastPathComponent)），无法去除原 BGM。请重新导出（会自动重新分离）"
         }
     }
 }

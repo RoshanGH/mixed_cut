@@ -23,6 +23,7 @@ struct KeyboardShortcutsSheet: View {
             ("⌘3", "分镜素材库"),
             ("⌘4", "混剪方案"),
             ("⌘5", "导出"),
+            ("⌘6", "BGM 库"),
         ]),
         ShortcutGroup(title: "分镜库 · 多选模式", items: [
             ("⌘A", "全选当前可见"),

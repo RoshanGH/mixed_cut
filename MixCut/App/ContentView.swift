@@ -15,6 +15,7 @@ enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
     case importMedia = "素材导入"
     case segmentLibrary = "分镜素材库"
     case schemes = "混剪方案"
+    case bgmLibrary = "BGM 库"
     case export = "导出"
 
     var id: String { rawValue }
@@ -25,6 +26,7 @@ enum NavigationItem: String, Hashable, CaseIterable, Identifiable {
         case .importMedia: return "square.and.arrow.down"
         case .segmentLibrary: return "film.stack"
         case .schemes: return "list.bullet.clipboard"
+        case .bgmLibrary: return "music.note.list"
         case .export: return "square.and.arrow.up"
         }
     }
@@ -163,6 +165,8 @@ struct ContentView: View {
             SegmentLibraryView(project: project, viewModel: segmentLibraryVM, schemeVM: schemeVM)
         case .schemes:
             SchemeListView(project: project, viewModel: schemeVM, segmentLibraryVM: segmentLibraryVM)
+        case .bgmLibrary:
+            BGMLibraryView()
         case .export:
             ExportView(project: project, schemeVM: schemeVM)
         case .none:

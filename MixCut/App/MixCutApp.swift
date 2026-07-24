@@ -232,6 +232,10 @@ struct MixCutApp: App {
                     NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.export)
                 }
                 .keyboardShortcut("5", modifiers: .command)
+                Button("BGM 库") {
+                    NotificationCenter.default.post(name: .mixCutNavigate, object: NavigationItem.bgmLibrary)
+                }
+                .keyboardShortcut("6", modifiers: .command)
             }
         }
 

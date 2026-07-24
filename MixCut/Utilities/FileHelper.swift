@@ -140,6 +140,16 @@ enum FileHelper {
         return dir
     }
 
+    // MARK: - BGM 库（全局共享）
+
+    /// BGM 库目录：AppSupport/MixCut/BGM/。
+    /// 上传的音频文件直接落此目录，"库"即目录扫描，无数据库记录（避免 schema 变更）。
+    static var bgmLibraryDirectory: URL {
+        let url = appSupportDirectory.appendingPathComponent("BGM", isDirectory: true)
+        ensureDirectory(at: url)
+        return url
+    }
+
     // MARK: - Whisper 语音模型存储
 
     /// Whisper 语音模型存储目录。

@@ -26,6 +26,11 @@ struct ExportView: View {
     /// 本次导出的失败清单（哪一条、为什么），供用户定位与反馈
     @State private var exportFailures: [ExportFailure] = []
 
+    /// 全局 BGM：nil = 保留原 BGM（现有行为零改动）。BGM 是全局资源，切项目不重置。
+    @State private var bgmStore = BGMLibraryStore()
+    @State private var selectedBGMPath: String? = nil
+    @State private var bgmVolume: Double = 0.6
+
     private let exportService = ExportService()
 
     /// 当前选中的方案数组（按现有方案顺序）
@@ -119,6 +124,14 @@ struct ExportView: View {
         .onAppear {
             schemeVM.loadSchemes(for: project)
             selectAll()
+        }
+        .task {
+            // BGM 库是全局的，与项目无关；每次进导出页刷新列表，
+            // 并校验之前选中的 BGM 还在（可能刚在「BGM 库」里被删）
+            await bgmStore.reload()
+            if let path = selectedBGMPath, !bgmStore.tracks.contains(where: { $0.path == path }) {
+                selectedBGMPath = nil
+            }
         }
         .onChange(of: project.id) {
             // ⚠️ 必须真的把任务取消掉，不能只清 UI 状态。
@@ -416,6 +429,51 @@ struct ExportView: View {
                     Spacer()
                 }
                 .padding(.top, 2)
+
+                Divider().padding(.vertical, 4)
+
+                // 背景音乐：默认「保留原 BGM」；选了库里的 BGM = 去原 BGM 留口播 + 整片铺底
+                Picker("背景音乐", selection: $selectedBGMPath) {
+                    Text("保留原 BGM").tag(String?.none)
+                    ForEach(bgmStore.tracks) { track in
+                        Text("\(track.name)（\(track.durationText)）")
+                            .tag(String?.some(track.path))
+                    }
+                }
+
+                if selectedBGMPath != nil {
+                    HStack(spacing: DesignTokens.Spacing.normal) {
+                        Text("BGM 音量")
+                            .font(DesignTokens.Typography.label)
+                        Slider(value: $bgmVolume, in: 0.1...1.0)
+                        Text("\(Int(bgmVolume * 100))%")
+                            .font(DesignTokens.Typography.microRounded)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 36, alignment: .trailing)
+                            .monospacedDigit()
+                    }
+                    HStack(spacing: DesignTokens.Spacing.tight) {
+                        Image(systemName: "music.note")
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.tertiary)
+                        Text("将去除各分镜原 BGM、只保留口播，再铺上所选音乐（比成片长则截断，短则循环，结尾 1 秒淡出）。首次会对相关视频做人声分离，耗时较长。")
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                        Spacer()
+                    }
+                } else if bgmStore.tracks.isEmpty {
+                    HStack(spacing: DesignTokens.Spacing.tight) {
+                        Image(systemName: "music.note")
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.tertiary)
+                        Text("BGM 库还没有音乐。到侧边栏「BGM 库」上传后，可在这里选一条替换成片背景音乐。")
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Spacer()
+                    }
+                }
             }
             .controlSize(.regular)
         }
@@ -454,7 +512,9 @@ struct ExportView: View {
             Button("取消", role: .cancel) {}
             Button("导出") { startDubbedExport() }
         } message: {
-            Text("选中 \(count) 个方案，画面不变，按每个分镜的「原声 + 各改写版」全部排列组合，串行逐条生成（一条一条导，避免占满机器）。")
+            Text(selectedBGMPath == nil
+                 ? "选中 \(count) 个方案，画面不变，按每个分镜的「原声 + 各改写版」全部排列组合，串行逐条生成（一条一条导，避免占满机器）。"
+                 : "选中 \(count) 个方案，将替换背景音乐：去除原 BGM、只留口播，并铺上所选 BGM。首次需要对相关视频做人声分离，耗时较长。")
         }
 
         if schemeVM.schemes.isEmpty && !isExporting {
@@ -827,6 +887,14 @@ struct ExportView: View {
         exportedFolder = nil
         errorMessage = nil
 
+        // 全局 BGM：导出前先验证所选文件还在（可能刚在 BGM 库里被删）
+        let globalBGM: GlobalBGMSpec? = selectedBGMPath.map { GlobalBGMSpec(audioPath: $0, volume: bgmVolume) }
+        if let bgm = globalBGM, !FileManager.default.fileExists(atPath: bgm.audioPath) {
+            errorMessage = "所选背景音乐文件已不存在，请到「BGM 库」确认后重新选择。"
+            selectedBGMPath = nil
+            return
+        }
+
         // 先在主线程把每个方案的组合算好（需读 SwiftData 模型）
         let plans: [(scheme: MixScheme, combos: [SchemeComboPlanner.Combo])] =
             allSchemes.map { ($0, SchemeComboPlanner.plan(for: $0).combos) }
@@ -856,6 +924,9 @@ struct ExportView: View {
                 defer { isExporting = false; exportTask = nil }
                 let config = exportConfig
                 let maxConcurrency = 1   // 导出一律串行（用户要求，不再并发）
+                // 每次导出从空清单开始：这条路径原先从不清空 exportFailures，
+                // 多次导出会把上一轮的失败记录一直累积显示
+                exportFailures = []
 
                 // 1) 预先补齐各方案选定音频（顺序，多为 no-op；确保分离/变体音频就绪）
                 //
@@ -873,12 +944,62 @@ struct ExportView: View {
                     await dubVM.ensureSelectedAudio(for: scheme, context: modelContext)
                 }
 
+                // 1.5) 全局 BGM 预检：为选中方案涉及的每个源视频准备 vocals.wav（已分离的秒回）。
+                // 失败的**不回退**——回退等于悄悄给用户一条原 BGM 没去掉的片子。
+                // 记录人话原因，涉及该视频的方案整个标记失败，不影响其他方案。
+                var sepFailures: [UUID: (videoName: String, reason: String)] = [:]
+                if globalBGM != nil {
+                    var involved: [Video] = []
+                    var seen = Set<UUID>()
+                    for (scheme, _) in plans {
+                        for ss in scheme.orderedSegments {
+                            guard let v = ss.segment?.video, !seen.contains(v.id) else { continue }
+                            seen.insert(v.id)
+                            involved.append(v)
+                        }
+                    }
+                    let separator = VocalSeparationService()
+                    for (index, video) in involved.enumerated() {
+                        if Task.isCancelled { break }
+                        exportProgress = BatchExportProgress(
+                            total: max(1, involved.count), completed: index,
+                            description: "人声分离 \(index + 1)/\(involved.count)：\(video.name)…")
+                        guard let hash = video.contentHash else {
+                            sepFailures[video.id] = (video.name, "视频缺少内容哈希，无法定位人声分离缓存")
+                            continue
+                        }
+                        do {
+                            _ = try await separator.separate(videoPath: video.localPath, videoHash: hash)
+                        } catch {
+                            sepFailures[video.id] = (video.name, FriendlyError.reason(for: error))
+                        }
+                    }
+                    // 预检被取消 → 直接收尾，绝不带着"部分视频没检查"的状态去组任务：
+                    // 否则缺 vocals 的组合会被静默跳过，导出数量少了却没有任何失败说明。
+                    if Task.isCancelled {
+                        exportProgress = BatchExportProgress(total: 1, completed: 1, description: "已停止")
+                        ToastCenter.shared.show("已停止", icon: "stop.circle.fill", style: .warning)
+                        return
+                    }
+                }
+
                 // 2) 扁平化所有 (方案×组合) 任务（DubExportInput 须在 MainActor 构造）
                 var jobs: [DubExportJob] = []
                 for (scheme, combos) in plans {
+                    // 全局 BGM 模式：任一分镜的源视频分离失败 → 该方案全部组合直接进失败清单，说清原因
+                    if globalBGM != nil,
+                       let badVideo = scheme.orderedSegments.compactMap({ $0.segment?.video })
+                           .first(where: { sepFailures[$0.id] != nil }) {
+                        let failure = sepFailures[badVideo.id]!
+                        exportFailures.append(ExportFailure(
+                            name: scheme.name,
+                            reason: "视频「\(failure.videoName)」人声分离失败：\(failure.reason)。无法去除原 BGM，该方案的 \(combos.count) 条组合均未导出。"))
+                        continue
+                    }
                     let strategyName = scheme.strategy?.name ?? "未分组"
                     for combo in combos {
-                        guard let input = DubExportInput.from(scheme: scheme, combo: combo.choices) else { continue }
+                        guard let input = DubExportInput.from(scheme: scheme, combo: combo.choices,
+                                                              useVocalsOnly: globalBGM != nil) else { continue }
                         let base = sanitizeFilename("\(strategyName)_方案\(scheme.variationIndex)_\(combo.nameSuffix)")
                         jobs.append(DubExportJob(
                             input: input,
@@ -913,6 +1034,7 @@ struct ExportView: View {
                                 // 期间界面完全静止，用户会以为卡死了。
                                 try await service.export(
                                     input: job.input, outputPath: job.outputPath, config: config,
+                                    globalBGM: globalBGM,
                                     onProgress: { p in
                                         Task { @MainActor in
                                             guard isExporting else { return }
