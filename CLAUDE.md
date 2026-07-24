@@ -207,7 +207,7 @@ DMG 内置 Whisper 大模型约 **1.6GB**，GitHub 附件慢、Gitee 附件硬�
 - 绝不能 `source .env`（`#` 会截断密码）；要 `grep -E '^CN_SSH_PASSWORD=' .env | sed -E 's/^CN_SSH_PASSWORD=//; s/^"(.*)"$/\1/'`
 - ssh/scp 必须带 `-o PreferredAuthentications=password -o PubkeyAuthentication=no` + `sshpass`
 
-**历史 Gitee release id**：v0.7.1=736815 / v0.8.0=739784 / v0.8.1=744314 / v0.9.0=750028 / v0.9.1=754773
+**历史 Gitee release id**：v0.7.1=736815 / v0.8.0=739784 / v0.8.1=744314 / v0.9.0=750028 / v0.9.1=754773 / v0.9.2=759430
 （正文改动用 `PATCH …/releases/{id}`，GitHub 用 `gh release edit vX.Y.Z --notes-file`）
 
 ## 关键开发规则（必须遵守）
