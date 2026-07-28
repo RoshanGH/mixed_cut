@@ -612,6 +612,17 @@ struct SettingsView: View {
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }
+            Section("可以这样指挥 Agent（仅示例，按你的实际项目和分镜说）") {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("「把项目一里 1 号视频的 3 到 5 号分镜标签改成痛点，字幕换成纯色遮挡，结尾都延 10 帧」")
+                    Text("「把这个文件夹里的 20 条视频导入新项目跑分析，失败的汇总告诉我」")
+                    Text("「用 1 号视频的 1、2 号分镜加 2 号视频的 4 号分镜组个方案，导出到桌面」")
+                }
+                .font(DesignTokens.Typography.label)
+                Text("视频编号看素材导入页卡片左上角的「N 号」徽章，分镜编号看分镜卡片的 # 号；一句话可以带多个操作，Agent 会自己拆解执行。")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
             Section("Agent 能调用的功能（\(AgentToolCatalog.all.count) 个）") {
                 ForEach(AgentToolCatalog.all, id: \.name) { tool in
                     VStack(alignment: .leading, spacing: 2) {
