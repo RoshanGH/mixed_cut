@@ -102,13 +102,16 @@ struct MCPProtocolEncodeTests {
         #expect(result["instructions"] as? String == "MixCut（简写 MC）是视频混剪应用")
     }
 
-    @Test("serverInstructions 提到 MC 简写与核心工作流")
+    @Test("serverInstructions 含 MC 简写/寻址约定/字幕三档/含糊必须反问")
     func serverInstructionsContent() {
         let text = AgentToolCatalog.serverInstructions
         #expect(text.contains("MC"))
-        #expect(text.contains("MixCut"))
-        #expect(text.contains("get_job"))
+        #expect(text.contains("video_no"))
+        #expect(text.contains("直接烧录") && text.contains("模糊虚化") && text.contains("纯色遮挡"))
+        #expect(text.contains("确认"))
+        #expect(text.contains("全局"))
         #expect(text.contains("confirm"))
+        #expect(text.contains("get_job"))
     }
 
     @Test("tools/list 响应展开 inputSchema")
