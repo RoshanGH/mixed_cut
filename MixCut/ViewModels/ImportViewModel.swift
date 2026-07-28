@@ -18,6 +18,22 @@ enum ImportPhase: String {
     case failed = "失败"
 }
 
+/// 一次导入调用的结构化结果（给 Agent/MCP 用；UI 路径忽略返回值）
+struct ImportReport: Sendable {
+    var importedVideoIDs: [UUID] = []
+    var importedNames: [String] = []
+    var linkedExistingNames: [String] = []
+    var skippedDuplicateNames: [String] = []
+    var failed: [FailedItem] = []
+    /// 整体中止原因（全部重复 / 磁盘不足 / 上下文缺失 / 用户停止），nil 表示正常走完
+    var abortMessage: String?
+
+    struct FailedItem: Sendable {
+        let name: String
+        let reason: String
+    }
+}
+
 /// 视频导入及分析 ViewModel
 @MainActor
 @Observable
@@ -71,7 +87,9 @@ final class ImportViewModel {
     }
 
     /// 导入视频文件列表（全局去重 + 共享引用）
-    func importVideos(urls: [URL], to project: Project) async {
+    @discardableResult
+    func importVideos(urls: [URL], to project: Project) async -> ImportReport {
+        var report = ImportReport()
         isProcessing = true
         errorMessage = nil
 
@@ -82,6 +100,7 @@ final class ImportViewModel {
         for url in urls {
             if isDuplicate(url: url, in: project) {
                 skippedNames.append(url.lastPathComponent)
+                report.skippedDuplicateNames.append(url.lastPathComponent)
             } else {
                 dedupedURLs.append(url)
             }
@@ -94,7 +113,8 @@ final class ImportViewModel {
                 isProcessing = false
                 phase = .completed
                 progress = 1.0
-                return
+                report.abortMessage = errorMessage
+                return report
             } else {
                 errorMessage = "已跳过重复视频：\(skippedList)"
             }
@@ -113,10 +133,14 @@ final class ImportViewModel {
             let available = ByteCountFormatter.string(fromByteCount: availableSpace, countStyle: .file)
             errorMessage = "磁盘空间不足：需要约 \(needed)，当前可用 \(available)"
             isProcessing = false
-            return
+            report.abortMessage = errorMessage
+            return report
         }
 
-        guard let context = modelContext else { return }
+        guard let context = modelContext else {
+            report.abortMessage = "内部错误：modelContext 未注入"
+            return report
+        }
 
         project.status = .importing
         context.safeSave()
@@ -125,7 +149,11 @@ final class ImportViewModel {
         var videosToAnalyze: [Video] = []
         for (index, url) in dedupedURLs.enumerated() {
             // 用户点了「停止导入」：立刻停手，已导入的保留（停止 ≠ 删除）
-            if Task.isCancelled { finishAsCancelled(project: project, context: context); return }
+            if Task.isCancelled {
+                finishAsCancelled(project: project, context: context)
+                report.abortMessage = "用户停止导入"
+                return report
+            }
             progressDescription = "导入第 \(index + 1)/\(dedupedURLs.count) 个视频..."
             progress = Double(index) / Double(dedupedURLs.count) * 0.2
 
@@ -133,12 +161,16 @@ final class ImportViewModel {
                 let (video, needsAnalysis) = try await importOrLinkVideo(url: url, to: project)
                 if needsAnalysis {
                     videosToAnalyze.append(video)
+                    report.importedVideoIDs.append(video.id)
+                    report.importedNames.append(video.name)
                 } else {
                     MixLog.info(" 视频已存在且已分析，直接关联: \(video.name)")
+                    report.linkedExistingNames.append(video.name)
                 }
             } catch {
                 let prevError = errorMessage.map { $0 + "\n" } ?? ""
                 errorMessage = prevError + "导入 \(url.lastPathComponent) 失败: \(FriendlyError.reason(for: error))"
+                report.failed.append(.init(name: url.lastPathComponent, reason: FriendlyError.reason(for: error)))
             }
         }
 
@@ -200,7 +232,11 @@ final class ImportViewModel {
             }
         }
 
-        if Task.isCancelled { finishAsCancelled(project: project, context: context); return }
+        if Task.isCancelled {
+            finishAsCancelled(project: project, context: context)
+            report.abortMessage = "用户停止导入"
+            return report
+        }
 
         project.status = .ready
         project.updatedAt = Date()
@@ -214,6 +250,7 @@ final class ImportViewModel {
         if totalDone > 0 {
             ToastCenter.shared.show("已分析完成 \(totalDone) 个视频", icon: "checkmark.seal.fill", style: .success)
         }
+        return report
     }
 
     /// 仅重新跑 ASR（用于 ASR 输出粒度异常时用户主动触发）
@@ -708,23 +745,7 @@ final class ImportViewModel {
         PendingDeletionCenter.shared.schedule(
             message: "已删除视频",
             commit: { [weak self] in
-                guard let context = self?.modelContext else { return }
-                // 先真删关联 pv，再判断该视频是否还被其它项目引用
-                for pv in pvsToHide { context.delete(pv) }
-                context.safeSave()
-                if video.projectVideos.isEmpty {
-                    // 无任何项目引用，删除视频 + 分镜 + SchemeSegment「记录」；磁盘文件交孤儿 GC
-                    let segmentsToDelete = Array(video.segments)
-                    for segment in segmentsToDelete {
-                        for ss in Array(segment.schemeSegments) { context.delete(ss) }
-                        context.delete(segment)
-                    }
-                    context.delete(video)
-                    context.safeSave()
-                    MixLog.info(" 视频无引用，已删除记录: \(video.name)")
-                } else {
-                    MixLog.info(" 视频仍被其它项目引用，仅解除关联: \(video.name)")
-                }
+                self?.commitDelete(video: video, pendingPVs: pvsToHide)
             },
             undo: { [weak self] in
                 guard let self else { return }
@@ -732,6 +753,41 @@ final class ImportViewModel {
                 project.projectVideos.append(contentsOf: pvsToHide)   // 放回关联
             }
         )
+    }
+
+    /// 真删除：删关联 pv；若视频已无任何项目引用，连分镜与视频记录一起删（磁盘文件交孤儿 GC）
+    /// 返回 true 表示视频全局记录已删除
+    @discardableResult
+    private func commitDelete(video: Video, pendingPVs: [ProjectVideo]) -> Bool {
+        guard let context = modelContext else { return false }
+        // 先真删关联 pv，再判断该视频是否还被其它项目引用
+        for pv in pendingPVs { context.delete(pv) }
+        context.safeSave()
+        guard video.projectVideos.isEmpty else {
+            MixLog.info(" 视频仍被其它项目引用，仅解除关联: \(video.name)")
+            return false
+        }
+        // 无任何项目引用，删除视频 + 分镜 + SchemeSegment「记录」；磁盘文件交孤儿 GC
+        let segmentsToDelete = Array(video.segments)
+        for segment in segmentsToDelete {
+            for ss in Array(segment.schemeSegments) { context.delete(ss) }
+            context.delete(segment)
+        }
+        context.delete(video)
+        context.safeSave()
+        MixLog.info(" 视频无引用，已删除记录: \(video.name)")
+        return true
+    }
+
+    /// Agent 立即删除路径：与 deleteVideo 等价但立即生效、无撤销
+    @discardableResult
+    func removeVideoImmediately(_ video: Video, from project: Project) -> Bool {
+        guard modelContext != nil else { return false }
+        cancelledVideoIDs.insert(video.id)
+        let pvsToRemove = project.projectVideos.filter { $0.video?.id == video.id }
+        let pvIDs = Set(pvsToRemove.map(\.id))
+        project.projectVideos.removeAll { pvIDs.contains($0.id) }
+        return commitDelete(video: video, pendingPVs: pvsToRemove)
     }
 
     // MARK: - 全局视频查找
