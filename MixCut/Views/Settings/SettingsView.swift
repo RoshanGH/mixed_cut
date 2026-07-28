@@ -558,6 +558,9 @@ struct SettingsView: View {
         }
     }
 
+    /// 注册后的验证指令：用户复制给 Agent 执行，能返回项目清单即代表链路通了
+    private static let agentVerifyPrompt = "请调用 mixcut 的 list_projects 工具，列出我的所有项目，每行输出：项目名｜状态｜视频数｜分镜数。"
+
     private var agentSettings: some View {
         Form {
             Section("本机 Agent 接入（MCP）") {
@@ -591,6 +594,21 @@ struct SettingsView: View {
                     }
                 }
                 Text(selectedAgentClient.hint)
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+            Section("注册后验证（把这句话复制给 Agent 执行）") {
+                HStack(alignment: .top) {
+                    Text(Self.agentVerifyPrompt)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("复制") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(Self.agentVerifyPrompt, forType: .string)
+                    }
+                }
+                Text("预期返回：你的项目清单，与 MixCut 侧边栏一致（含状态、视频数、分镜数）。能列出来即注册成功；若 Agent 说找不到工具或连接失败，确认 MixCut 正在运行、端口一致后重试。")
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }
