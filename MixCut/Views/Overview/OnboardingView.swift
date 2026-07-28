@@ -6,7 +6,7 @@ struct OnboardingView: View {
     let onComplete: () -> Void
 
     @State private var step: Int = 0
-    private let totalSteps = 4
+    private let totalSteps = 5
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,6 +36,7 @@ struct OnboardingView: View {
         case 1: apiKeyPage
         case 2: importPage
         case 3: generatePage
+        case 4: agentPage
         default: EmptyView()
         }
     }
@@ -167,6 +168,37 @@ struct OnboardingView: View {
                                  text: "AI 自动制定风格、受众、叙事结构")
                 OnboardingBullet(icon: "square.and.arrow.up.fill", color: .green,
                                  text: "在「导出」批量输出 MP4 视频文件")
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(DesignTokens.Palette.Alpha.subtle * 2))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+        }
+    }
+
+    private var agentPage: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .font(.system(size: 50))
+                .foregroundStyle(.teal)
+
+            VStack(spacing: 6) {
+                Text("进阶 · 让 AI Agent 替你操作")
+                    .font(.system(size: 22, weight: .bold))
+                Text("把 Claude Code、Codex 等 AI 助手接进来，一句话完成批量操作")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
+                OnboardingBullet(icon: "link", color: .teal,
+                                 text: "打开「设置 → Agent」，把注册配置复制进你的 AI 助手")
+                OnboardingBullet(icon: "text.bubble", color: .teal,
+                                 text: "像聊天一样下指令：「把项目一里 1 号视频的 3 到 5 号分镜标签改成痛点，结尾都延 10 帧」")
+                OnboardingBullet(icon: "number", color: .teal,
+                                 text: "视频编号看卡片上的「N 号」徽章，分镜编号看 # 号，报编号即可、不用说文件名")
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
