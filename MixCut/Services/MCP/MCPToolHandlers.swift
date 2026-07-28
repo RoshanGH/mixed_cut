@@ -54,6 +54,9 @@ final class MCPToolHandlers {
             case "set_voice_keep_original": return try setVoiceKeepOriginal(argumentsData)
             case "set_dub_participation": return try setDubParticipation(argumentsData)
             case "adjust_segment_boundary": return try adjustSegmentBoundary(argumentsData)
+            case "delete_segments": return try deleteSegments(argumentsData)
+            case "create_custom_scheme": return try await createCustomSchemeTool(argumentsData)
+            case "export_segments": return try exportSegments(argumentsData)
             default:
                 return failure(.invalidArgument, "未知工具：\(name)")
             }

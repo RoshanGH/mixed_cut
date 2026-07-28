@@ -325,6 +325,131 @@ extension MCPToolHandlers {
         return success(payload)
     }
 
+    // MARK: - 删除分镜
+
+    func deleteSegments(_ data: Data) throws -> Outcome {
+        let sel = try JSONDecoder().decode(SelectorArgs.self, from: data)
+        let segments = try resolveSegments(sel)
+        var affectedSchemes = Set<String>()
+        for seg in segments {
+            // 与 UI 删除的 commit 闭包同语义：先删方案槽位记录，再删分镜（配音/物理镜头级联）
+            for ss in Array(seg.schemeSegments) {
+                if let name = ss.scheme?.name { affectedSchemes.insert(name) }
+                context.delete(ss)
+            }
+            context.delete(seg)
+        }
+        context.safeSave()
+        Self.notifyUIReload()
+        return success([
+            "deleted": segments.count,
+            "affected_schemes": Array(affectedSchemes).sorted(),
+            "note": affectedSchemes.isEmpty
+                ? "无方案受影响"
+                : "以上方案因分镜被删而缺少槽位，导出前请检查",
+        ])
+    }
+
+    // MARK: - 自选组合
+
+    struct CustomSchemeArgs: Decodable {
+        struct Entry: Decodable {
+            let video_no: Int?
+            let segment_no: Int?
+            let segment_id: String?
+        }
+        let project_id: String
+        let name: String?
+        let segments: [Entry]
+    }
+
+    func createCustomSchemeTool(_ data: Data) async throws -> Outcome {
+        let args = try JSONDecoder().decode(CustomSchemeArgs.self, from: data)
+        let project = try fetchProject(args.project_id)
+        guard !args.segments.isEmpty else {
+            throw ToolFailure(code: .invalidArgument, message: "segments 不能为空")
+        }
+        var ordered: [Segment] = []
+        for (i, entry) in args.segments.enumerated() {
+            if let sid = entry.segment_id {
+                ordered.append(contentsOf: try resolveSegments(SelectorArgs(
+                    project_id: nil, video_no: nil, segment_nos: nil, segment_ids: [sid])))
+            } else if let vno = entry.video_no, let sno = entry.segment_no {
+                ordered.append(contentsOf: try resolveSegments(SelectorArgs(
+                    project_id: args.project_id, video_no: vno, segment_nos: [sno], segment_ids: nil)))
+            } else {
+                throw ToolFailure(code: .invalidArgument, message: "第 \(i + 1) 项必须提供 segment_id 或 video_no+segment_no")
+            }
+        }
+        guard let scheme = await schemeVM.createCustomScheme(from: ordered, in: project) else {
+            throw ToolFailure(code: .invalidArgument, message: schemeVM.errorMessage ?? "自定义组合创建失败")
+        }
+        if let name = args.name, !name.trimmingCharacters(in: .whitespaces).isEmpty {
+            scheme.name = name
+        }
+        context.safeSave()
+        Self.notifyUIReload()
+        return success([
+            "scheme_id": scheme.id.uuidString,
+            "name": scheme.name,
+            "segment_count": scheme.segmentCount,
+            "total_duration_sec": scheme.totalDuration,
+        ])
+    }
+
+    // MARK: - 分镜片段导出
+
+    struct ExportSegmentsArgs: Decodable {
+        let project_id: String?
+        let video_no: Int?
+        let segment_nos: [Int]?
+        let segment_ids: [String]?
+        let output_dir: String
+    }
+
+    func exportSegments(_ data: Data) throws -> Outcome {
+        let args = try JSONDecoder().decode(ExportSegmentsArgs.self, from: data)
+        let segments = try resolveSegments(SelectorArgs(
+            project_id: args.project_id, video_no: args.video_no,
+            segment_nos: args.segment_nos, segment_ids: args.segment_ids))
+        let outputURL = URL(fileURLWithPath: args.output_dir)
+        if let problem = ExportDestination.validate(directory: outputURL) {
+            throw ToolFailure(code: .invalidArgument, message: problem)
+        }
+        var items: [BatchExportItem] = []
+        for seg in segments {
+            guard let video = seg.video else {
+                throw ToolFailure(code: .videoNotFound, message: "分镜 \(seg.segmentIndex) 缺少所属视频")
+            }
+            let sequence = Self.orderedSegments(of: video).firstIndex { $0.id == seg.id }.map { $0 + 1 } ?? 0
+            items.append(BatchExportItem(
+                id: seg.id,
+                sourcePath: video.localPath,
+                sourceVideoName: (video.name as NSString).deletingPathExtension,
+                startTime: seg.startTime,
+                endTime: seg.endTime,
+                sequenceNumber: sequence,
+                fps: video.fps))
+        }
+        try ensureNoActiveJob()
+        let projectID: UUID = segments.first?.video?.projectVideos.first?.project?.id ?? UUID()
+        let job = jobs.begin(kind: .exportSegments, projectID: projectID)
+        let registry = jobs
+        let exportItems = items
+        Task { @MainActor in
+            let service = BatchSegmentExportService()
+            let (succeeded, failed) = await service.exportAll(
+                items: exportItems, outputDirectory: outputURL, onProgress: { _ in })
+            let summary: [String: Any] = [
+                "succeeded": succeeded,
+                "output_dir": outputURL.path,
+                "failed": failed.map { ["name": "\($0.0.sourceVideoName)_\($0.0.sequenceNumber)", "reason": $0.1] },
+            ]
+            registry.finishWithResult(job.id, resultJSON: AgentJSON.encode(summary))
+        }
+        return success(["job_id": job.id.uuidString])
+    }
+
     /// all-or-nothing 定位：全部找到才返回，否则整个调用不执行
     func resolveSegments(_ sel: SelectorArgs) throws -> [Segment] {
         if let ids = sel.segment_ids, !ids.isEmpty {

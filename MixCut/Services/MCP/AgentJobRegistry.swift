@@ -9,6 +9,8 @@ struct AgentJob: Sendable {
         case retryASR = "retry_asr"
         case generateSchemes = "generate_schemes"
         case exportScheme = "export_scheme"
+        case exportSegments = "export_segments"
+        case generateVoiceVariants = "generate_voice_variants"
     }
 
     enum State: String, Sendable {
