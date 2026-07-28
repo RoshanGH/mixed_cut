@@ -23,6 +23,7 @@ struct SettingsView: View {
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
     @AppStorage(AgentGateway.enabledKey) private var agentEnabled = true
     @AppStorage(AgentGateway.portKey) private var agentPort = Int(AgentGateway.defaultPort)
+    @State private var selectedAgentClient: AgentClientSnippet = .claudeCode
 
     var body: some View {
         VStack(spacing: 0) {
@@ -471,6 +472,81 @@ struct SettingsView: View {
     }
 
     // MARK: - Agent 接入设置
+
+    /// 各 Agent 客户端的注册片段。MCP 没有一条通用注册命令，
+    /// 但核心信息只有服务地址一个；JSON（mcpServers 格式）是事实标准。
+    enum AgentClientSnippet: String, CaseIterable, Identifiable {
+        case url = "服务地址（通用）"
+        case claudeCode = "Claude Code"
+        case cursorJSON = "Cursor / Cline / Claude Desktop（JSON）"
+        case codex = "Codex CLI"
+        case geminiCLI = "Gemini CLI"
+        case vscode = "VS Code Copilot"
+
+        var id: String { rawValue }
+
+        private static func endpoint(_ port: Int) -> String {
+            "http://127.0.0.1:\(port)/mcp"
+        }
+
+        func snippet(port: Int) -> String {
+            let url = Self.endpoint(port)
+            switch self {
+            case .url:
+                return url
+            case .claudeCode:
+                return "claude mcp add --transport http mixcut \(url)"
+            case .cursorJSON:
+                return """
+                {
+                  "mcpServers": {
+                    "mixcut": { "url": "\(url)" }
+                  }
+                }
+                """
+            case .codex:
+                return """
+                [mcp_servers.mixcut]
+                command = "npx"
+                args = ["-y", "mcp-remote", "\(url)"]
+                """
+            case .geminiCLI:
+                return """
+                {
+                  "mcpServers": {
+                    "mixcut": { "httpUrl": "\(url)" }
+                  }
+                }
+                """
+            case .vscode:
+                return """
+                {
+                  "servers": {
+                    "mixcut": { "type": "http", "url": "\(url)" }
+                  }
+                }
+                """
+            }
+        }
+
+        var hint: String {
+            switch self {
+            case .url:
+                return "支持 MCP（Streamable HTTP）的客户端只需要这个地址；不懂 MCP 的 Agent 也可以直接对它 POST JSON-RPC。"
+            case .claudeCode:
+                return "在终端里执行这条命令即可。"
+            case .cursorJSON:
+                return "合并进对应配置：Cursor 是项目下 .cursor/mcp.json；Cline 在扩展的 MCP 设置里；Claude Desktop 在 设置→连接器。"
+            case .codex:
+                return "追加到 ~/.codex/config.toml（Codex 走 stdio，用 mcp-remote 桥接，需要 Node.js）。"
+            case .geminiCLI:
+                return "合并进 ~/.gemini/settings.json。"
+            case .vscode:
+                return "写入项目下 .vscode/mcp.json。"
+            }
+        }
+    }
+
     private var agentSettings: some View {
         Form {
             Section("本机 Agent 接入（MCP）") {
@@ -485,18 +561,40 @@ struct SettingsView: View {
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }
-            Section("在 Claude Code 中注册") {
-                HStack {
-                    Text(AgentGateway.registerCommand)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                    Spacer()
-                    Button("复制") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(AgentGateway.registerCommand, forType: .string)
+            Section("注册到 Agent 客户端") {
+                Picker("客户端", selection: $selectedAgentClient) {
+                    ForEach(AgentClientSnippet.allCases) { client in
+                        Text(client.rawValue).tag(client)
                     }
                 }
-                Text("注册后 Agent 即可：新建项目、批量导入视频、监控分析流水线、重试失败、移除视频。")
+                .pickerStyle(.menu)
+
+                HStack(alignment: .top) {
+                    Text(selectedAgentClient.snippet(port: agentPort))
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("复制") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(selectedAgentClient.snippet(port: agentPort), forType: .string)
+                    }
+                }
+                Text(selectedAgentClient.hint)
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Agent 能调用的功能（\(AgentToolCatalog.all.count) 个）") {
+                ForEach(AgentToolCatalog.all, id: \.name) { tool in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(tool.name)
+                            .font(.system(.caption, design: .monospaced))
+                        Text(tool.description)
+                            .font(DesignTokens.Typography.label)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                }
+                Text("以上是 Agent 的全部权限边界：不能改分镜、不能生成方案、不能导出成片、不能删项目。")
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }
