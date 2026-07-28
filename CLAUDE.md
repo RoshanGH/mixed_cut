@@ -116,9 +116,9 @@ AI 提示词模板存放在 `MixCut/Resources/Prompts/`，通过 `PromptLoader` 
 
 - **编译后自动重启应用**: 每次 xcodebuild 编译成功后，必须执行 `pkill -x MixCut; sleep 1; open <DerivedData路径>/Build/Products/Debug/MixCut.app` 自动重启用户的应用
 - **DerivedData 路径**: `/Users/menggang/Library/Developer/Xcode/DerivedData/MixCut-byytuggmhodpumcmwnwrtzwkmavr/`
-- **每次修改后自动打包 DMG**: 编译成功后，必须自动执行 Release 构建 + DMG 打包，输出到 `~/Desktop/MixCut-v<版本号>.dmg`。用户需要随时分发给同事测试，不要等用户手动要求打包。
-- **⚠️ 产物文件名必须带版本号**：`MixCut-v0.9.1.dmg`，**绝不允许**打成 `MixCut.dmg`。桌面上会同时存在多个版本的包，不带版本号根本分不清哪个是哪个，也没法直接传网盘。卷名（`-volname`）同样带版本号。
-- **打包前先 bump 版本号**：哪怕只是打测试包、不发版，版本号也要正常往后递增，不要停在旧版本号上。
+- **版本号以「发版」动作为准（2026-07-28 修订）**：只在用户明确要发版时才 bump 版本号（VERSION + pbxproj 两处 MARKETING_VERSION），平时改代码、打测试包**都不动版本号**。测试包内部版本号抬高会导致同事装了之后收不到真正新版的更新提示。
+- **测试包按需打，不自动打**：日常改动只做 Debug 编译+重启验证；用户要分发测试时才打 Release 测试包，命名 `MixCut-v<当前版本>-<用途>-test.dmg`（如 `MixCut-v0.9.2-mcp-test.dmg`），一看即知是测试包。正式发版包才叫 `MixCut-v<新版本>.dmg`。
+- **⚠️ 产物文件名必须带版本号**：**绝不允许**打成 `MixCut.dmg`。桌面上会同时存在多个包，不带版本号分不清也没法传网盘。卷名（`-volname`）同样带版本号。
   ```bash
   # 0. bump 版本号（VERSION 文件 + pbxproj 的两处 MARKETING_VERSION 必须一致）
   # 1. Debug 编译 + 重启本地应用
