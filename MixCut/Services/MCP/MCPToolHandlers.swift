@@ -57,6 +57,7 @@ final class MCPToolHandlers {
             case "delete_segments": return try deleteSegments(argumentsData)
             case "create_custom_scheme": return try await createCustomSchemeTool(argumentsData)
             case "export_segments": return try exportSegments(argumentsData)
+            case "generate_voice_variants": return try generateVoiceVariants(argumentsData)
             default:
                 return failure(.invalidArgument, "未知工具：\(name)")
             }

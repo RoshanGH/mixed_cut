@@ -450,6 +450,61 @@ extension MCPToolHandlers {
         return success(["job_id": job.id.uuidString])
     }
 
+    // MARK: - 声音变体生成
+
+    func generateVoiceVariants(_ data: Data) throws -> Outcome {
+        let sel = try JSONDecoder().decode(SelectorArgs.self, from: data)
+        let segments = try resolveSegments(sel)
+        let eligible = segments.filter { !$0.isVoiceLocked && !$0.text.isEmpty }
+        let skipped = segments
+            .filter { $0.isVoiceLocked || $0.text.isEmpty }
+            .map { ["segment_index": $0.segmentIndex,
+                    "reason": $0.isVoiceLocked ? "保留原声" : "台词为空"] }
+        guard !eligible.isEmpty else {
+            throw ToolFailure(code: .invalidArgument, message: "所选分镜均无法生成变体（保留原声或台词为空）")
+        }
+        try ensureNoActiveJob()
+        let projectID: UUID = eligible.first?.video?.projectVideos.first?.project?.id ?? UUID()
+        let job = jobs.begin(kind: .generateVoiceVariants, projectID: projectID)
+        let vm = dubbingVM
+        let ctx = context
+        let registry = jobs
+        Task { @MainActor in
+            var perSegment: [[String: Any]] = []
+            let byVideo = Dictionary(grouping: eligible, by: { $0.video?.id ?? UUID() })
+            for (_, group) in byVideo {
+                guard let video = group.first?.video else { continue }
+                vm.errorMessage = nil
+                let cloneOK = await vm.ensureClonedVoice(for: video, context: ctx)
+                guard cloneOK else {
+                    let reason = vm.errorMessage ?? "克隆原声失败"
+                    for seg in group {
+                        perSegment.append(["segment_index": seg.segmentIndex, "ok": false, "reason": reason])
+                    }
+                    continue
+                }
+                for seg in group {
+                    vm.errorMessage = nil
+                    await vm.rewriteSegment(seg, context: ctx)
+                    if let err = vm.errorMessage {
+                        perSegment.append(["segment_index": seg.segmentIndex, "ok": false, "reason": err])
+                    } else {
+                        perSegment.append(["segment_index": seg.segmentIndex, "ok": true,
+                                           "variant_count": seg.effectiveDubVariants.count])
+                    }
+                }
+            }
+            var summary: [String: Any] = ["results": perSegment]
+            if !skipped.isEmpty { summary["skipped"] = skipped }
+            registry.finishWithResult(job.id, resultJSON: AgentJSON.encode(summary))
+            Self.notifyUIReload()
+        }
+        return success([
+            "job_id": job.id.uuidString,
+            "note": "生成中：克隆原声→AI 改写→合成→字幕对齐，用 get_job 轮询",
+        ])
+    }
+
     /// all-or-nothing 定位：全部找到才返回，否则整个调用不执行
     func resolveSegments(_ sel: SelectorArgs) throws -> [Segment] {
         if let ids = sel.segment_ids, !ids.isEmpty {
