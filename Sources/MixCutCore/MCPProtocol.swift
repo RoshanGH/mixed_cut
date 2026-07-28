@@ -84,12 +84,18 @@ public enum MCPProtocol {
 
     // MARK: - 编码
 
-    public static func initializeResponse(id: MCPRequestID, serverName: String, serverVersion: String) -> Data {
-        envelope(id: id, result: [
+    public static func initializeResponse(
+        id: MCPRequestID, serverName: String, serverVersion: String, instructions: String? = nil
+    ) -> Data {
+        var result: [String: Any] = [
             "protocolVersion": protocolVersion,
             "capabilities": ["tools": [String: Any]()],
             "serverInfo": ["name": serverName, "version": serverVersion],
-        ])
+        ]
+        // MCP 规范的服务器自我介绍：客户端会把它注入给模型，
+        // 任何客户端一注册就自动获得（无需本地配置）
+        if let instructions { result["instructions"] = instructions }
+        return envelope(id: id, result: result)
     }
 
     public static func pingResponse(id: MCPRequestID) -> Data {

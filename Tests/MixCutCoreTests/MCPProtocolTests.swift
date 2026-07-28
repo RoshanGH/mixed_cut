@@ -90,6 +90,25 @@ struct MCPProtocolEncodeTests {
         let serverInfo = try #require(result["serverInfo"] as? [String: Any])
         #expect(serverInfo["name"] as? String == "mixcut")
         #expect((result["capabilities"] as? [String: Any])?["tools"] != nil)
+        #expect(result["instructions"] == nil)
+    }
+
+    @Test("initialize 响应携带 instructions（服务器自我介绍，客户端注入给模型）")
+    func initializeResponseWithInstructions() throws {
+        let data = MCPProtocol.initializeResponse(
+            id: .number(1), serverName: "mixcut", serverVersion: "1.0",
+            instructions: "MixCut（简写 MC）是视频混剪应用")
+        let result = try #require(try decode(data)["result"] as? [String: Any])
+        #expect(result["instructions"] as? String == "MixCut（简写 MC）是视频混剪应用")
+    }
+
+    @Test("serverInstructions 提到 MC 简写与核心工作流")
+    func serverInstructionsContent() {
+        let text = AgentToolCatalog.serverInstructions
+        #expect(text.contains("MC"))
+        #expect(text.contains("MixCut"))
+        #expect(text.contains("get_job"))
+        #expect(text.contains("confirm"))
     }
 
     @Test("tools/list 响应展开 inputSchema")

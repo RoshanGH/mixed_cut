@@ -70,7 +70,9 @@ final class AgentGateway {
     ) async -> Data? {
         switch MCPProtocol.parse(body) {
         case .initialize(let id):
-            return MCPProtocol.initializeResponse(id: id, serverName: "mixcut", serverVersion: serverVersion)
+            return MCPProtocol.initializeResponse(
+                id: id, serverName: "mixcut", serverVersion: serverVersion,
+                instructions: AgentToolCatalog.serverInstructions)
         case .initializedNotification:
             return nil
         case .ping(let id):

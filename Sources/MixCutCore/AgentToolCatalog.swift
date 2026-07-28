@@ -29,6 +29,24 @@ public enum AgentJSON {
 
 /// 第一阶段的 9 个 MCP 工具定义（实现在 app target 的 MCPToolHandlers）
 public enum AgentToolCatalog {
+    /// initialize 握手时下发给客户端的服务器说明（客户端注入给模型）。
+    /// 作用：让任何注册了本服务的 Agent 自动知道 MC 简写、核心工作流和注意事项。
+    public static let serverInstructions = """
+    MixCut（用户常用简写：MC）是一款 macOS 端 AI 视频混剪应用，面向广告投放团队。\
+    用户说「MC」「混剪工具」时即指本服务。
+
+    核心工作流：
+    1. 导入分析：create_project → import_videos（返回 job_id）→ 用 get_job 轮询直到 state 不是 running（分析约每条视频 1-3 分钟）→ list_segments 查看分镜结果，失败的视频用 retry_analysis / retry_asr 重试。
+    2. 生成方案：generate_schemes（需要用户已在 MixCut 设置中配好 AI API Key）→ get_job 轮询 → list_schemes 查看。
+    3. 导出成片：export_scheme（传 scheme_ids 和已存在的输出目录绝对路径）→ get_job 轮询，result.exported 是产出文件路径。
+
+    注意事项：
+    - 同一时间只允许一个异步任务，JOB_ALREADY_RUNNING 时等当前任务完成。
+    - delete_project 必须两步：先不带 confirm 调用拿影响预览给用户确认，再带 confirm=true 执行；删除无撤销。
+    - remove_video 立即生效、无撤销。
+    - app 重启后 job 会丢失（JOB_NOT_FOUND），改用 get_project 查看视频实时状态。
+    """
+
     public static let all: [MCPToolDefinition] = [
         MCPToolDefinition(
             name: "list_projects",
