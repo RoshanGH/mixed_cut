@@ -9,15 +9,15 @@ final class MCPToolHandlers {
         let isError: Bool
     }
 
-    private struct ToolFailure: Error {
+    struct ToolFailure: Error {
         let code: AgentToolErrorCode
         let message: String
     }
 
-    private let context: ModelContext
-    private let importVM: ImportViewModel
-    private let schemeVM: SchemeViewModel
-    private let jobs: AgentJobRegistry
+    let context: ModelContext
+    let importVM: ImportViewModel
+    let schemeVM: SchemeViewModel
+    let jobs: AgentJobRegistry
 
     init(context: ModelContext, importVM: ImportViewModel, jobs: AgentJobRegistry) {
         self.context = context
@@ -87,7 +87,11 @@ final class MCPToolHandlers {
             "status": project.status.rawValue,
             "created_at": Self.iso(project.createdAt),
             "updated_at": Self.iso(project.updatedAt),
-            "videos": project.videos.map(Self.videoSummary),
+            "videos": Self.orderedVideos(of: project).enumerated().map { idx, video in
+                var summary = Self.videoSummary(video)
+                summary["video_no"] = idx + 1
+                return summary
+            },
         ])
     }
 
@@ -113,13 +117,14 @@ final class MCPToolHandlers {
         }
         var items: [[String: Any]] = []
         for video in videos {
-            let sorted = video.segments.sorted { $0.startFrame < $1.startFrame }
-            for seg in sorted {
+            let sorted = Self.orderedSegments(of: video)
+            for (idx, seg) in sorted.enumerated() {
                 let types = seg.semanticTypes.map(\.rawValue)
                 if let filter = args.semantic_type, !types.contains(filter) { continue }
                 if let filter = args.position_type, seg.positionType.rawValue != filter { continue }
                 items.append([
                     "id": seg.id.uuidString,
+                    "segment_no": idx + 1,
                     "segment_index": seg.segmentIndex,
                     "video_id": video.id.uuidString,
                     "video_name": video.name,
@@ -133,6 +138,11 @@ final class MCPToolHandlers {
                     "position_type": seg.positionType.rawValue,
                     "confidence": seg.confidence,
                     "quality_score": seg.qualityScore,
+                    "is_voice_locked": seg.isVoiceLocked,
+                    "subtitle_mode": Self.subtitleModeName(of: seg),
+                    "font_ratio": seg.subtitleFontRatio,
+                    "voice_variant_count": seg.effectiveDubVariants.count,
+                    "has_stale_dubs": Self.hasStaleDubs(seg),
                 ])
             }
         }
@@ -444,11 +454,11 @@ final class MCPToolHandlers {
 
     /// Agent 绕过 UI 流程写库后，广播全量重载通知（复用撤销后的刷新机制），
     /// 让侧边栏/概览等非 SwiftData 观察驱动的列表立即反映变化
-    private static func notifyUIReload() {
+    static func notifyUIReload() {
         NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
     }
 
-    private func ensureNoActiveJob() throws {
+    func ensureNoActiveJob() throws {
         if let active = jobs.activeJob {
             throw ToolFailure(
                 code: .jobAlreadyRunning,
@@ -456,7 +466,7 @@ final class MCPToolHandlers {
         }
     }
 
-    private func fetchProject(_ idString: String) throws -> Project {
+    func fetchProject(_ idString: String) throws -> Project {
         guard let uuid = UUID(uuidString: idString) else {
             throw ToolFailure(code: .invalidArgument, message: "project_id 不是合法 UUID：\(idString)")
         }
@@ -467,7 +477,7 @@ final class MCPToolHandlers {
         return project
     }
 
-    private func fetchVideo(_ idString: String) throws -> Video {
+    func fetchVideo(_ idString: String) throws -> Video {
         guard let uuid = UUID(uuidString: idString) else {
             throw ToolFailure(code: .invalidArgument, message: "video_id 不是合法 UUID：\(idString)")
         }
@@ -495,7 +505,7 @@ final class MCPToolHandlers {
         return name.components(separatedBy: illegal).joined(separator: "_")
     }
 
-    private static func videoSummary(_ video: Video) -> [String: Any] {
+    static func videoSummary(_ video: Video) -> [String: Any] {
         [
             "id": video.id.uuidString,
             "name": video.name,
@@ -506,11 +516,11 @@ final class MCPToolHandlers {
         ] as [String: Any]
     }
 
-    private func success(_ object: [String: Any]) -> Outcome {
+    func success(_ object: [String: Any]) -> Outcome {
         Outcome(json: AgentJSON.encode(object), isError: false)
     }
 
-    private func failure(_ code: AgentToolErrorCode, _ message: String) -> Outcome {
+    func failure(_ code: AgentToolErrorCode, _ message: String) -> Outcome {
         Outcome(json: AgentJSON.error(code: code, message: message), isError: true)
     }
 
