@@ -46,6 +46,10 @@
 		55D680392E127983C43366C3 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ACE2ED824CD1A03D8F12A62 /* WelcomeView.swift */; };
 		56C8FC6396E2466C84870DA4 /* SegmentVariantInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA81666C0EF4C52A4518514 /* SegmentVariantInspector.swift */; };
 		56FD408676D75ECD18215EC3 /* BGMLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */; };
+		7E770CE5F4905FC47E35DE4F /* AgentToolCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54A6BC59859F913080D0E855 /* AgentToolCatalog.swift */; };
+		2FEDBBDB578EB68D030C3405 /* HTTPRequestParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A3DDBAE61B507DA5444812 /* HTTPRequestParser.swift */; };
+		7DE42945234F9320F44B676E /* MCPProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0755216F25AF44210220F58D /* MCPProtocol.swift */; };
+		04DB6D00B607A959902A5CCE /* MCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 741BEAA44570ED41C7AD3652 /* MCPServer.swift */; };
 		20BA0A1C2D8CD5D541FC9CE7 /* AgentJobRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F89CF4721859EA73133C224 /* AgentJobRegistry.swift */; };
 		5BFA9102727193F3F303530C /* ImportViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37CBDDB5E3AF7A43A34F86EF /* ImportViewModel.swift */; };
 		5C374946C2A12A8F7D12587D /* UniqueFileNamer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19A0FB7E22D2DDEF87274BB2 /* UniqueFileNamer.swift */; };
@@ -187,6 +191,10 @@
 		56B4B3C845C059F96ABA5AF1 /* OpenAICompatibleClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICompatibleClient.swift; sourceTree = "<group>"; };
 		57155C2AF9E313323FEE4038 /* ShotCompositionService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotCompositionService.swift; path = ../../../ShotEdit/ShotCompositionService.swift; sourceTree = "<group>"; };
 		5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BGMLibraryView.swift; path = MixCut/Views/BGMLibrary/BGMLibraryView.swift; sourceTree = "<group>"; };
+		54A6BC59859F913080D0E855 /* AgentToolCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AgentToolCatalog.swift; path = Sources/MixCutCore/AgentToolCatalog.swift; sourceTree = "<group>"; };
+		92A3DDBAE61B507DA5444812 /* HTTPRequestParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HTTPRequestParser.swift; path = Sources/MixCutCore/HTTPRequestParser.swift; sourceTree = "<group>"; };
+		0755216F25AF44210220F58D /* MCPProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MCPProtocol.swift; path = Sources/MixCutCore/MCPProtocol.swift; sourceTree = "<group>"; };
+		741BEAA44570ED41C7AD3652 /* MCPServer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MCPServer.swift; path = MixCut/Services/MCP/MCPServer.swift; sourceTree = "<group>"; };
 		6F89CF4721859EA73133C224 /* AgentJobRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AgentJobRegistry.swift; path = MixCut/Services/MCP/AgentJobRegistry.swift; sourceTree = "<group>"; };
 		59AF8B47EBE91540EB5E2803 /* ScriptRewriteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScriptRewriteService.swift; sourceTree = "<group>"; };
 		59EA48C6FF4B7C3BB4DC3122 /* AIProviderManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderManager.swift; sourceTree = "<group>"; };
@@ -410,6 +418,10 @@
 				53282C4D5D11A4DB16781655 /* GlobalBGMMixGraph.swift */,
 				19A0FB7E22D2DDEF87274BB2 /* UniqueFileNamer.swift */,
 				5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */,
+				54A6BC59859F913080D0E855 /* AgentToolCatalog.swift */,
+				92A3DDBAE61B507DA5444812 /* HTTPRequestParser.swift */,
+				0755216F25AF44210220F58D /* MCPProtocol.swift */,
+				741BEAA44570ED41C7AD3652 /* MCPServer.swift */,
 				6F89CF4721859EA73133C224 /* AgentJobRegistry.swift */,
 			);
 			sourceTree = "<group>";
@@ -860,6 +872,10 @@
 				3DD5898BF44611E510C4FF1F /* GlobalBGMMixGraph.swift in Sources */,
 				5C374946C2A12A8F7D12587D /* UniqueFileNamer.swift in Sources */,
 				56FD408676D75ECD18215EC3 /* BGMLibraryView.swift in Sources */,
+				7E770CE5F4905FC47E35DE4F /* AgentToolCatalog.swift in Sources */,
+				2FEDBBDB578EB68D030C3405 /* HTTPRequestParser.swift in Sources */,
+				7DE42945234F9320F44B676E /* MCPProtocol.swift in Sources */,
+				04DB6D00B607A959902A5CCE /* MCPServer.swift in Sources */,
 				20BA0A1C2D8CD5D541FC9CE7 /* AgentJobRegistry.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
