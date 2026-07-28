@@ -623,7 +623,7 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 2)
                 }
-                Text("以上是 Agent 的全部权限边界：不能修改分镜（内容/边界/标签）。删除项目需 Agent 二次确认（先返回影响预览）；删除视频/项目执行后无撤销。")
+                Text("以上是 Agent 的全部权限边界：不能拆分分镜、不能做画面替换变体。删除项目需 Agent 二次确认（先返回影响预览）；删除分镜/视频/项目执行后无撤销。")
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }
