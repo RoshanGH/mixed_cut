@@ -146,6 +146,8 @@ struct MixCutApp: App {
             Self.migrateGlobalSubtitleFontRatio(container: modelContainer)
             Self.scheduleOrphanGCIfDue(container: modelContainer)
             Self.purgeStaleTempFiles()
+            // Agent 接入：内嵌 MCP server（仅 127.0.0.1，可在设置中关闭）
+            AgentGateway.shared.configure(container: modelContainer)
             #if DEBUG
             DebugSelfTest.runIfRequested(container: modelContainer)
             #endif

@@ -21,6 +21,8 @@ struct SettingsView: View {
     @State private var whisperModelReady = false
 
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @AppStorage(AgentGateway.enabledKey) private var agentEnabled = true
+    @AppStorage(AgentGateway.portKey) private var agentPort = Int(AgentGateway.defaultPort)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -52,6 +54,11 @@ struct SettingsView: View {
                 generalSettings
                     .tabItem {
                         Label("通用", systemImage: "gear")
+                    }
+
+                agentSettings
+                    .tabItem {
+                        Label("Agent", systemImage: "antenna.radiowaves.left.and.right")
                     }
             }
         }
@@ -457,6 +464,41 @@ struct SettingsView: View {
                     Link("RoshanGH/mixed_cut", destination: URL(string: "https://github.com/RoshanGH/mixed_cut")!)
                         .font(DesignTokens.Typography.label)
                 }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    // MARK: - Agent 接入设置
+    private var agentSettings: some View {
+        Form {
+            Section("本机 Agent 接入（MCP）") {
+                Toggle("启用 Agent 服务", isOn: $agentEnabled)
+                    .onChange(of: agentEnabled) { _, _ in
+                        AgentGateway.shared.restartFromSettings()
+                    }
+                TextField("端口", value: $agentPort, format: .number.grouping(.never))
+                    .onSubmit { AgentGateway.shared.restartFromSettings() }
+                    .disabled(!agentEnabled)
+                Text("服务只监听 127.0.0.1，仅本机可访问。改端口后回车生效。")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
+            }
+            Section("在 Claude Code 中注册") {
+                HStack {
+                    Text(AgentGateway.registerCommand)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button("复制") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(AgentGateway.registerCommand, forType: .string)
+                    }
+                }
+                Text("注册后 Agent 即可：新建项目、批量导入视频、监控分析流水线、重试失败、移除视频。")
+                    .font(DesignTokens.Typography.label)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
