@@ -17,6 +17,8 @@ final class MCPToolHandlers {
     let context: ModelContext
     let importVM: ImportViewModel
     let schemeVM: SchemeViewModel
+    let segmentLibVM: SegmentLibraryViewModel
+    let dubbingVM = DubbingViewModel()
     let jobs: AgentJobRegistry
 
     init(context: ModelContext, importVM: ImportViewModel, jobs: AgentJobRegistry) {
@@ -26,6 +28,9 @@ final class MCPToolHandlers {
         let schemeVM = SchemeViewModel()
         schemeVM.setModelContext(context)
         self.schemeVM = schemeVM
+        let segmentLibVM = SegmentLibraryViewModel()
+        segmentLibVM.setModelContext(context)
+        self.segmentLibVM = segmentLibVM
     }
 
     func call(name: String, argumentsData: Data) async -> Outcome {
@@ -48,6 +53,7 @@ final class MCPToolHandlers {
             case "set_subtitle_mode": return try setSubtitleMode(argumentsData)
             case "set_voice_keep_original": return try setVoiceKeepOriginal(argumentsData)
             case "set_dub_participation": return try setDubParticipation(argumentsData)
+            case "adjust_segment_boundary": return try adjustSegmentBoundary(argumentsData)
             default:
                 return failure(.invalidArgument, "未知工具：\(name)")
             }

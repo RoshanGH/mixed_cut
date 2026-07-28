@@ -246,6 +246,85 @@ extension MCPToolHandlers {
         return success(["results": results, "participates": args.participates])
     }
 
+    // MARK: - 边界调整
+
+    struct BoundaryArgs: Decodable {
+        let project_id: String?
+        let video_no: Int?
+        let segment_nos: [Int]?
+        let segment_ids: [String]?
+        let start_delta_frames: Int?
+        let end_delta_frames: Int?
+        let start_frame: Int?
+        let end_frame: Int?
+    }
+
+    func adjustSegmentBoundary(_ data: Data) throws -> Outcome {
+        let args = try JSONDecoder().decode(BoundaryArgs.self, from: data)
+        let segments = try resolveSegments(SelectorArgs(
+            project_id: args.project_id, video_no: args.video_no,
+            segment_nos: args.segment_nos, segment_ids: args.segment_ids))
+        let hasDelta = args.start_delta_frames != nil || args.end_delta_frames != nil
+        let hasAbsolute = args.start_frame != nil || args.end_frame != nil
+        guard hasDelta || hasAbsolute else {
+            throw ToolFailure(code: .invalidArgument, message: "必须提供 delta（start/end_delta_frames）或绝对值（start/end_frame）")
+        }
+        guard !(hasDelta && hasAbsolute) else {
+            throw ToolFailure(code: .invalidArgument, message: "delta 与绝对值不能混用")
+        }
+        if hasAbsolute && segments.count > 1 {
+            throw ToolFailure(code: .invalidArgument, message: "绝对帧值只支持单个分镜，批量请用 delta")
+        }
+        var results: [[String: Any]] = []
+        var staleDubs: [[String: Any]] = []
+        for seg in segments {
+            guard let video = seg.video, video.fps > 0 else {
+                results.append(["segment_index": seg.segmentIndex, "note": "跳过：视频帧率缺失"])
+                continue
+            }
+            let fps = video.fps
+            let maxFrame = FrameTime.frame(seconds: video.duration, fps: fps)
+            var targetStart = args.start_frame ?? (seg.startFrame + (args.start_delta_frames ?? 0))
+            var targetEnd = args.end_frame ?? (seg.endFrame + (args.end_delta_frames ?? 0))
+            // 与 UI 相同的钳制：0 ≤ start，end ≤ 视频总帧，最短 2 帧
+            targetEnd = min(maxFrame, targetEnd)
+            targetStart = max(0, targetStart)
+            if targetEnd < targetStart + 2 { targetEnd = min(maxFrame, targetStart + 2) }
+            if targetStart > targetEnd - 2 { targetStart = max(0, targetEnd - 2) }
+            let oldStart = seg.startFrame
+            let oldEnd = seg.endFrame
+            // 走 UI 同一路径（clamp/重配台词/save/起点缩略图重生都在里面）
+            if targetStart != oldStart { segmentLibVM.setStartFrame(for: seg, to: targetStart) }
+            if targetEnd != oldEnd { segmentLibVM.setEndFrame(for: seg, to: targetEnd) }
+            results.append([
+                "segment_index": seg.segmentIndex,
+                "start_frame": ["old": oldStart, "new": seg.startFrame],
+                "end_frame": ["old": oldEnd, "new": seg.endFrame],
+                "duration_sec": seg.duration,
+                "text": seg.text,
+            ])
+            // 配音过期提醒：只对已生成音频的变体；没有变体的分镜不出现在提醒里
+            for dub in seg.effectiveDubVariants {
+                if case .stale = Self.staleCheck(dub, segment: seg) {
+                    let oldDur = Double(dub.generatedForEndFrame - dub.generatedForStartFrame) / fps
+                    staleDubs.append([
+                        "segment_index": seg.segmentIndex,
+                        "variant_index": dub.textVariantIndex,
+                        "dub_duration_sec": (oldDur * 100).rounded() / 100,
+                        "segment_duration_sec": (seg.duration * 100).rounded() / 100,
+                    ])
+                }
+            }
+        }
+        Self.notifyUIReload()
+        var payload: [String: Any] = ["results": results]
+        if !staleDubs.isEmpty {
+            payload["stale_dubs"] = staleDubs
+            payload["stale_warning"] = "以上分镜已生成的配音是按旧时长合成的，与新时长不匹配，导出会静默使用旧音频。请把此情况告知用户，由用户决定是否用 generate_voice_variants 重新生成；不要自作主张重跑。"
+        }
+        return success(payload)
+    }
+
     /// all-or-nothing 定位：全部找到才返回，否则整个调用不执行
     func resolveSegments(_ sel: SelectorArgs) throws -> [Segment] {
         if let ids = sel.segment_ids, !ids.isEmpty {
