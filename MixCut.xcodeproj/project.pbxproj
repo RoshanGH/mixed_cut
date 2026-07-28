@@ -46,6 +46,8 @@
 		55D680392E127983C43366C3 /* WelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ACE2ED824CD1A03D8F12A62 /* WelcomeView.swift */; };
 		56C8FC6396E2466C84870DA4 /* SegmentVariantInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDA81666C0EF4C52A4518514 /* SegmentVariantInspector.swift */; };
 		56FD408676D75ECD18215EC3 /* BGMLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */; };
+		856A02E8E31709DD33DBFF4D /* AgentGateway.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4291EBF6D842E0A59D6F093A /* AgentGateway.swift */; };
+		7442068825D4394E631F6CB1 /* MCPToolHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 350DD2EAFFF5B94FDC6E7C4F /* MCPToolHandlers.swift */; };
 		7E770CE5F4905FC47E35DE4F /* AgentToolCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54A6BC59859F913080D0E855 /* AgentToolCatalog.swift */; };
 		2FEDBBDB578EB68D030C3405 /* HTTPRequestParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92A3DDBAE61B507DA5444812 /* HTTPRequestParser.swift */; };
 		7DE42945234F9320F44B676E /* MCPProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0755216F25AF44210220F58D /* MCPProtocol.swift */; };
@@ -191,6 +193,8 @@
 		56B4B3C845C059F96ABA5AF1 /* OpenAICompatibleClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAICompatibleClient.swift; sourceTree = "<group>"; };
 		57155C2AF9E313323FEE4038 /* ShotCompositionService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ShotCompositionService.swift; path = ../../../ShotEdit/ShotCompositionService.swift; sourceTree = "<group>"; };
 		5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = BGMLibraryView.swift; path = MixCut/Views/BGMLibrary/BGMLibraryView.swift; sourceTree = "<group>"; };
+		4291EBF6D842E0A59D6F093A /* AgentGateway.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AgentGateway.swift; path = MixCut/Services/MCP/AgentGateway.swift; sourceTree = "<group>"; };
+		350DD2EAFFF5B94FDC6E7C4F /* MCPToolHandlers.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MCPToolHandlers.swift; path = MixCut/Services/MCP/MCPToolHandlers.swift; sourceTree = "<group>"; };
 		54A6BC59859F913080D0E855 /* AgentToolCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = AgentToolCatalog.swift; path = Sources/MixCutCore/AgentToolCatalog.swift; sourceTree = "<group>"; };
 		92A3DDBAE61B507DA5444812 /* HTTPRequestParser.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = HTTPRequestParser.swift; path = Sources/MixCutCore/HTTPRequestParser.swift; sourceTree = "<group>"; };
 		0755216F25AF44210220F58D /* MCPProtocol.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MCPProtocol.swift; path = Sources/MixCutCore/MCPProtocol.swift; sourceTree = "<group>"; };
@@ -418,6 +422,8 @@
 				53282C4D5D11A4DB16781655 /* GlobalBGMMixGraph.swift */,
 				19A0FB7E22D2DDEF87274BB2 /* UniqueFileNamer.swift */,
 				5765EAB38F93E4B85AC4D0BA /* BGMLibraryView.swift */,
+				4291EBF6D842E0A59D6F093A /* AgentGateway.swift */,
+				350DD2EAFFF5B94FDC6E7C4F /* MCPToolHandlers.swift */,
 				54A6BC59859F913080D0E855 /* AgentToolCatalog.swift */,
 				92A3DDBAE61B507DA5444812 /* HTTPRequestParser.swift */,
 				0755216F25AF44210220F58D /* MCPProtocol.swift */,
@@ -872,6 +878,8 @@
 				3DD5898BF44611E510C4FF1F /* GlobalBGMMixGraph.swift in Sources */,
 				5C374946C2A12A8F7D12587D /* UniqueFileNamer.swift in Sources */,
 				56FD408676D75ECD18215EC3 /* BGMLibraryView.swift in Sources */,
+				856A02E8E31709DD33DBFF4D /* AgentGateway.swift in Sources */,
+				7442068825D4394E631F6CB1 /* MCPToolHandlers.swift in Sources */,
 				7E770CE5F4905FC47E35DE4F /* AgentToolCatalog.swift in Sources */,
 				2FEDBBDB578EB68D030C3405 /* HTTPRequestParser.swift in Sources */,
 				7DE42945234F9320F44B676E /* MCPProtocol.swift in Sources */,
