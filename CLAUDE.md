@@ -18,6 +18,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
+> **用户约定**：用户说「MC」即指 MixCut 本应用。凡是"MC 的项目 / 让 MC 导入 / MC 导出"等说法，一律指调用本机 mixcut MCP 服务（http://127.0.0.1:8787/mcp，13 个工具）操作 MixCut。
+
 MixCut 是一款 macOS 原生桌面应用（SwiftUI + SwiftData），面向广告投放团队的 AI 视频混剪工具。用户导入广告素材视频，AI 自动按语义切分镜头并标注类型，然后智能排列组合生成多条差异化的混剪广告视频。
 
 ## 构建与运行
