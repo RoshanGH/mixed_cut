@@ -58,7 +58,8 @@ final class MCPToolHandlers {
                 "id": p.id.uuidString,
                 "name": p.name,
                 "status": p.status.rawValue,
-                "video_count": p.videoCount,
+                // 用非空视频数（与 videos 列表口径一致），不用 projectVideos.count（历史数据存在悬空关联）
+                "video_count": p.videos.count,
                 "segment_count": p.segmentCount,
                 "scheme_count": p.schemeCount,
                 "updated_at": Self.iso(p.updatedAt),
@@ -180,6 +181,7 @@ final class MCPToolHandlers {
         let project = Project(name: trimmed)
         context.insert(project)
         context.safeSave()
+        Self.notifyUIReload()
         return success(["id": project.id.uuidString, "name": project.name])
     }
 
@@ -210,6 +212,7 @@ final class MCPToolHandlers {
         Task { @MainActor in
             let report = await vm.importVideos(urls: urls, to: project)
             registry.finish(job.id, report: report)
+            Self.notifyUIReload()
         }
         return success(["job_id": job.id.uuidString])
     }
@@ -233,6 +236,7 @@ final class MCPToolHandlers {
                 await vm.retryAIAnalysis(for: video, in: project)
             }
             registry.finish(job.id, report: nil)
+            Self.notifyUIReload()
         }
         return success(["job_id": job.id.uuidString])
     }
@@ -250,10 +254,17 @@ final class MCPToolHandlers {
             throw ToolFailure(code: .videoNotFound, message: "视频不在该项目中")
         }
         let deletedGlobally = importVM.removeVideoImmediately(video, from: project)
+        Self.notifyUIReload()
         return success(["removed": true, "video_deleted_globally": deletedGlobally])
     }
 
     // MARK: - 公共辅助
+
+    /// Agent 绕过 UI 流程写库后，广播全量重载通知（复用撤销后的刷新机制），
+    /// 让侧边栏/概览等非 SwiftData 观察驱动的列表立即反映变化
+    private static func notifyUIReload() {
+        NotificationCenter.default.post(name: .mixCutDataDidUndo, object: nil)
+    }
 
     private func ensureNoActiveJob() throws {
         if let active = jobs.activeJob {
