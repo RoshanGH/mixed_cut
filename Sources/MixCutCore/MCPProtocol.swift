@@ -24,16 +24,20 @@ public enum MCPIncoming: Equatable, Sendable {
     case invalid(id: MCPRequestID?, code: Int, message: String)
 }
 
-/// MCP 工具定义。inputSchema 以 JSON 文本携带，编码 tools/list 时展开为对象。
+/// MCP 工具定义。inputSchema/annotations 以 JSON 文本携带，编码 tools/list 时展开为对象。
+/// annotations 遵循 MCP 规范（readOnlyHint / destructiveHint / idempotentHint），
+/// 客户端（如 Claude Code）据此在执行破坏性工具前向用户弹确认。
 public struct MCPToolDefinition: Sendable {
     public let name: String
     public let description: String
     public let inputSchemaJSON: String
+    public let annotationsJSON: String?
 
-    public init(name: String, description: String, inputSchemaJSON: String) {
+    public init(name: String, description: String, inputSchemaJSON: String, annotationsJSON: String? = nil) {
         self.name = name
         self.description = description
         self.inputSchemaJSON = inputSchemaJSON
+        self.annotationsJSON = annotationsJSON
     }
 }
 
@@ -96,7 +100,12 @@ public enum MCPProtocol {
         let toolObjects: [[String: Any]] = tools.map { tool in
             let schema = (try? JSONSerialization.jsonObject(with: Data(tool.inputSchemaJSON.utf8)))
                 as? [String: Any] ?? [:]
-            return ["name": tool.name, "description": tool.description, "inputSchema": schema]
+            var obj: [String: Any] = ["name": tool.name, "description": tool.description, "inputSchema": schema]
+            if let annotationsJSON = tool.annotationsJSON,
+               let annotations = (try? JSONSerialization.jsonObject(with: Data(annotationsJSON.utf8))) as? [String: Any] {
+                obj["annotations"] = annotations
+            }
+            return obj
         }
         return envelope(id: id, result: ["tools": toolObjects])
     }

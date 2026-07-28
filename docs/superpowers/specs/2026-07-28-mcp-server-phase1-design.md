@@ -141,6 +141,27 @@ Claude Code ──HTTP POST /mcp (JSON-RPC)──▶ 127.0.0.1:8787
 4. **回归（铁律）**：UI 手动导入一组视频走完流水线，确认原有导入/删除/撤销/Toast 行为不变；
    切换项目联动正常。
 
+## 追加：能力扩展（2026-07-28 用户当日授权，同分支实现）
+
+用户在第一阶段验收后当场扩权，新增 4 个工具（共 13 个）：
+
+| 工具 | 说明 |
+|---|---|
+| `list_schemes` | 读：列项目方案（名称/风格/策略/时长/分镜序列） |
+| `generate_schemes` | 写：AI 生成方案，复用 headless `SchemeViewModel.generateSchemes`（与 UI 同流程），job 模型 |
+| `export_scheme` | 写：按 scheme_ids + output_dir 串行导出成片，复用 `ExportInput.from` + `ExportService.export`，命名与 UI 批量导出一致（策略名_变体号_方案名.mp4），job 模型 |
+| `delete_project` | 写：删除整个项目，复刻 `ProjectViewModel.deleteProject` 的 commit 逻辑（立即执行版） |
+
+**明确不开放**：修改分镜（内容/边界/标签）——待用户想清楚能力边界后另议。
+
+**破坏性操作防护（行业标准双保险）**：
+1. tools/list 携带 MCP 标准注解：只读工具 `readOnlyHint:true`，`remove_video`/`delete_project` 标 `destructiveHint:true`（客户端据此在执行前向人弹确认）。
+2. `delete_project` 服务端二次确认：不带 `confirm=true` 只返回影响预览（视频数/方案数/将被全局删除的视频清单），必须带 `confirm=true` 重调才执行。
+
+**附带修复**：MCP 的 `create_project` 补齐「自定义组合」策略容器（与 UI 一致）；`AgentJob` 增加 `resultJSON` 字段承载非导入类 job 的结构化结果。
+
+**设置页**：注册片段选择器支持 7 个客户端（服务地址通用 / Claude Code / Cursor·Cline·Claude Desktop JSON / Codex CLI·桌面版 TOML / WorkBuddy腾讯 / Gemini CLI / VS Code Copilot）；能力清单从 `AgentToolCatalog` 动态渲染（13 个工具 + 权限边界说明）。
+
 ## 已知限制（记录，不在本阶段解决）
 
 - UI 与 MCP 各持一个 `ImportViewModel`，`cancelledVideoIDs` 不互通：Agent 导入进行中时，

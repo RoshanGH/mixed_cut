@@ -104,6 +104,20 @@ struct MCPProtocolEncodeTests {
         #expect(tools[0]["name"] as? String == "list_projects")
         let schema = try #require(tools[0]["inputSchema"] as? [String: Any])
         #expect(schema["type"] as? String == "object")
+        #expect(tools[0]["annotations"] == nil)
+    }
+
+    @Test("tools/list 响应携带 annotations（destructiveHint 等）")
+    func toolsListResponseWithAnnotations() throws {
+        let tool = MCPToolDefinition(
+            name: "delete_project", description: "删项目",
+            inputSchemaJSON: #"{"type":"object","properties":{}}"#,
+            annotationsJSON: #"{"destructiveHint":true,"readOnlyHint":false}"#)
+        let obj = try decode(MCPProtocol.toolsListResponse(id: .number(2), tools: [tool]))
+        let tools = try #require((obj["result"] as? [String: Any])?["tools"] as? [[String: Any]])
+        let annotations = try #require(tools[0]["annotations"] as? [String: Any])
+        #expect(annotations["destructiveHint"] as? Bool == true)
+        #expect(annotations["readOnlyHint"] as? Bool == false)
     }
 
     @Test("tools/call 结果包装成 text content")

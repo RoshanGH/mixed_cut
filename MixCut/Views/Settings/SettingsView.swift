@@ -479,7 +479,8 @@ struct SettingsView: View {
         case url = "服务地址（通用）"
         case claudeCode = "Claude Code"
         case cursorJSON = "Cursor / Cline / Claude Desktop（JSON）"
-        case codex = "Codex CLI"
+        case codex = "Codex CLI / 桌面版"
+        case workbuddy = "WorkBuddy（腾讯）"
         case geminiCLI = "Gemini CLI"
         case vscode = "VS Code Copilot"
 
@@ -510,6 +511,14 @@ struct SettingsView: View {
                 command = "npx"
                 args = ["-y", "mcp-remote", "\(url)"]
                 """
+            case .workbuddy:
+                return """
+                {
+                  "mcpServers": {
+                    "mixcut": { "url": "\(url)", "transport": "http" }
+                  }
+                }
+                """
             case .geminiCLI:
                 return """
                 {
@@ -538,7 +547,9 @@ struct SettingsView: View {
             case .cursorJSON:
                 return "合并进对应配置：Cursor 是项目下 .cursor/mcp.json；Cline 在扩展的 MCP 设置里；Claude Desktop 在 设置→连接器。"
             case .codex:
-                return "追加到 ~/.codex/config.toml（Codex 走 stdio，用 mcp-remote 桥接，需要 Node.js）。"
+                return "追加到 ~/.codex/config.toml，CLI 和桌面版共用这份配置（桌面版改完重启 app 生效）。Codex 走 stdio，用 mcp-remote 桥接，需要 Node.js。"
+            case .workbuddy:
+                return "在 WorkBuddy 的 MCP 设置（mcp.json 或可视化 MCP 配置界面）里添加。"
             case .geminiCLI:
                 return "合并进 ~/.gemini/settings.json。"
             case .vscode:
@@ -594,7 +605,7 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 2)
                 }
-                Text("以上是 Agent 的全部权限边界：不能改分镜、不能生成方案、不能导出成片、不能删项目。")
+                Text("以上是 Agent 的全部权限边界：不能修改分镜（内容/边界/标签）。删除项目需 Agent 二次确认（先返回影响预览）；删除视频/项目执行后无撤销。")
                     .font(DesignTokens.Typography.label)
                     .foregroundStyle(.secondary)
             }
