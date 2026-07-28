@@ -463,6 +463,18 @@ final class ImportViewModel {
     /// 自建分镜单条时长上限（秒）。改这一个常量即可，文案会跟着走。
     static let selfSegmentMaxDuration: Double = 30
 
+    /// 自建分镜载体视频 id 注册表（UserDefaults，schema 外持久化）。
+    /// isUserUploaded 只存在 SwiftData 列里的话，误启动旧版本 App（schema 无此字段）会触发
+    /// Core Data 降级迁移删列，新版再启动重建列时所有行归零（2026-07-28 实际发生）。
+    /// 创建时同步记到这里，启动时由 MixCutApp.restoreSelfBuiltFlags 恢复。
+    static let selfBuiltRegistryKey = "selfBuiltVideoIDs_v1"
+
+    static func registerSelfBuiltVideo(_ id: UUID) {
+        let ids = UserDefaults.standard.stringArray(forKey: selfBuiltRegistryKey) ?? []
+        guard !ids.contains(id.uuidString) else { return }
+        UserDefaults.standard.set(ids + [id.uuidString], forKey: selfBuiltRegistryKey)
+    }
+
     /// 上传自建分镜：每个文件 = 一个分镜（不切分），只做 ASR 台词提取 + AI 只打标。
     /// 处理态用载体视频的 status 驱动占位卡（transcribing/analyzing/completed）。见 PRD/TRD 05。
     func importSelfSegments(urls: [URL], into project: Project, onUpdate: @escaping @MainActor () -> Void = {}) async {
@@ -491,6 +503,7 @@ final class ImportViewModel {
             let video = Video(name: url.lastPathComponent, localPath: destURL.path)
             video.contentHash = hash
             video.isUserUploaded = true
+            Self.registerSelfBuiltVideo(video.id)
             video.status = .transcribing
             context.insert(video)
             context.insert(ProjectVideo(project: project, video: video))

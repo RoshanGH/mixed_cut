@@ -116,6 +116,9 @@ struct MixCutApp: App {
 
             // 修复空的 semanticTypesData（旧数据迁移丢失）
             Self.fixMissingSemanticTypes(container: modelContainer)
+            // 自建分镜标记自愈：误启动旧版会把 isUserUploaded 列删掉重建（值全部归零），
+            // 每次启动按注册表 + 特征回填恢复，防止自建分镜混入成片列表
+            Self.restoreSelfBuiltFlags(container: modelContainer)
             // CosyVoice 迁移：清理 qwen 旧配音变体 + 重置非法音色选择
             Self.purgeLegacyQwenDubs(container: modelContainer)
             // 清空旧的"长参考(18s)"克隆音色：长参考会让克隆配音漏读别段，改用 6s 短参考重克隆
@@ -265,6 +268,56 @@ struct MixCutApp: App {
     }
 
     // MARK: - 数据修复
+
+    /// 自建分镜标记自愈（每次启动执行，幂等）。
+    /// 背景（2026-07-28 实际案例）：误启动旧版 App（schema 无 isUserUploaded 字段）时，
+    /// Core Data 降级迁移会把该列删除；新版再启动重建列，所有行归零——自建分镜载体
+    /// 因此丢失标记，混入素材导入页/成片列表。恢复分两路：
+    /// 1) 注册表恢复：创建时记录在 UserDefaults 的载体 id（ImportViewModel.registerSelfBuiltVideo）
+    /// 2) 特征回填：注册表诞生前已受损的行，用自建分镜独有特征识别——
+    ///    仅 1 个分镜且覆盖整片、无整片 ASR 句子数据、分镜缩略图与视频缩略图同一路径、时长不超上限
+    /// 局限：只兜「列值归零」；若整表被清、由 recoverFromDisk 从磁盘重建 Video（全新 UUID、无分镜），
+    /// 注册表与特征均无法匹配，该场景不在本函数兜底范围内。
+    @MainActor
+    private static func restoreSelfBuiltFlags(container: ModelContainer) {
+        let ctx = container.mainContext
+        guard let videos = try? ctx.fetch(FetchDescriptor<Video>()) else { return }
+
+        let registered = Set(UserDefaults.standard.stringArray(forKey: ImportViewModel.selfBuiltRegistryKey) ?? [])
+        var restored = 0
+
+        for video in videos where !video.isUserUploaded {
+            let byRegistry = registered.contains(video.id.uuidString)
+            let byShape = video.segments.count == 1
+                && video.asrSentencesData == nil
+                && video.duration > 0
+                && video.duration <= ImportViewModel.selfSegmentMaxDuration + 1
+                && video.segments.first.map { seg in
+                    seg.startTime < 0.01
+                        && abs(seg.endTime - video.duration) < 0.2
+                        && seg.thumbnailPath != nil
+                        && seg.thumbnailPath == video.thumbnailPath
+                } == true
+            if byRegistry || byShape {
+                video.isUserUploaded = true
+                ImportViewModel.registerSelfBuiltVideo(video.id)   // 特征回填的也补进注册表
+                restored += 1
+            }
+        }
+
+        if restored > 0 {
+            try? ctx.save()
+            MixLog.info(" 已恢复 \(restored) 个自建分镜载体的 isUserUploaded 标记")
+        }
+
+        // 清理注册表中已不存在的视频 id（自建分镜被删除后的残留）
+        let liveIDs = Set(videos.map { $0.id.uuidString })
+        let current = UserDefaults.standard.stringArray(forKey: ImportViewModel.selfBuiltRegistryKey) ?? []
+        let pruned = current.filter(liveIDs.contains)
+        if pruned.count != current.count {
+            UserDefaults.standard.set(pruned, forKey: ImportViewModel.selfBuiltRegistryKey)
+        }
+    }
 
     /// 为 semanticTypesData 为 NULL 的分镜填充默认值「过渡」
     /// 用户后续可通过"重新 AI 分析"获取正确的语义类型
