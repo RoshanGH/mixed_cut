@@ -174,9 +174,19 @@ struct ImportView: View {
         }
     }
 
+    /// 视频编号：与 Agent（MCP）同一套规则——项目内按导入时间升序 1 起，动态计算，删除后自动前补。
+    /// 编号覆盖全部视频（含分镜库的自建分镜视频），此处只展示成片视频。
+    private var numberedVideos: [(no: Int, video: Video)] {
+        project.projectVideos
+            .sorted { $0.addedAt < $1.addedAt }
+            .compactMap(\.video)
+            .enumerated()
+            .compactMap { idx, v in v.isUserUploaded ? nil : (no: idx + 1, video: v) }
+    }
+
     // MARK: - 已导入视频列表（网格并排）
     private var videoListSection: some View {
-        let videos = project.videos.filter { !$0.isUserUploaded }   // 成片视频（自建分镜不在导入页/成片列表出现，只在分镜库）
+        let videos = numberedVideos   // 成片视频（自建分镜不在导入页/成片列表出现，只在分镜库）
         return VStack(alignment: .leading, spacing: DesignTokens.Spacing.comfortable) {
             HStack {
                 Text("已导入视频")
@@ -189,7 +199,8 @@ struct ImportView: View {
 
             // 每张卡片固定宽度约 400px (190*2 + 分隔线 + padding)，可并排
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 380, maximum: 440))], alignment: .leading, spacing: DesignTokens.Spacing.comfortable) {
-                ForEach(videos) { video in
+                ForEach(videos, id: \.video.id) { item in
+                    let video = item.video
                     ImportedVideoCard(video: video, onDelete: {
                         importVM.deleteVideo(video, from: project)
                     }, onRetryAI: {
@@ -205,6 +216,17 @@ struct ImportView: View {
                     }, onReidentify: {
                         Task { await importVM.reidentifyWholeVideo(video, context: modelContext) }
                     }, isReidentifying: importVM.reidentifyingVideoIDs.contains(video.id))
+                    .overlay(alignment: .topLeading) {
+                        // 视频编号徽章：与 Agent 指令里的 video_no 同一套编号（「1 号视频」即此号）
+                        Text("\(item.no) 号")
+                            .font(DesignTokens.Typography.caption.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.black.opacity(0.62), in: Capsule())
+                            .padding(6)
+                            .allowsHitTesting(false)
+                    }
                 }
             }
         }
