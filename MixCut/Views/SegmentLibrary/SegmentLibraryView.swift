@@ -464,6 +464,17 @@ struct SegmentLibraryView: View {
         }
     }
 
+    /// 视频编号：与素材导入页徽章、Agent（MCP）的 video_no 同一套规则——
+    /// 项目内按导入时间升序 1 起，动态计算，删除后自动前补
+    private var videoNoByID: [UUID: Int] {
+        Dictionary(uniqueKeysWithValues:
+            project.projectVideos
+                .sorted { $0.addedAt < $1.addedAt }
+                .compactMap(\.video)
+                .enumerated()
+                .map { ($0.element.id, $0.offset + 1) })
+    }
+
     private func videoSection(_ group: VideoSegmentGroup) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.normal) {
             // 标题栏：自建分镜聚合组 vs 普通视频分组
@@ -510,9 +521,19 @@ struct SegmentLibraryView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(video.name)
-                            .font(DesignTokens.Typography.labelStrong)
-                            .lineLimit(1)
+                        HStack(spacing: 6) {
+                            if let no = videoNoByID[video.id] {
+                                Text("\(no) 号")
+                                    .font(DesignTokens.Typography.caption.bold())
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 1.5)
+                                    .background(.black.opacity(0.62), in: Capsule())
+                            }
+                            Text(video.name)
+                                .font(DesignTokens.Typography.labelStrong)
+                                .lineLimit(1)
+                        }
                         Text("\(group.segments.count) 个分镜 · \(String(format: "%.0f", video.duration))s")
                             .font(DesignTokens.Typography.microRegular)
                             .foregroundStyle(.tertiary)
