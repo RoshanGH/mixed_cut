@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var isAPIKeySaved = false
     @State private var showAPIKey = false
     @State private var selectedModel: String = ""
+    @State private var thinkingEnabled = false
     @State private var customBaseURL: String = ""
     @State private var customModelName: String = ""
     @State private var relayBaseURL: String = ""
@@ -155,6 +156,16 @@ struct SettingsView: View {
                     }
                     .onChange(of: selectedModel) { _, newValue in
                         KeychainHelper.setSelectedModel(newValue, for: selectedProvider)
+                    }
+
+                    if selectedProvider.supportsThinkingToggle(model: selectedModel) {
+                        Toggle("深度思考", isOn: $thinkingEnabled)
+                            .onChange(of: thinkingEnabled) { _, newValue in
+                                KeychainHelper.setThinkingEnabled(newValue, for: selectedProvider)
+                            }
+                        Text("开启后模型先推理再作答，效果更好但更慢、消耗更多 tokens。对分镜分析、方案生成、台词改写等所有 AI 调用生效")
+                            .font(DesignTokens.Typography.microRegular)
+                            .foregroundStyle(.tertiary)
                     }
                 }
 
@@ -681,6 +692,7 @@ struct SettingsView: View {
             KeychainHelper.setSelectedModel(selectedModel, for: selectedProvider)
         }
 
+        thinkingEnabled = KeychainHelper.thinkingEnabled(for: selectedProvider)
         customBaseURL = KeychainHelper.customBaseURL
         customModelName = KeychainHelper.customModelName
         relayBaseURL = KeychainHelper.relayBaseURL

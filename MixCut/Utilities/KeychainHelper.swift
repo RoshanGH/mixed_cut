@@ -92,4 +92,16 @@ enum KeychainHelper {
     static func setSelectedModel(_ model: String, for provider: AIProviderType) {
         defaults.set(model, forKey: modelKeyPrefix + provider.rawValue)
     }
+
+    // MARK: - 深度思考开关（按提供商存储，默认关闭）
+
+    private static let thinkingKeyPrefix = "thinking_enabled_"
+
+    static func thinkingEnabled(for provider: AIProviderType) -> Bool {
+        defaults.bool(forKey: thinkingKeyPrefix + provider.rawValue)
+    }
+
+    static func setThinkingEnabled(_ enabled: Bool, for provider: AIProviderType) {
+        defaults.set(enabled, forKey: thinkingKeyPrefix + provider.rawValue)
+    }
 }

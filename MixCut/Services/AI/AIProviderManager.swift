@@ -30,7 +30,9 @@ enum AIProviderManager {
     static func createProvider(for type: AIProviderType) -> any AIProvider {
         let model = KeychainHelper.selectedModel(for: type)
         let apiKey = KeychainHelper.getAPIKey(for: type) ?? ""
-        MixLog.info("创建 AI 客户端: provider=\(type.displayName), model=\(model), hasKey=\(!apiKey.isEmpty)")
-        return OpenAICompatibleClient(providerType: type, apiKey: apiKey, modelName: model)
+        // 只有该模型确实支持思考开关时才启用，避免给不认识该参数的模型传参报 400
+        let thinking = KeychainHelper.thinkingEnabled(for: type) && type.supportsThinkingToggle(model: model)
+        MixLog.info("创建 AI 客户端: provider=\(type.displayName), model=\(model), hasKey=\(!apiKey.isEmpty), thinking=\(thinking)")
+        return OpenAICompatibleClient(providerType: type, apiKey: apiKey, modelName: model, thinkingEnabled: thinking)
     }
 }

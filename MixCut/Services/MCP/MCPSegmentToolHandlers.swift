@@ -126,6 +126,72 @@ extension MCPToolHandlers {
         return success(["results": results])
     }
 
+    // MARK: - 台词修改
+
+    struct UpdateTextArgs: Decodable {
+        struct Entry: Decodable {
+            let video_no: Int?
+            let segment_no: Int?
+            let segment_id: String?
+            let text: String
+        }
+        let project_id: String?
+        let items: [Entry]
+    }
+
+    /// 批量修改台词：与 UI 双击编辑同语义（trim 后写回 Segment.text，全局共享即时同步）
+    func updateSegmentText(_ data: Data) throws -> Outcome {
+        let args = try JSONDecoder().decode(UpdateTextArgs.self, from: data)
+        guard !args.items.isEmpty else {
+            throw ToolFailure(code: .invalidArgument, message: "items 不能为空")
+        }
+        // 先全部定位并校验（all-or-nothing），任何一项失败则整个调用不写库
+        var resolved: [(segment: Segment, text: String)] = []
+        for (i, entry) in args.items.enumerated() {
+            let trimmed = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                throw ToolFailure(code: .invalidArgument, message: "第 \(i + 1) 项的 text 为空；不支持清空台词")
+            }
+            let segment: Segment
+            if let sid = entry.segment_id {
+                segment = try resolveSegments(SelectorArgs(
+                    project_id: nil, video_no: nil, segment_nos: nil, segment_ids: [sid]))[0]
+            } else if let vno = entry.video_no, let sno = entry.segment_no {
+                guard let pid = args.project_id else {
+                    throw ToolFailure(code: .invalidArgument, message: "第 \(i + 1) 项用 video_no+segment_no 寻址时必须提供顶层 project_id")
+                }
+                segment = try resolveSegments(SelectorArgs(
+                    project_id: pid, video_no: vno, segment_nos: [sno], segment_ids: nil))[0]
+            } else {
+                throw ToolFailure(code: .invalidArgument, message: "第 \(i + 1) 项必须提供 segment_id 或 video_no+segment_no")
+            }
+            resolved.append((segment, trimmed))
+        }
+        var results: [[String: Any]] = []
+        var hasDubVariants = false
+        for (segment, newText) in resolved {
+            let oldText = segment.text
+            segment.text = newText
+            var item: [String: Any] = [
+                "segment_index": segment.segmentIndex,
+                "old_text": oldText,
+                "new_text": newText,
+            ]
+            if !segment.effectiveDubVariants.isEmpty {
+                item["has_dub_variants"] = true
+                hasDubVariants = true
+            }
+            results.append(item)
+        }
+        context.safeSave()
+        Self.notifyUIReload()
+        var payload: [String: Any] = ["updated": results.count, "results": results]
+        if hasDubVariants {
+            payload["dub_notice"] = "标记 has_dub_variants 的分镜已有配音变体，其改写文案基于旧台词生成、不会自动更新。请告知用户，是否用 generate_voice_variants 重新生成由用户决定，不要自作主张重跑。"
+        }
+        return success(payload)
+    }
+
     // MARK: - 字幕模式
 
     struct SubtitleModeArgs: Decodable {

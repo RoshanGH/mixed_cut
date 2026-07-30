@@ -42,7 +42,7 @@ public enum AgentToolCatalog {
 
     核心工作流：
     1. 导入分析：create_project → import_videos（返回 job_id）→ get_job 轮询直到 state 不是 running → list_segments 查看分镜，失败用 retry_analysis / retry_asr。
-    2. 分镜修改：update_segment_tags 改标签；adjust_segment_boundary 按帧调边界；set_subtitle_mode 设字幕；set_voice_keep_original 保留原声；generate_voice_variants 生成声音变体（job）；delete_segments 删分镜。
+    2. 分镜修改：update_segment_tags 改标签；update_segment_text 改台词（修错别字/润色）；adjust_segment_boundary 按帧调边界；set_subtitle_mode 设字幕；set_voice_keep_original 保留原声；generate_voice_variants 生成声音变体（job）；delete_segments 删分镜。
     3. 组合与导出：generate_schemes AI 生成方案（job）；create_custom_scheme 自选分镜组方案；export_scheme 导出方案成片（job）；export_segments 导出分镜片段（job）。
 
     重要规则：
@@ -123,6 +123,11 @@ public enum AgentToolCatalog {
             name: "update_segment_tags",
             description: "批量修改分镜标签。add/remove/set_semantic_types 三选一（11 种：噱头引入/痛点/产品方案/效果展示/信任背书/价格对比/活动福利/行动号召/产品定位/产品使用教育/过渡），可同时设 position_type（开头/中间/结尾）。每个分镜至少保留 1 个语义类型",
             inputSchemaJSON: #"{"type":"object","properties":{"project_id":{"type":"string","description":"项目 UUID（与 video_no/segment_nos 配合使用）"},"video_no":{"type":"integer","description":"视频编号：项目内按导入顺序 1 起"},"segment_nos":{"type":"array","items":{"type":"integer"},"description":"分镜编号数组：视频内按时间顺序 1 起，如 [3,4,5]"},"segment_ids":{"type":"array","items":{"type":"string"},"description":"分镜 UUID 数组（与编号方式二选一）"},"add_semantic_types":{"type":"array","items":{"type":"string"},"description":"要添加的语义类型"},"remove_semantic_types":{"type":"array","items":{"type":"string"},"description":"要移除的语义类型"},"set_semantic_types":{"type":"array","items":{"type":"string"},"description":"直接替换为这组语义类型"},"position_type":{"type":"string","description":"位置：开头/中间/结尾"}},"required":[]}"#,
+            annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
+        MCPToolDefinition(
+            name: "update_segment_text",
+            description: "批量修改分镜台词（修错别字/润色）。items 每项 {video_no, segment_no, text} 或 {segment_id, text}，每条分镜各配各的新台词；用 video_no 寻址时需带顶层 project_id；同一分镜在 items 中重复出现时按顺序最后一条生效。台词全局共享，改动即时同步到所有引用该视频的项目。⚠️ 已生成的配音变体是基于旧台词改写的，不会自动更新；是否用 generate_voice_variants 重新生成由用户决定",
+            inputSchemaJSON: #"{"type":"object","properties":{"project_id":{"type":"string","description":"项目 UUID（items 用 video_no+segment_no 寻址时必填）"},"items":{"type":"array","items":{"type":"object","properties":{"video_no":{"type":"integer","description":"视频编号：项目内按导入顺序 1 起"},"segment_no":{"type":"integer","description":"分镜编号：视频内按时间顺序 1 起"},"segment_id":{"type":"string","description":"分镜 UUID（与编号方式二选一）"},"text":{"type":"string","description":"该分镜的新台词，不能为空"}},"required":["text"]},"description":"有序修改列表，每项定位一个分镜并给出新台词"}},"required":["items"]}"#,
             annotationsJSON: #"{"readOnlyHint":false,"destructiveHint":false}"#),
         MCPToolDefinition(
             name: "adjust_segment_boundary",

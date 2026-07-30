@@ -211,6 +211,23 @@ enum AIProviderType: String, CaseIterable, Identifiable, Codable {
         self == .claude
     }
 
+    /// 该模型是否支持「深度思考」参数开关。
+    /// 只对能通过请求参数显式开/关思考的组合返回 true：
+    /// - 千问：DashScope 商业版 qwen3-max / qwen-plus / qwen-flash / qwen-turbo 支持 enable_thinking（非流式可用）；
+    ///   qwen-max-latest（旧架构）与 coder 系不支持
+    /// - Claude 原生：4 系及以上全系支持 extended thinking
+    /// - MiniMax / DeepSeek：思考由模型本身决定，无参数可切换；转发网关/自定义后端参数透传不可靠，均不提供开关
+    func supportsThinkingToggle(model: String) -> Bool {
+        switch self {
+        case .qwen:
+            return ["qwen3-max", "qwen-plus-latest", "qwen-flash", "qwen-turbo-latest"].contains(model)
+        case .claude:
+            return true
+        case .minimax, .deepseek, .claudeRelay, .custom:
+            return false
+        }
+    }
+
     /// 模型显示名称
     func modelDisplayName(_ model: String) -> String {
         switch self {

@@ -43,6 +43,7 @@ actor OpenAICompatibleClient: AIProvider {
     private var baseURL: String
     private var apiKey: String
     private var modelName: String
+    private var thinkingEnabled: Bool
     private var maxRetries = 3
     private var baseRetryDelay: UInt64 = 2_000_000_000 // 2秒
     private var requestTimeout: TimeInterval = 120 // 2分钟（单次请求；避免长时间卡死）
@@ -61,10 +62,11 @@ actor OpenAICompatibleClient: AIProvider {
         }
     }
 
-    init(providerType: AIProviderType, apiKey: String, modelName: String? = nil) {
+    init(providerType: AIProviderType, apiKey: String, modelName: String? = nil, thinkingEnabled: Bool = false) {
         self.providerType = providerType
         self.apiKey = apiKey
         self.modelName = modelName ?? providerType.defaultModel
+        self.thinkingEnabled = thinkingEnabled
         self.baseURL = Self.resolveBaseURL(for: providerType)
     }
 
@@ -304,13 +306,19 @@ actor OpenAICompatibleClient: AIProvider {
                     // Anthropic 原生 API：用顶层 system 字段强提示 JSON 输出
                     var b: [String: Any] = [
                         "model": modelName,
-                        "max_tokens": 8192,
+                        // 思考预算独立于输出预算之外占 max_tokens，开思考时抬高上限保证正文不被挤掉
+                        "max_tokens": thinkingEnabled ? 16384 : 8192,
                         "messages": [
                             ["role": "user", "content": prompt]
                         ]
                     ]
                     if jsonMode {
                         b["system"] = Self.jsonSystemPrompt
+                    }
+                    if thinkingEnabled {
+                        // 开启 extended thinking 时 API 要求 temperature 保持默认（1），不能同时设置
+                        b["thinking"] = ["type": "enabled", "budget_tokens": 8192]
+                    } else if jsonMode {
                         b["temperature"] = 0.3
                     }
                     body = b
@@ -334,6 +342,11 @@ actor OpenAICompatibleClient: AIProvider {
                         && (lowerModel.hasPrefix("claude") || lowerModel.hasPrefix("gemini"))
                     if jsonMode && !isRelayClaudeOrGemini {
                         b["response_format"] = ["type": "json_object"]
+                    }
+                    // 千问（DashScope）：模型支持思考开关时显式传 enable_thinking（商业版非流式可用）。
+                    // 只对支持的模型传参，避免不认识该参数的模型报 400
+                    if providerType == .qwen, providerType.supportsThinkingToggle(model: modelName) {
+                        b["enable_thinking"] = thinkingEnabled
                     }
                     body = b
                 }
@@ -363,10 +376,12 @@ actor OpenAICompatibleClient: AIProvider {
                 if isClaudeAPI {
                     // 解析 Claude Messages API 响应
                     // 格式: {"content": [{"type": "text", "text": "..."}], "stop_reason": "end_turn"|"max_tokens", ...}
+                    // 开启 thinking 时 content 数组首块是 thinking 块，必须取 type == "text" 的块
                     guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                           let contentArray = json["content"] as? [[String: Any]],
-                          let firstBlock = contentArray.first,
-                          let text = firstBlock["text"] as? String else {
+                          let textBlock = contentArray.first(where: { ($0["type"] as? String) == "text" })
+                              ?? contentArray.first,
+                          let text = textBlock["text"] as? String else {
                         let rawBody = String(data: data, encoding: .utf8) ?? "(empty)"
                         MixLog.error("无法解析 Claude 响应: \(rawBody.prefix(500))")
                         throw AIProviderError.invalidResponse("无法解析 Claude 响应")

@@ -4,14 +4,14 @@ import Testing
 
 @Suite("AgentToolCatalog")
 struct AgentToolCatalogTests {
-    @Test("22 个工具且命名齐全")
+    @Test("23 个工具且命名齐全")
     func allTools() {
         let names = AgentToolCatalog.all.map(\.name)
         #expect(names == [
             "list_projects", "get_project", "list_segments", "list_schemes", "get_job",
             "create_project", "import_videos", "retry_analysis", "retry_asr", "remove_video",
             "generate_schemes", "export_scheme", "delete_project",
-            "update_segment_tags", "adjust_segment_boundary", "set_subtitle_mode",
+            "update_segment_tags", "update_segment_text", "adjust_segment_boundary", "set_subtitle_mode",
             "set_voice_keep_original", "set_dub_participation", "generate_voice_variants",
             "delete_segments", "create_custom_scheme", "export_segments",
         ])
@@ -38,6 +38,21 @@ struct AgentToolCatalogTests {
         let props = try #require(obj["properties"] as? [String: Any])
         let mode = try #require(props["mode"] as? [String: Any])
         #expect(mode["enum"] as? [String] == ["直接烧录", "模糊虚化", "纯色遮挡"])
+    }
+
+    @Test("update_segment_text schema：items 必填且每项必须带 text")
+    func updateSegmentTextSchema() throws {
+        let tool = try #require(AgentToolCatalog.all.first { $0.name == "update_segment_text" })
+        let obj = try #require(JSONSerialization.jsonObject(with: Data(tool.inputSchemaJSON.utf8)) as? [String: Any])
+        #expect(obj["required"] as? [String] == ["items"])
+        let props = try #require(obj["properties"] as? [String: Any])
+        let items = try #require(props["items"] as? [String: Any])
+        let itemSchema = try #require(items["items"] as? [String: Any])
+        #expect(itemSchema["required"] as? [String] == ["text"])
+        let itemProps = try #require(itemSchema["properties"] as? [String: Any])
+        for key in ["video_no", "segment_no", "segment_id", "text"] {
+            #expect(itemProps[key] != nil, "update_segment_text 缺 \(key)")
+        }
     }
 
     @Test("delete_segments 带 destructiveHint")

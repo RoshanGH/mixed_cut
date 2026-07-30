@@ -50,6 +50,7 @@ final class MCPToolHandlers {
             case "export_scheme": return try exportScheme(argumentsData)
             case "delete_project": return try deleteProject(argumentsData)
             case "update_segment_tags": return try updateSegmentTags(argumentsData)
+            case "update_segment_text": return try updateSegmentText(argumentsData)
             case "set_subtitle_mode": return try setSubtitleMode(argumentsData)
             case "set_voice_keep_original": return try setVoiceKeepOriginal(argumentsData)
             case "set_dub_participation": return try setDubParticipation(argumentsData)
